@@ -1,43 +1,38 @@
 # ============================================================
-# DOCKERFILE FOR WHATSAPP AI CRM (Production Optimized)
+# DOCKERFILE FOR WHATSAPP AI CRM (Fix GLIBC & SQLite)
 # ============================================================
-FROM node:20-slim
+FROM node:20
 
-# 1. Install Chromium & Required Libraries for Puppeteer
-#    These are the "Missing Libraries" that usually crash WA bots on Shared Hosting.
+# 1. Install Dependencies Sistem (Chrome, FFmpeg & Build Tools)
 RUN apt-get update && apt-get install -y \
     chromium \
-    fonts-ipafont-gothic \
-    fonts-wqy-zenhei \
-    fonts-thai-tlwg \
-    fonts-kacst \
-    fonts-freefont-ttf \
-    libxss1 \
     ffmpeg \
-    --no-install-recommends \
+    build-essential \
+    python3 \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Tell Puppeteer to use the installed Chromium
+# 2. Konfigurasi Puppeteer
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
-# 3. Create App Directory
+# 3. Direktori Kerja
 WORKDIR /usr/src/app
 
 # 4. Install Dependencies
+# Kita hapus node_modules lama (jika ada) dan install ulang di dalam Docker
 COPY package*.json ./
-RUN npm install --production
+RUN npm cache clean --force && npm install
 
 # 5. Copy Source Code
 COPY . .
 
-# 6. Create Persistent Directories (Ensures login sessions & uploads survive restarts)
+# 6. Folder Absolut untuk Persistensi
 RUN mkdir -p .wwebjs_auth \
     && mkdir -p public/uploads \
     && chmod -R 777 .wwebjs_auth public/uploads
 
-# 7. Expose Port (3000 is our default)
+# 7. Port
 EXPOSE 3000
 
-# 8. Start the bot
+# 8. Start
 CMD ["node", "index.js"]
