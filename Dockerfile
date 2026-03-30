@@ -1,14 +1,17 @@
 # ============================================================
-# DOCKERFILE FOR WHATSAPP AI CRM (Fix GLIBC & SQLite)
+# DOCKERFILE FOR WHATSAPP AI CRM (Final GLIBC Fix)
 # ============================================================
-FROM node:20
+FROM node:20-bookworm
 
-# 1. Install Dependencies Sistem (Chrome, FFmpeg & Build Tools)
+# 1. Install Dependencies Sistem dengan Tool Kompilasi Lengkap
 RUN apt-get update && apt-get install -y \
     chromium \
     ffmpeg \
     build-essential \
     python3 \
+    python-is-python3 \
+    make \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
 # 2. Konfigurasi Puppeteer
@@ -18,21 +21,20 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 # 3. Direktori Kerja
 WORKDIR /usr/src/app
 
-# 4. Install Dependencies
-# Kita hapus node_modules lama (jika ada) dan install ulang di dalam Docker
+# 4. Install Dependencies & PAKSA BUILD DARI SOURCE
+# Ini adalah kunci untuk mengatasi error GLIBC
 COPY package*.json ./
-RUN npm cache clean --force && npm install
+RUN npm install --build-from-source sqlite3
 
-# 5. Copy Source Code
+# 5. Install sisa package lainnya
+RUN npm install
+
+# 6. Copy Source Code
 COPY . .
 
-# 6. Folder Absolut untuk Persistensi
-RUN mkdir -p .wwebjs_auth \
-    && mkdir -p public/uploads \
-    && chmod -R 777 .wwebjs_auth public/uploads
+# 7. Persiapan Folder Login
+RUN mkdir -p .wwebjs_auth public/uploads && chmod -R 777 .wwebjs_auth public/uploads
 
-# 7. Port
+# 8. Expose & Start
 EXPOSE 3000
-
-# 8. Start
 CMD ["node", "index.js"]
