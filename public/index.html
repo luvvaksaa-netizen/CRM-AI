@@ -1,0 +1,1267 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Omni-Bot CRM | Multi-Session AI v4</title>
+    <meta name="description" content="Dashboard CRM WhatsApp AI untuk manajemen multi-toko dan customer service otomatis.">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
+
+    <style>
+        /* ===================== DESIGN SYSTEM ===================== */
+        :root {
+            --clr-primary: #5b5ef4;
+            --clr-primary-dark: #4643d4;
+            --clr-accent: #10b981;
+            --clr-danger: #ef4444;
+            --clr-warning: #f59e0b;
+            --clr-bg: #f4f6fb;
+            --clr-sidebar-1: #05050f;
+            --clr-sidebar-2: #0f172a;
+            --clr-white: #ffffff;
+            --radius-lg: 28px;
+            --radius-md: 18px;
+            --radius-sm: 12px;
+            --shadow-card: 0 8px 30px rgba(0,0,0,0.06);
+            --shadow-msg: 0 4px 12px rgba(0,0,0,0.04);
+            --transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background: var(--clr-bg);
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            font-size: 14px;
+            color: #1e293b;
+        }
+
+        /* ===================== SIDEBAR 1: STORES ===================== */
+        #storeSidebar {
+            width: 78px;
+            background: var(--clr-sidebar-1);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px 0 25px;
+            gap: 12px;
+            z-index: 50;
+            flex-shrink: 0;
+        }
+
+        #storeSidebar .logo-icon { margin-bottom: 8px; filter: drop-shadow(0 0 8px rgba(91,94,244,0.5)); }
+
+        .store-btn {
+            width: 50px; height: 50px;
+            border-radius: var(--radius-sm);
+            background: #1e293b;
+            color: #64748b;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer;
+            font-weight: 700; font-size: 0.85rem; letter-spacing: 0.5px;
+            transition: var(--transition);
+            position: relative;
+            border: 2px solid transparent;
+            user-select: none;
+        }
+        .store-btn:hover { background: #334155; color: #e2e8f0; transform: scale(1.05); }
+        .store-btn.active {
+            background: var(--clr-primary);
+            color: white;
+            border-color: rgba(255,255,255,0.3);
+            box-shadow: 0 6px 20px rgba(91,94,244,0.45);
+        }
+        .store-btn .dot {
+            position: absolute; bottom: -3px; right: -3px;
+            width: 13px; height: 13px; border-radius: 50%;
+            border: 3px solid var(--clr-sidebar-1);
+            background: #64748b;
+        }
+        .store-btn .dot.online  { background: var(--clr-accent); }
+        .store-btn .dot.warning { background: var(--clr-warning); }
+        .store-btn .dot.offline { background: var(--clr-danger); }
+
+        #btnAddStore {
+            width: 50px; height: 50px;
+            border-radius: var(--radius-sm);
+            border: 2px dashed #334155;
+            color: #64748b;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; transition: var(--transition);
+            margin-top: auto;
+            font-size: 1.2rem;
+        }
+        #btnAddStore:hover { border-color: var(--clr-primary); color: var(--clr-primary); background: rgba(91,94,244,0.08); }
+
+        /* ===================== SIDEBAR 2: NAV ===================== */
+        #navSidebar {
+            width: 78px;
+            background: var(--clr-sidebar-2);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 25px 0;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .nav-btn {
+            width: 52px; height: 52px;
+            border-radius: var(--radius-md);
+            color: #64748b;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            cursor: pointer; transition: var(--transition); gap: 4px;
+        }
+        .nav-btn i { font-size: 1.25rem; }
+        .nav-btn span { font-size: 0.55rem; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+        .nav-btn:hover { color: white; background: rgba(255,255,255,0.08); }
+        .nav-btn.active { background: var(--clr-primary); color: white; box-shadow: 0 6px 18px rgba(91,94,244,0.4); }
+
+        /* ===================== MAIN WINDOW ===================== */
+        #mainWindow {
+            flex: 1;
+            display: flex;
+            background: var(--clr-white);
+            margin: 16px;
+            border-radius: var(--radius-lg);
+            box-shadow: 0 25px 60px rgba(0,0,0,0.1);
+            overflow: hidden;
+            min-width: 0;
+        }
+
+        .view { display: none; width: 100%; height: 100%; }
+        .view.active { display: flex; }
+
+        /* ===================== CHAT VIEW ===================== */
+        #convPanel {
+            width: 340px;
+            border-right: 1px solid #f1f5f9;
+            display: flex; flex-direction: column;
+            flex-shrink: 0;
+        }
+
+        .panel-top {
+            padding: 24px 22px 18px;
+            border-bottom: 1px solid #f1f5f9;
+        }
+
+        .panel-top h5 { font-weight: 700; font-size: 1.05rem; color: #0f172a; margin: 0 0 2px; }
+        .panel-top p { font-size: 0.78rem; color: #94a3b8; margin: 0; }
+
+        #convSearch { margin: 12px 15px; }
+        #convSearch input {
+            width: 100%; background: #f8fafc; border: 2px solid #f1f5f9;
+            border-radius: var(--radius-sm); padding: 10px 16px;
+            font-size: 0.85rem; outline: none; transition: var(--transition);
+        }
+        #convSearch input:focus { border-color: var(--clr-primary); background: white; }
+
+        #convList { flex: 1; overflow-y: auto; padding: 8px; }
+        .conv-item {
+            display: flex; align-items: center; gap: 12px;
+            padding: 14px 14px;
+            border-radius: var(--radius-md);
+            cursor: pointer; transition: var(--transition);
+            border: 1px solid transparent;
+        }
+        .conv-item:hover { background: #f8fafc; }
+        .conv-item.active { background: #eef0ff; border-color: #dde0ff; }
+
+        .conv-avatar {
+            width: 46px; height: 46px; border-radius: 15px;
+            background: #e2e8f0; color: #64748b;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 700; font-size: 0.9rem; flex-shrink: 0;
+        }
+
+        #chatPanel {
+            flex: 1;
+            display: flex; flex-direction: column;
+            background: #fafbff;
+            min-width: 0;
+        }
+
+        #chatHeader {
+            padding: 18px 28px;
+            background: white;
+            border-bottom: 1px solid #f1f5f9;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+
+        #chatMessages {
+            flex: 1;
+            padding: 30px;
+            overflow-y: auto;
+            display: flex; flex-direction: column; gap: 14px;
+        }
+
+        .msg {
+            max-width: 68%;
+            padding: 13px 18px;
+            border-radius: 22px;
+            font-size: 0.92rem;
+            line-height: 1.6;
+            position: relative;
+        }
+        .msg small { display: block; font-size: 0.68rem; margin-top: 5px; opacity: 0.65; }
+        .msg-out { align-self: flex-end; background: var(--clr-primary); color: white; border-bottom-right-radius: 5px; box-shadow: 0 4px 14px rgba(91,94,244,0.25); }
+        .msg-in  { align-self: flex-start; background: white; color: #1e293b; border-bottom-left-radius: 5px; box-shadow: var(--shadow-msg); }
+        .msg-out small { text-align: right; }
+
+        #replyBar {
+            padding: 18px 28px;
+            background: white;
+            border-top: 1px solid #f1f5f9;
+            display: flex; gap: 12px; align-items: center;
+        }
+        #replyInput {
+            flex: 1; border: 2px solid #f1f5f9; border-radius: 22px;
+            padding: 13px 22px; font-size: 0.9rem; outline: none;
+            transition: var(--transition); font-family: inherit;
+        }
+        #replyInput:focus { border-color: var(--clr-primary); box-shadow: 0 0 0 4px rgba(91,94,244,0.1); }
+        #btnSend {
+            width: 50px; height: 50px; border-radius: 16px;
+            background: var(--clr-primary); color: white; border: none;
+            flex-shrink: 0; transition: var(--transition); cursor: pointer;
+        }
+        #btnSend:hover { background: var(--clr-primary-dark); transform: scale(1.05); }
+        #btnSend:active { transform: scale(0.95); }
+
+        /* ===================== BOT / SETTINGS VIEW ===================== */
+        .page-view { padding: 40px; overflow-y: auto; width: 100%; }
+        .page-header { margin-bottom: 35px; }
+        .page-header h3 { font-weight: 800; font-size: 1.5rem; color: #0f172a; margin: 0; }
+        .page-header p { color: #94a3b8; margin: 4px 0 0; font-size: 0.88rem; }
+
+        .card-glass {
+            background: white;
+            border-radius: var(--radius-lg);
+            padding: 30px;
+            border: 1px solid #f1f5f9;
+            box-shadow: var(--shadow-card);
+        }
+
+        .form-ctrl {
+            width: 100%; border: 2px solid #f1f5f9; border-radius: var(--radius-sm);
+            padding: 13px 16px; font-size: 0.9rem; font-family: inherit;
+            outline: none; transition: var(--transition); background: #fcfdfe;
+            color: #1e293b; resize: vertical;
+        }
+        .form-ctrl:focus { border-color: var(--clr-primary); background: white; box-shadow: 0 0 0 3px rgba(91,94,244,0.08); }
+        .form-label { font-size: 0.78rem; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px; display: block; }
+
+        .btn-primary-custom {
+            background: var(--clr-primary); color: white; border: none;
+            padding: 13px 30px; border-radius: var(--radius-sm); font-weight: 700;
+            font-size: 0.9rem; cursor: pointer; transition: var(--transition); font-family: inherit;
+        }
+        .btn-primary-custom:hover { background: var(--clr-primary-dark); transform: translateY(-2px); box-shadow: 0 8px 20px rgba(91,94,244,0.3); }
+
+        /* ===================== MEDIA VIEW (Phase 4) ===================== */
+        .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; }
+        .media-card {
+            background: #f8fafc; border-radius: var(--radius-md); overflow: hidden;
+            border: 1px solid #f1f5f9; transition: var(--transition); position: relative;
+        }
+        .media-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-card); }
+        .media-thumb {
+            width: 100%; aspect-ratio: 16/10; background: #e2e8f0;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 2.5rem; color: #94a3b8; overflow: hidden;
+        }
+        .media-thumb img, .media-thumb video { width: 100%; height: 100%; object-fit: cover; }
+        .media-info { padding: 14px; }
+        .media-info .media-label { font-weight: 700; font-size: 0.9rem; color: #0f172a; margin: 0 0 4px; }
+        .media-info .media-desc { font-size: 0.78rem; color: #94a3b8; }
+        .media-type-badge { font-size: 0.62rem; font-weight: 700; padding: 3px 8px; border-radius: 8px; text-transform: uppercase; }
+        .media-type-img { background: #dbeafe; color: #1d4ed8; }
+        .media-type-vid { background: #fef3c7; color: #b45309; }
+        .btn-del-media {
+            position: absolute; top: 10px; right: 10px;
+            width: 32px; height: 32px; border-radius: 10px;
+            background: rgba(239,68,68,0.85); color: white; border: none;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; opacity: 0; transition: var(--transition); font-size: 0.8rem;
+        }
+        .media-card:hover .btn-del-media { opacity: 1; }
+
+        /* Upload Zone */
+        #uploadZone {
+            border: 2.5px dashed #e2e8f0; border-radius: var(--radius-md);
+            padding: 40px; text-align: center; cursor: pointer;
+            transition: var(--transition);
+        }
+        #uploadZone:hover, #uploadZone.dragging { border-color: var(--clr-primary); background: rgba(91,94,244,0.04); }
+        #uploadZone i { font-size: 2.5rem; color: var(--clr-primary); margin-bottom: 12px; }
+
+        /* ===================== CONNECT VIEW ===================== */
+        #connectView .connect-card {
+            max-width: 480px; width: 100%;
+        }
+        #qrWrapper {
+            width: 260px; height: 260px; background: white;
+            border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center;
+            border: 2px solid #f1f5f9; box-shadow: var(--shadow-card); overflow: hidden;
+        }
+
+        /* ===================== TOGGLES & MISC ===================== */
+        .form-switch .form-check-input { width: 2.8em; height: 1.4em; cursor: pointer; }
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .badge-status { padding: 5px 12px; border-radius: 10px; font-size: 0.7rem; font-weight: 700; letter-spacing: 0.5px; }
+
+        /* Empty states */
+        .empty-state { padding: 60px 20px; text-align: center; color: #94a3b8; }
+        .empty-state i { font-size: 3rem; margin-bottom: 16px; opacity: 0.35; color: var(--clr-primary); }
+        .empty-state p { font-size: 0.9rem; margin: 0; }
+
+        /* Modal */
+        .modal-content { border-radius: var(--radius-lg); border: none; box-shadow: 0 40px 80px rgba(0,0,0,0.15); }
+        .modal-header { border: none; padding: 28px 30px 16px; }
+        .modal-body { padding: 0 30px 30px; }
+
+        /* Vision AI Badges on Media Cards */
+        .vision-badge {
+            position: absolute; top: 10px; left: 10px;
+            background: rgba(91,94,244,0.9); color: white;
+            font-size: 0.65rem; font-weight: 700; padding: 4px 10px;
+            border-radius: 10px; backdrop-filter: blur(4px);
+        }
+        .vision-badge.analyzing { background: rgba(100,116,139,0.85); }
+
+        /* Vision AI Analysis Box on Media Cards */
+        .ai-analysis-box {
+            background: #f0f0ff; border: 1px solid #e0e0ff;
+            border-radius: 10px; padding: 10px 12px;
+            font-size: 0.78rem; color: #3730a3; margin-top: 10px;
+            line-height: 1.5;
+        }
+
+        /* Purpose Selector in Upload Modal */
+        .purpose-selector { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; }
+        .purpose-option {
+            border: 2px solid #f1f5f9; border-radius: var(--radius-sm); padding: 14px 10px;
+            text-align: center; cursor: pointer; transition: var(--transition);
+            display: flex; flex-direction: column; align-items: center; gap: 6px;
+        }
+        .purpose-option i { font-size: 1.4rem; color: #94a3b8; }
+        .purpose-option strong { font-size: 0.8rem; color: #374151; display: block; }
+        .purpose-option small { font-size: 0.68rem; color: #94a3b8; line-height: 1.3; }
+        .purpose-option:hover { border-color: var(--clr-primary); background: #f8faff; }
+        .purpose-option.active { border-color: var(--clr-primary); background: #eef0ff; }
+        .purpose-option.active i { color: var(--clr-primary); }
+        .purpose-option.active strong { color: var(--clr-primary); }
+
+        /* AI Analysis Hint Box */
+        .ai-hint-box {
+            background: #eef0ff; border: 1.5px solid #d0d4ff; border-radius: 12px;
+            padding: 12px 16px; font-size: 0.8rem; color: #3730a3; line-height: 1.6;
+        }
+
+        /* Purpose Badge on Media Card */
+        .purpose-badge {
+            font-size: 0.6rem; font-weight: 700; padding: 3px 9px; border-radius: 8px;
+            text-transform: uppercase; letter-spacing: 0.5px; display: inline-flex;
+            align-items: center; gap: 4px;
+        }
+        .pb-both         { background: #d1fae5; color: #065f46; }
+        .pb-knowledge    { background: #ede9fe; color: #5b21b6; }
+        .pb-send         { background: #fef3c7; color: #92400e; }
+
+        /* Analysis Status Badge */
+        .analysis-status {
+            font-size: 0.6rem; font-weight: 700; padding: 3px 9px; border-radius: 8px;
+            text-transform: uppercase; display: inline-flex; align-items: center; gap: 4px;
+        }
+        .as-pending    { background: #f1f5f9; color: #64748b; }
+        .as-processing { background: #fef3c7; color: #92400e; }
+        .as-done       { background: #d1fae5; color: #065f46; }
+        .as-failed     { background: #fee2e2; color: #991b1b; }
+
+        /* Video Transcript Box on Media Card */
+        .transcript-box {
+            background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px;
+            padding: 10px 12px; font-size: 0.76rem; color: #78350f; margin-top: 8px;
+            line-height: 1.5; max-height: 80px; overflow-y: auto;
+        }
+
+        /* Purpose Changer Dropdown on Card */
+        .purpose-changer {
+            font-size: 0.72rem; border: 1.5px solid #e2e8f0; border-radius: 8px;
+            padding: 4px 8px; color: #374151; cursor: pointer; outline: none;
+            font-family: inherit; background: #f8fafc; margin-top: 8px; width: 100%;
+        }
+        .purpose-changer:focus { border-color: var(--clr-primary); }
+
+        /* Toast Notification */
+        #toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; }
+        .toast-msg {
+            background: #0f172a; color: white; padding: 14px 22px;
+            border-radius: var(--radius-sm); font-size: 0.88rem; font-weight: 500;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            animation: slideIn 0.3s ease;
+        }
+        .toast-msg.success { border-left: 4px solid var(--clr-accent); }
+        .toast-msg.error   { border-left: 4px solid var(--clr-danger); }
+        @keyframes slideIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body>
+
+<!-- ======= SIDEBAR 1: STORE SWITCHER ======= -->
+<div id="storeSidebar">
+    <img src="https://img.icons8.com/fluency/48/chatbot.png" class="logo-icon" width="38" alt="logo">
+    <!-- Store buttons injected by JS -->
+    <div id="btnAddStore" data-bs-toggle="modal" data-bs-target="#modalAddStore" title="Tambah Akun WA Baru">
+        <i class="fas fa-plus"></i>
+    </div>
+</div>
+
+<!-- ======= SIDEBAR 2: NAVIGATION ======= -->
+<div id="navSidebar">
+    <div class="nav-btn active" onclick="switchView('chat')" id="nav-chat">
+        <i class="fas fa-comment-alt"></i><span>Chat</span>
+    </div>
+    <div class="nav-btn" onclick="switchView('bot')" id="nav-bot">
+        <i class="fas fa-brain"></i><span>AI Bot</span>
+    </div>
+    <div class="nav-btn" onclick="switchView('media')" id="nav-media">
+        <i class="fas fa-photo-video"></i><span>Media</span>
+    </div>
+    <div class="nav-btn" onclick="switchView('connect')" id="nav-connect">
+        <i class="fas fa-qrcode"></i><span>Koneksi</span>
+    </div>
+</div>
+
+<!-- ======= MAIN WINDOW ======= -->
+<div id="mainWindow">
+
+    <!-- === VIEW: CHAT === -->
+    <div class="view active" id="view-chat">
+        <div id="convPanel">
+            <div class="panel-top">
+                <h5 id="storeTitleChat">Memuat...</h5>
+                <p>Live CRM Dashboard</p>
+            </div>
+            <div id="convSearch"><input type="text" placeholder="🔍  Cari pelanggan..." oninput="filterConv(this.value)"></div>
+            <div id="convList"></div>
+        </div>
+
+        <div id="chatPanel">
+            <div id="chatHeader">
+                <div class="d-flex align-items-center gap-3">
+                    <div class="conv-avatar" id="hdrAvatar" style="font-size:1.1rem">?</div>
+                    <div>
+                        <div style="font-weight:700;font-size:1rem" id="hdrName">Pilih Pelanggan</div>
+                        <small id="hdrSub" class="text-muted">Pilih kontak dari daftar kiri</small>
+                    </div>
+                </div>
+                <div class="d-flex align-items-center gap-3">
+                    <span id="hdrStatusDot" class="badge-status bg-secondary bg-opacity-10 text-secondary">Offline</span>
+                    <div class="form-check form-switch m-0 d-flex align-items-center gap-2">
+                        <label class="small fw-bold text-muted" style="font-size:0.72rem;letter-spacing:0.5px;">AI AUTO</label>
+                        <input class="form-check-input" type="checkbox" id="botToggle" checked onchange="saveSettings()">
+                    </div>
+                </div>
+            </div>
+
+            <div id="chatMessages">
+                <div class="empty-state m-auto">
+                    <i class="fas fa-comments"></i>
+                    <p>Pilih percakapan untuk mulai memantau atau membalas.</p>
+                </div>
+            </div>
+
+            <div id="replyBar">
+                <input type="text" id="replyInput" placeholder="Ketik balasan manual (Enter untuk kirim)..." onkeydown="if(event.key==='Enter')sendManual()">
+                <button id="btnSend" onclick="sendManual()"><i class="fas fa-paper-plane"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- === VIEW: BOT/SETTINGS === -->
+    <div class="view" id="view-bot">
+        <div class="page-view">
+            <div class="page-header">
+                <h3>Konfigurasi AI Bot</h3>
+                <p>Atur karakter, gaya bicara, dan knowledge base untuk akun: <strong id="botViewTitle">—</strong></p>
+            </div>
+
+            <div class="row g-4">
+                <div class="col-lg-8">
+                    <div class="card-glass">
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label">Nama Toko/Cabang</label>
+                                <input type="text" class="form-ctrl" id="inpStoreName" placeholder="Contoh: Toko Baju Kita">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Nama Agen AI</label>
+                                <input type="text" class="form-ctrl" id="inpBotName" placeholder="Contoh: CS Dini">
+                            </div>
+                        </div>
+                        <div class="mb-4">
+                            <label class="form-label">System Prompt — Karakter & Cara Bicara</label>
+                            <textarea class="form-ctrl" id="inpPrompt" rows="4" placeholder="Contoh: Kamu adalah CS bernama Dini. Balas dengan ramah, singkat, dan gunakan sapaan 'Kak'."></textarea>
+                        </div>
+                        <div class="mb-4">
+                            <label class="form-label">Product Knowledge — Data Produk & FAQ</label>
+                            <textarea class="form-ctrl" id="inpKnowledge" rows="9" placeholder="Masukkan daftar produk, harga, FAQ, dan informasi penting lainnya...&#10;&#10;Contoh:&#10;- Kaos polos Rp 35.000&#10;- DP minimal 50%..."></textarea>
+                        </div>
+                        <div class="d-flex align-items-center gap-3">
+                            <button class="btn-primary-custom" onclick="saveSettings()"><i class="fas fa-save me-2"></i>Simpan Konfigurasi</button>
+                            <small class="text-muted">Perubahan berlaku segera untuk pesan berikutnya.</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-4">
+                    <div class="card-glass" style="background: linear-gradient(135deg, #5b5ef4, #4643d4); color: white; height: fit-content;">
+                        <h6 class="fw-bold mb-3"><i class="fas fa-lightbulb me-2"></i> Panduan Prompt Efektif</h6>
+                        <ul style="list-style: none; padding: 0; font-size: 0.82rem; opacity: 0.9; line-height: 1.8;">
+                            <li>💬 Gunakan sapaan "Kak" agar akrab</li>
+                            <li>🎯 Arahkan ke close deal jika sudah tertarik</li>
+                            <li>📦 Sebutkan garansi / keunggulan produk</li>
+                            <li>🤝 Tawarkan bantuan proses pembayaran</li>
+                            <li>⚡ Respons singkat padat untuk mobile</li>
+                        </ul>
+                    </div>
+
+                    <div class="card-glass mt-4">
+                        <h6 class="fw-bold mb-3">Status & Kontrol</h6>
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <div>
+                                <div class="fw-bold" style="font-size:0.9rem">AI Otomatis</div>
+                                <small class="text-muted">Bot menjawab secara otomatis</small>
+                            </div>
+                            <div class="form-check form-switch m-0">
+                                <input class="form-check-input" type="checkbox" id="botToggle2" onchange="saveSettings()">
+                            </div>
+                        </div>
+                        <hr style="border-color: #f1f5f9;">
+                        <div style="font-size:0.82rem; color: #94a3b8;">
+                            Status Koneksi: <strong id="statusInBot">—</strong>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- === VIEW: MEDIA (Phase 4) === -->
+    <div class="view" id="view-media">
+        <div class="page-view">
+            <div class="page-header d-flex justify-content-between align-items-start">
+                <div>
+                    <h3>Katalog Media AI</h3>
+                    <p>Upload foto/video produk. AI akan mengirimkannya secara otomatis saat relevan dengan pertanyaan pelanggan.</p>
+                </div>
+                <button class="btn-primary-custom" data-bs-toggle="modal" data-bs-target="#modalUpload">
+                    <i class="fas fa-cloud-upload-alt me-2"></i>Upload Media
+                </button>
+            </div>
+
+            <!-- Limit Info -->
+            <div class="limit-info mb-4">
+                <ul class="list-unstyled m-0">
+                    <li><i class="fas fa-image me-2 text-primary"></i><strong>Foto:</strong> Maks. 5MB — Format: JPG, PNG, GIF, WebP</li>
+                    <li class="mt-1"><i class="fas fa-video me-2 text-warning"></i><strong>Video:</strong> Maks. 16MB / Durasi ≤ 60 detik — Format: MP4, MOV</li>
+                </ul>
+            </div>
+
+            <div id="mediaGrid" class="media-grid">
+                <div class="empty-state" style="grid-column: 1/-1;">
+                    <i class="fas fa-photo-video"></i>
+                    <p>Belum ada media. Klik "Upload Media" untuk mulai.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- === VIEW: CONNECT/QR === -->
+    <div class="view" id="view-connect">
+        <div id="connectView" class="page-view d-flex flex-column align-items-center justify-content-center">
+            <div class="connect-card card-glass text-center">
+                <h4 class="fw-bold mb-2">Koneksi WhatsApp</h4>
+                <p class="text-muted mb-4" style="font-size:0.88rem;">Akun: <strong id="connectStoreName">—</strong></p>
+
+                <div id="qrWrapper" class="mx-auto mb-4">
+                    <div id="qrcode"></div>
+                </div>
+
+                <div id="connectSuccess" class="d-none mb-4">
+                    <i class="fas fa-check-circle text-success" style="font-size:3.5rem;"></i>
+                    <p class="fw-bold mt-3 mb-1">Terhubung!</p>
+                </div>
+
+                <div id="connectLoading" class="mb-4">
+                    <div class="spinner-grow text-primary" style="width:2.5rem;height:2.5rem;"></div>
+                    <p class="text-muted mt-3 mb-0" style="font-size:0.85rem;">Menghubungkan...</p>
+                </div>
+
+                <div class="badge-status" id="connectStatusBadge" style="background:#f1f5f9;color:#64748b;">Memuat status...</div>
+            </div>
+        </div>
+    </div>
+
+</div><!-- end mainWindow -->
+
+<!-- ======= MODALS ======= -->
+
+<!-- Modal: Add Store -->
+<div class="modal fade" id="modalAddStore" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="fw-bold m-0">Tambah Akun WhatsApp Baru</h5>
+                <button class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted mb-4" style="font-size:0.88rem;">Setelah ditambahkan, bot akan memintai QR Code baru untuk nomor WhatsApp selanjutnya.</p>
+                <label class="form-label">Nama Toko / Cabang</label>
+                <input type="text" class="form-ctrl mb-4" id="newStoreName" placeholder="Contoh: Cabang Surabaya" onkeydown="if(event.key==='Enter')addStore()">
+                <button class="btn-primary-custom w-100" onclick="addStore()">
+                    <i class="fas fa-plus-circle me-2"></i>Tambahkan & Scan QR
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Upload Media -->
+<div class="modal fade" id="modalUpload" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="fw-bold m-0">Upload Aset Media</h5>
+                <button class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+
+                <!-- Drop Zone -->
+                <div id="uploadZone" onclick="document.getElementById('fileInput').click()" ondragover="event.preventDefault();this.classList.add('dragging')" ondragleave="this.classList.remove('dragging')" ondrop="handleDrop(event)">
+                    <i class="fas fa-cloud-upload-alt d-block"></i>
+                    <p class="fw-bold mb-1">Klik atau seret file ke sini</p>
+                    <p class="text-muted mb-0" style="font-size:0.8rem;">JPG, PNG, GIF, WebP — Maks 5MB &nbsp;|&nbsp; MP4, MOV — Maks 16MB</p>
+                    <p id="selectedFileName" class="mt-3 text-primary fw-bold" style="font-size:0.85rem;"></p>
+                </div>
+                <input type="file" id="fileInput" class="d-none" accept="image/*,video/*" onchange="onFileSelected(this)">
+
+                <div class="mt-4">
+                    <!-- Label -->
+                    <label class="form-label">Label / Tag Media <span class="text-danger">*</span></label>
+                    <input type="text" class="form-ctrl mb-3" id="mediaLabel" placeholder="Contoh: Katalog Kaos Polos, Tutorial Cara Pakai">
+
+                    <!-- PURPOSE SELECTOR -->
+                    <label class="form-label">Tujuan Media <span class="text-danger">*</span></label>
+                    <div class="purpose-selector mb-3" id="purposeSelector">
+                        <div class="purpose-option active" data-value="both" onclick="selectPurpose(this)">
+                            <i class="fas fa-layer-group"></i>
+                            <strong>Keduanya</strong>
+                            <small>AI pelajari + bisa dikirim ke customer</small>
+                        </div>
+                        <div class="purpose-option" data-value="knowledge_only" onclick="selectPurpose(this)">
+                            <i class="fas fa-brain"></i>
+                            <strong>Knowledge Only</strong>
+                            <small>AI pelajari saja, TIDAK dikirim ke customer</small>
+                        </div>
+                        <div class="purpose-option" data-value="send_only" onclick="selectPurpose(this)">
+                            <i class="fas fa-paper-plane"></i>
+                            <strong>Kirim Saja</strong>
+                            <small>Hanya dikirim ke customer, tidak jadi knowledge</small>
+                        </div>
+                    </div>
+
+                    <!-- Deskripsi -->
+                    <label class="form-label">Deskripsi Tambahan (Opsional)</label>
+                    <textarea class="form-ctrl" id="mediaDesc" rows="2" placeholder="Tambahan info untuk AI. Foto & video akan dianalisis otomatis — ini hanya suplemen."></textarea>
+
+                    <!-- AI Analysis Hints -->
+                    <div id="imgHint" style="display:none;" class="ai-hint-box mt-3">
+                        <i class="fas fa-eye me-2"></i><strong>Vision AI:</strong>
+                        Foto akan dianalisis GPT-4o Vision secara otomatis — AI akan "melihat" isi gambar dan menyimpannya sebagai pengetahuan.
+                    </div>
+                    <div id="videoHint" style="display:none;" class="ai-hint-box mt-3" style="border-color:#f59e0b;background:#fffbeb;">
+                        <i class="fas fa-microphone me-2"></i><strong>Whisper AI:</strong> Narasi/suara dalam video akan ditranskripsi otomatis.
+                        <br><i class="fas fa-film me-2 mt-1"></i><strong>Vision AI:</strong> 3 frame visual dari video akan dianalisis oleh GPT-4o Vision.
+                    </div>
+                </div>
+
+                <div id="uploadProgress" class="mt-3 d-none">
+                    <div class="progress">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary" style="width:100%"></div>
+                    </div>
+                    <small class="text-muted d-block mt-2 text-center">Mengunggah file...</small>
+                </div>
+
+                <button class="btn-primary-custom w-100 mt-4" id="btnUpload" onclick="uploadMedia()">
+                    <i class="fas fa-upload me-2"></i>Upload & Registrasi ke AI
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast Container -->
+<div id="toast-container"></div>
+
+<!-- ======= SCRIPTS ======= -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    // ============================================================
+    // STATE
+    // ============================================================
+    const socket = io();
+    let stores = [];
+    let currentStoreId = null;
+    let currentContactId = null;
+    let messages = []; // Full chat history for current store
+    let selectedFile = null;
+
+    // ============================================================
+    // INIT
+    // ============================================================
+    async function init() {
+        await loadStores();
+        // loadMedia() dipanggil oleh switchStore() secara otomatis
+    }
+
+    // ============================================================
+    // STORES
+    // ============================================================
+    async function loadStores() {
+        try {
+            const res = await fetch('/api/stores');
+            stores = await res.json();
+            renderStoreSidebar();
+            if (stores.length > 0) {
+                await switchStore(stores[0].wa_id);
+            } else {
+                document.getElementById('storeTitleChat').innerText = 'Tidak ada akun';
+            }
+        } catch (e) {
+            toast('Gagal memuat daftar toko.', 'error');
+        }
+    }
+
+    function renderStoreSidebar() {
+        // Clear existing store buttons
+        document.querySelectorAll('#storeSidebar .store-btn').forEach(el => el.remove());
+        const addBtn = document.getElementById('btnAddStore');
+
+        stores.forEach(s => {
+            const btn = document.createElement('div');
+            btn.className = `store-btn ${s.wa_id === currentStoreId ? 'active' : ''}`;
+            btn.setAttribute('title', s.name);
+            btn.innerText = s.name.substring(0, 2).toUpperCase();
+            btn.onclick = () => switchStore(s.wa_id);
+
+            const dot = document.createElement('div');
+            const isOnline = s.status?.includes('Dihubungkan');
+            const isScan   = s.status?.includes('Menunggu') || s.status?.includes('Scan');
+            dot.className = `dot ${isOnline ? 'online' : (isScan ? 'warning' : 'offline')}`;
+            btn.appendChild(dot);
+
+            addBtn.before(btn);
+        });
+    }
+
+    async function addStore() {
+        const name = document.getElementById('newStoreName').value.trim();
+        if (!name) { toast('Nama toko tidak boleh kosong!', 'error'); return; }
+
+        try {
+            const res = await fetch('/api/stores', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+            });
+            const data = await res.json();
+            if (data.success) {
+                bootstrap.Modal.getInstance(document.getElementById('modalAddStore')).hide();
+                document.getElementById('newStoreName').value = '';
+                toast(`Akun "${name}" ditambahkan! Scan QR di tab Koneksi.`, 'success');
+                await loadStores();
+                switchStore(data.store.wa_id);
+                switchView('connect');
+            } else {
+                toast(data.message, 'error');
+            }
+        } catch (e) {
+            toast('Gagal menambahkan toko.', 'error');
+        }
+    }
+
+    async function switchStore(id) {
+        currentStoreId = id;
+        currentContactId = null;
+        renderStoreSidebar();
+
+        const store = stores.find(s => s.wa_id === id);
+        if (!store) return;
+
+        // Update UI texts
+        document.getElementById('storeTitleChat').innerText  = store.name;
+        document.getElementById('botViewTitle').innerText    = store.name;
+        document.getElementById('connectStoreName').innerText = store.name;
+        const status = store.status || 'Offline';
+        document.getElementById('hdrStatusDot').innerText = status;
+        document.getElementById('statusInBot').innerText  = status;
+
+        // Load data
+        await loadSettings();
+        await loadChatHistory();
+        loadMedia(); // Reload media per-toko (Phase 5 Fix)
+    }
+
+    // ============================================================
+    // SETTINGS / BOT CONFIG
+    // ============================================================
+    async function loadSettings() {
+        if (!currentStoreId) return;
+        try {
+            const res = await fetch(`/api/settings/${currentStoreId}`);
+            if (!res.ok) return;
+            const s = await res.json();
+            document.getElementById('inpStoreName').value  = s.name || '';
+            document.getElementById('inpBotName').value    = s.bot_name || '';
+            document.getElementById('inpPrompt').value     = s.system_prompt || '';
+            document.getElementById('inpKnowledge').value  = s.product_knowledge || '';
+            document.getElementById('botToggle').checked   = s.is_bot_active;
+            document.getElementById('botToggle2').checked  = s.is_bot_active;
+            document.getElementById('statusInBot').innerText = s.status || 'Offline';
+
+            // Update connect view
+            updateConnectView(s.status);
+        } catch (e) {}
+    }
+
+    async function saveSettings() {
+        if (!currentStoreId) return;
+        const data = {
+            name:             document.getElementById('inpStoreName').value,
+            bot_name:         document.getElementById('inpBotName').value,
+            system_prompt:    document.getElementById('inpPrompt').value,
+            product_knowledge: document.getElementById('inpKnowledge').value,
+            is_bot_active:    document.getElementById('botToggle2').checked || document.getElementById('botToggle').checked
+        };
+        // Sync both toggles
+        document.getElementById('botToggle').checked  = data.is_bot_active;
+        document.getElementById('botToggle2').checked = data.is_bot_active;
+
+        try {
+            const res = await fetch(`/api/settings/${currentStoreId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (res.ok) {
+                toast('Pengaturan berhasil disimpan!', 'success');
+                const store = stores.find(s => s.wa_id === currentStoreId);
+                if (store) store.name = data.name;
+                renderStoreSidebar();
+                document.getElementById('storeTitleChat').innerText = data.name;
+                document.getElementById('botViewTitle').innerText = data.name;
+            }
+        } catch (e) {
+            toast('Gagal menyimpan.', 'error');
+        }
+    }
+
+    // ============================================================
+    // CHAT
+    // ============================================================
+    async function loadChatHistory() {
+        if (!currentStoreId) return;
+        try {
+            const res = await fetch(`/api/chat/${currentStoreId}`);
+            messages = await res.json();
+            renderConvList();
+            if (currentContactId) renderMessages();
+        } catch (e) {}
+    }
+
+    function renderConvList(filter = '') {
+        const list = document.getElementById('convList');
+        const map  = {};
+        messages.forEach(m => {
+            const c = m.contact_id;
+            if (!map[c] || new Date(m.timestamp) > new Date(map[c].timestamp)) map[c] = m;
+        });
+        const contacts = Object.keys(map)
+            .filter(c => !filter || c.toLowerCase().includes(filter.toLowerCase()))
+            .sort((a,b) => new Date(map[b].timestamp) - new Date(map[a].timestamp));
+
+        if (contacts.length === 0) {
+            list.innerHTML = `<div class="empty-state"><i class="fas fa-inbox"></i><p>Belum ada pesan masuk.</p></div>`;
+            return;
+        }
+        list.innerHTML = '';
+        contacts.forEach(c => {
+            const last = map[c];
+            const div  = document.createElement('div');
+            div.className = `conv-item ${currentContactId === c ? 'active' : ''}`;
+            div.onclick = () => selectContact(c);
+            div.innerHTML = `
+                <div class="conv-avatar">${c.substring(0,2)}</div>
+                <div style="flex:1;min-width:0;">
+                    <div class="d-flex justify-content-between mb-1">
+                        <span style="font-weight:700;font-size:0.88rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${c}</span>
+                        <span style="font-size:0.68rem;color:#94a3b8;flex-shrink:0;margin-left:8px;">${moment(last.timestamp).format('HH:mm')}</span>
+                    </div>
+                    <div style="font-size:0.8rem;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${last.body}</div>
+                </div>`;
+            list.appendChild(div);
+        });
+    }
+
+    function filterConv(q) { renderConvList(q); }
+
+    function selectContact(c) {
+        currentContactId = c;
+        document.getElementById('hdrName').innerText   = c;
+        document.getElementById('hdrAvatar').innerText = c.substring(0, 2).toUpperCase();
+        document.getElementById('hdrSub').innerText    = 'Percakapan aktif';
+        renderConvList();
+        renderMessages();
+    }
+
+    function renderMessages() {
+        const container = document.getElementById('chatMessages');
+        const myMsgs = messages.filter(m => m.contact_id === currentContactId);
+        if (myMsgs.length === 0) {
+            container.innerHTML = `<div class="empty-state m-auto"><i class="fas fa-comment-dots"></i><p>Belum ada pesan.</p></div>`;
+            return;
+        }
+        container.innerHTML = '';
+        myMsgs.forEach(m => {
+            const div = document.createElement('div');
+            div.className = `msg ${m.is_from_me ? 'msg-out' : 'msg-in'}`;
+            div.innerHTML  = `<div>${m.body}</div><small>${moment(m.timestamp).format('HH:mm')}</small>`;
+            container.appendChild(div);
+        });
+        container.scrollTop = container.scrollHeight;
+    }
+
+    async function sendManual() {
+        const input = document.getElementById('replyInput');
+        const body  = input.value.trim();
+        if (!body || !currentContactId) {
+            toast('Pilih pelanggan dan ketik pesan terlebih dahulu.', 'error');
+            return;
+        }
+        try {
+            const res = await fetch('/api/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ storeId: currentStoreId, to: currentContactId, body })
+            });
+            if (res.ok) {
+                input.value = '';
+            } else {
+                const err = await res.json();
+                toast(err.message || 'Gagal kirim pesan.', 'error');
+            }
+        } catch (e) {
+            toast('Gagal kirim. Pastikan WhatsApp sudah terhubung.', 'error');
+        }
+    }
+
+    // ============================================================
+    // MEDIA (Phase 5: Per-Store + Vision AI)
+    // ============================================================
+    async function loadMedia() {
+        if (!currentStoreId) return;
+        try {
+            const res = await fetch(`/api/media/${currentStoreId}`);
+            const assets = await res.json();
+            renderMediaGrid(assets);
+        } catch (e) {
+            console.error('Gagal load media:', e);
+        }
+    }
+
+    function renderMediaGrid(assets) {
+        const grid = document.getElementById('mediaGrid');
+        if (!assets || assets.length === 0) {
+            grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><i class="fas fa-photo-video"></i><p>Belum ada media untuk toko ini.<br><small>Klik "Upload Media" untuk mulai.</small></p></div>';
+            return;
+        }
+        grid.innerHTML = '';
+        assets.forEach(a => {
+            const div = document.createElement('div');
+            div.id = 'media-card-' + a.id;
+            div.className = 'media-card';
+            const srcUrl = '/uploads/' + a.filename;
+            const thumb = a.type === 'image'
+                ? ('<img src="' + srcUrl + '" alt="' + a.label + '" loading="lazy">')
+                : ('<video src="' + srcUrl + '" preload="metadata"></video>');
+
+            const aiBadge = (a.ai_analysis || a.video_transcript)
+                ? '<div class="vision-badge"><i class="fas fa-robot me-1"></i>AI Analyzed</div>'
+                : (a.analysis_status === 'processing'
+                    ? '<div class="vision-badge analyzing"><i class="fas fa-spinner fa-spin me-1"></i>Menganalisis...</div>'
+                    : '');
+
+            const purposeMap = {
+                both:          ['pb-both',      'fa-layer-group', 'Keduanya'],
+                knowledge_only:['pb-knowledge', 'fa-brain',       'Knowledge Only'],
+                send_only:     ['pb-send',      'fa-paper-plane', 'Kirim Saja']
+            };
+            const pm = purposeMap[a.purpose || 'both'] || purposeMap['both'];
+
+            const statusMap = {
+                pending:    ['as-pending',    'fa-clock',          'Pending'],
+                processing: ['as-processing', 'fa-spinner fa-spin','Proses'],
+                done:       ['as-done',       'fa-check-circle',   'Selesai'],
+                failed:     ['as-failed',     'fa-times-circle',   'Gagal']
+            };
+            const sm = statusMap[a.analysis_status || 'pending'] || statusMap['pending'];
+
+            const analysisBox  = a.ai_analysis ? ('<div class="ai-analysis-box"><i class="fas fa-eye me-1 text-primary"></i><strong>Visual:</strong> ' + a.ai_analysis + '</div>') : '';
+            const transcriptBox = a.video_transcript ? ('<div class="transcript-box"><i class="fas fa-microphone me-1"></i><strong>Narasi:</strong> ' + a.video_transcript + '</div>') : '';
+
+            const labelSafe = (a.label || '').replace(/'/g, "\'");
+            const selB = (a.purpose === 'both' || !a.purpose) ? 'selected' : '';
+            const selK = a.purpose === 'knowledge_only' ? 'selected' : '';
+            const selS = a.purpose === 'send_only' ? 'selected' : '';
+
+            div.innerHTML =
+                '<div class="media-thumb">' + thumb + aiBadge + '</div>' +
+                '<div class="media-info">' +
+                    '<div class="d-flex gap-1 flex-wrap mb-2">' +
+                        '<span class="purpose-badge ' + pm[0] + '"><i class="fas ' + pm[1] + '"></i>' + pm[2] + '</span>' +
+                        '<span class="analysis-status ' + sm[0] + '"><i class="fas ' + sm[1] + '"></i>' + sm[2] + '</span>' +
+                        '<span class="media-type-badge ' + (a.type === 'image' ? 'media-type-img' : 'media-type-vid') + '">' +
+                            '<i class="fas ' + (a.type === 'image' ? 'fa-image' : 'fa-video') + ' me-1"></i>' + a.type +
+                        '</span>' +
+                    '</div>' +
+                    '<p class="media-label">' + a.label + '</p>' +
+                    '<p class="media-desc">' + (a.description || '<em style="opacity:0.5">Tidak ada deskripsi manual</em>') + '</p>' +
+                    analysisBox + transcriptBox +
+                    '<select class="purpose-changer" onchange="changePurpose(' + a.id + ', this.value)">' +
+                        '<option value="both" ' + selB + '>Keduanya (Knowledge + Kirim)</option>' +
+                        '<option value="knowledge_only" ' + selK + '>Knowledge Only (tidak dikirim)</option>' +
+                        '<option value="send_only" ' + selS + '>Kirim Saja (tidak jadi knowledge)</option>' +
+                    '</select>' +
+                '</div>' +
+                '<button class="btn-del-media" onclick="deleteMedia(' + a.id + ',\'' + labelSafe + '\')"><i class="fas fa-trash"></i></button>';
+            grid.appendChild(div);
+        });
+    }
+
+
+    // ── PURPOSE SELECTOR ──────────────────────────────────────
+    let selectedPurpose = 'both';
+    function selectPurpose(el) {
+        document.querySelectorAll('.purpose-option').forEach(o => o.classList.remove('active'));
+        el.classList.add('active');
+        selectedPurpose = el.dataset.value;
+    }
+
+    async function changePurpose(id, purpose) {
+        try {
+            const res = await fetch('/api/media/' + currentStoreId + '/' + id + '/purpose', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ purpose })
+            });
+            if (res.ok) { toast('Tujuan media diperbarui!', 'success'); }
+            else { toast('Gagal mengubah tujuan.', 'error'); loadMedia(); }
+        } catch (e) { toast('Gagal mengubah tujuan.', 'error'); }
+    }
+
+    function onFileSelected(input) {
+        const file = input.files[0];
+        if (!file) return;
+        selectedFile = file;
+        document.getElementById('selectedFileName').innerText = '\u2713 ' + file.name + ' (' + (file.size/1024/1024).toFixed(2) + ' MB)';
+        if (!document.getElementById('mediaLabel').value) {
+            document.getElementById('mediaLabel').value = file.name.replace(/\.[^.]+$/, '');
+        }
+        const isImage = file.type.startsWith('image/');
+        const imgH = document.getElementById('imgHint');
+        const vidH = document.getElementById('videoHint');
+        if (imgH) imgH.style.display  = isImage  ? 'block' : 'none';
+        if (vidH) vidH.style.display  = !isImage ? 'block' : 'none';
+    }
+
+
+    function handleDrop(e) {
+        e.preventDefault();
+        document.getElementById('uploadZone').classList.remove('dragging');
+        const file = e.dataTransfer.files[0];
+        if (!file) return;
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        const inp = document.getElementById('fileInput');
+        inp.files = dt.files;
+        onFileSelected(inp);
+    }
+
+    async function uploadMedia() {
+        if (!selectedFile) { toast('Pilih file terlebih dahulu!', 'error'); return; }
+        const label = document.getElementById('mediaLabel').value.trim();
+        if (!label)  { toast('Label / tag media wajib diisi!', 'error'); return; }
+        if (!currentStoreId) { toast('Pilih toko terlebih dahulu!', 'error'); return; }
+
+        const desc = document.getElementById('mediaDesc').value.trim();
+        const form = new FormData();
+        form.append('file',        selectedFile);
+        form.append('label',       label);
+        form.append('description', desc);
+        form.append('purpose',     selectedPurpose);
+
+        document.getElementById('uploadProgress').classList.remove('d-none');
+        document.getElementById('btnUpload').disabled = true;
+
+        try {
+            const res  = await fetch('/api/media/' + currentStoreId, { method: 'POST', body: form });
+            const data = await res.json();
+            if (data.success) {
+                const isImage   = selectedFile.type.startsWith('image/');
+                const pLabel    = { both: 'Keduanya', knowledge_only: 'Knowledge Only', send_only: 'Kirim Saja' }[selectedPurpose] || '-';
+                const aiMsg     = isImage ? '\uD83E\uDD16 Vision AI menganalisis...' : '\uD83C\uDFA4 Whisper + \uD83C\uDFAC Vision AI menganalisis video...';
+                toast('"' + label + '" diupload sebagai [' + pLabel + ']! ' + aiMsg, 'success');
+                bootstrap.Modal.getInstance(document.getElementById('modalUpload')).hide();
+                selectedFile    = null;
+                selectedPurpose = 'both';
+                document.getElementById('fileInput').value          = '';
+                document.getElementById('selectedFileName').innerText = '';
+                document.getElementById('mediaLabel').value          = '';
+                document.getElementById('mediaDesc').value           = '';
+                const ih = document.getElementById('imgHint');   if (ih)  ih.style.display  = 'none';
+                const vh = document.getElementById('videoHint'); if (vh)  vh.style.display  = 'none';
+                document.querySelectorAll('.purpose-option').forEach(o => o.classList.remove('active'));
+                const defaultPurpose = document.querySelector('.purpose-option[data-value="both"]');
+                if (defaultPurpose) defaultPurpose.classList.add('active');
+                loadMedia();
+            } else {
+                toast(data.message || 'Upload gagal.', 'error');
+            }
+        } catch (e) {
+            toast('Upload gagal. Coba lagi.', 'error');
+        } finally {
+            document.getElementById('uploadProgress').classList.add('d-none');
+            document.getElementById('btnUpload').disabled = false;
+        }
+    }
+
+
+    async function deleteMedia(id, label) {
+        if (!confirm(`Hapus media "${label}"? AI tidak akan lagi bisa mengirim file ini.`)) return;
+        try {
+            // FIX 1: Delete dengan verifikasi kepemilikan toko
+            const res = await fetch(`/api/media/${currentStoreId}/${id}`, { method: 'DELETE' });
+            if (res.ok) {
+                toast(`Media "${label}" dihapus.`, 'success');
+                loadMedia();
+            } else {
+                const err = await res.json();
+                toast(err.message || 'Gagal hapus.', 'error');
+            }
+        } catch (e) {
+            toast('Gagal hapus media.', 'error');
+        }
+    }
+
+    // ============================================================
+    // CONNECT VIEW
+    // ============================================================
+    function updateConnectView(status) {
+        const badge   = document.getElementById('connectStatusBadge');
+        const success = document.getElementById('connectSuccess');
+        const loading = document.getElementById('connectLoading');
+        const qrWrap  = document.getElementById('qrWrapper');
+
+        badge.innerText = status || 'Offline';
+        const isOnline  = status?.includes('Dihubungkan');
+        const isScan    = status?.includes('Menunggu') || status?.includes('Scan');
+
+        success.classList.toggle('d-none', !isOnline);
+        loading.classList.toggle('d-none', isOnline || isScan);
+        qrWrap.classList.toggle('d-none', isOnline || !isScan);
+
+        if (isOnline) { badge.style.background = '#d1fae5'; badge.style.color = '#065f46'; }
+        else if (isScan) { badge.style.background = '#fef3c7'; badge.style.color = '#92400e'; }
+        else { badge.style.background = '#f1f5f9'; badge.style.color = '#64748b'; }
+    }
+
+    // ============================================================
+    // SOCKET.IO
+    // ============================================================
+    socket.on('newMessage', ({ storeId, msg }) => {
+        if (storeId !== currentStoreId) return;
+        messages.push(msg);
+        renderConvList();
+        if (currentContactId === msg.contact_id) renderMessages();
+    });
+
+    socket.on('statusUpdate', ({ storeId, status }) => {
+        const s = stores.find(str => str.wa_id === storeId);
+        if (s) s.status = status;
+        renderStoreSidebar();
+        if (storeId === currentStoreId) {
+            document.getElementById('hdrStatusDot').innerText = status;
+            document.getElementById('statusInBot').innerText  = status;
+            updateConnectView(status);
+        }
+    });
+
+    socket.on('qrUpdate', ({ storeId, qr }) => {
+        if (storeId !== currentStoreId) return;
+        document.getElementById('qrWrapper').classList.remove('d-none');
+        document.getElementById('connectLoading').classList.add('d-none');
+        const qrDiv = document.getElementById('qrcode');
+        qrDiv.innerHTML = '';
+        new QRCode(qrDiv, { text: qr, width: 230, height: 230 });
+    });
+
+    socket.on('mediaUpdated', ({ storeId }) => {
+        if (storeId === currentStoreId) loadMedia();
+    });
+
+    // FIX 2: Vision AI analisis selesai — refresh media card yang relevan
+    socket.on('mediaAnalysisReady', ({ storeId, assetId, ai_analysis }) => {
+        if (storeId !== currentStoreId) return;
+        toast('🤖 Vision AI selesai menganalisis gambar!', 'success');
+        loadMedia(); // Refresh grid untuk tampilkan hasil analisis
+    });
+
+    // ============================================================
+    // NAVIGATION
+    // ============================================================
+    function switchView(id) {
+        document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+        document.querySelectorAll('.nav-btn').forEach(v => v.classList.remove('active'));
+        document.getElementById(`view-${id}`).classList.add('active');
+        document.getElementById(`nav-${id}`).classList.add('active');
+        if (id === 'connect') loadSettings();
+    }
+
+    // ============================================================
+    // TOAST
+    // ============================================================
+    function toast(msg, type = 'success') {
+        const container = document.getElementById('toast-container');
+        const el = document.createElement('div');
+        el.className = `toast-msg ${type}`;
+        el.innerHTML = `<i class="fas ${type === 'success' ? 'fa-check-circle' : 'fa-exclamation-circle'} me-2"></i>${msg}`;
+        container.appendChild(el);
+        setTimeout(() => el.remove(), 4000);
+    }
+
+    // ============================================================
+    // KICKOFF
+    // ============================================================
+    init();
+</script>
+</body>
+</html>
