@@ -14,5 +14,4 @@ trash/
 temp/
 *.log
 scripts/patch_html.js
-Dockerfile
-.dockerignore
+# Dockerfile & .dockerignore HARUS di-upload agar DigitalOcean/Railway bisa mendeploy!
