@@ -480,8 +480,9 @@
                 </div>
             </div>
 
-            <div id="replyBar">
-                <input type="text" id="replyInput" placeholder="Ketik balasan manual (Enter untuk kirim)..." onkeydown="if(event.key==='Enter')sendManual()">
+            <div id="replyBar" class="d-flex align-items-center gap-2">
+                <button class="btn btn-light border" style="width:45px;height:45px;border-radius:12px;color:var(--slate-500);transition:0.2s;" onclick="openMediaSelector()" title="Sisipkan Katalog/Gambar"><i class="fas fa-paperclip"></i></button>
+                <input type="text" id="replyInput" class="form-ctrl m-0" placeholder="Ketik balasan manual (Enter untuk kirim)..." onkeydown="if(event.key==='Enter')sendManual()">
                 <button id="btnSend" onclick="sendManual()"><i class="fas fa-paper-plane"></i></button>
             </div>
         </div>
@@ -630,6 +631,69 @@
                 <button class="btn-primary-custom w-100" onclick="addStore()">
                     <i class="fas fa-plus-circle me-2"></i>Tambahkan & Scan QR
                 </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Pilih Media (CRM Manual Send) -->
+<div class="modal fade" id="modalMediaSelector" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="fw-bold m-0"><i class="fas fa-paperclip me-2 text-primary"></i>Kirim Media ke Customer</h5>
+                <button class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body bg-light">
+                <div id="mediaSelectorGrid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:12px;"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Edit Media (NEW) -->
+<div class="modal fade" id="modalEditMedia" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="fw-bold m-0">Edit Detail Media & Tinjau AI</h5>
+                <button class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="editMediaId">
+                <div class="mb-3">
+                    <label class="form-label">Label / Judul</label>
+                    <input type="text" class="form-ctrl" id="editMediaLabel">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Deskripsi Tambahan</label>
+                    <textarea class="form-ctrl" id="editMediaDesc" rows="2"></textarea>
+                </div>
+                <!-- Marketing Autopilot -->
+                <div class="mb-3 p-3" style="background:var(--slate-50); border:1px solid #e2e8f0; border-radius:12px;">
+                    <label class="form-label text-danger fw-bold"><i class="fas fa-bolt me-2"></i>Trigger Auto-Reply (Balas Cepat)</label>
+                    <input type="text" class="form-ctrl mb-1" id="editMediaTrigger" placeholder="Contoh: pricelist, katalog, harga">
+                    <small class="text-muted d-block lh-sm">Jika customer mengetik kata kunci ini, bot akan <strong>langsung</strong> mengirim gambar ini tanpa berpikir. Pisahkan dengan koma.</small>
+                </div>
+                <!-- AI Override -->
+                <div class="mb-3 p-3" style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:12px;">
+                    <label class="form-label text-primary fw-bold"><i class="fas fa-robot me-2"></i>Memori Visual AI (Bisa Dikoreksi)</label>
+                    <textarea class="form-ctrl mb-1" id="editMediaAI" rows="3"></textarea>
+                    <small class="text-muted d-block lh-sm">Inilah yang AI "pikirkan" saat melihat gambar Anda. Edit teks ini jika AI salah menebak warna/bentuk barang Anda!</small>
+                </div>
+                <!-- Purpose -->
+                <div class="mb-3">
+                    <label class="form-label">Tujuan Media</label>
+                    <select class="form-ctrl" id="editMediaPurpose">
+                        <option value="both">Keduanya (AI Pelajari + Kirim ke Customer)</option>
+                        <option value="knowledge_only">Knowledge Only (Jangan dikirim ke Customer)</option>
+                        <option value="send_only">Kirim Saja (Jangan dipelajari AI)</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Batal</button>
+                <button type="button" class="btn btn-primary" onclick="saveEditMedia()"><i class="fas fa-save me-2"></i>Simpan Perubahan</button>
             </div>
         </div>
     </div>
@@ -989,7 +1053,7 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ storeId: currentStoreId, to: currentContactId, body })
-            });
+            })
             if (res.ok) {
                 input.value = '';
             } else {
@@ -998,6 +1062,59 @@
             }
         } catch (e) {
             toast('Gagal kirim. Pastikan WhatsApp sudah terhubung.', 'error');
+        }
+    }
+
+    // --- CRM Kirim Media Manual ---
+    function openMediaSelector() {
+        if (!currentContactId) return toast('Pilih percakapan dulu.', 'warning');
+        const grid = document.getElementById('mediaSelectorGrid');
+        grid.innerHTML = '';
+        
+        if (!window.mediaAssetsRaw || window.mediaAssetsRaw.length === 0) {
+            grid.innerHTML = '<div class="w-100 text-center text-muted p-4">Belum ada media di library toko ini.</div>';
+            new bootstrap.Modal(document.getElementById('modalMediaSelector')).show();
+            return;
+        }
+
+        window.mediaAssetsRaw.forEach(a => {
+            const div = document.createElement('div');
+            const srcUrl = '/uploads/' + a.filename;
+            const thumb = a.type === 'image' 
+                ? `<img src="${srcUrl}" style="width:100%;height:100px;object-fit:cover;border-radius:8px;">` 
+                : `<video src="${srcUrl}" style="width:100%;height:100px;object-fit:cover;border-radius:8px;"></video>`;
+            
+            div.innerHTML = `
+                <div style="background:#fff;border-radius:10px;padding:6px;cursor:pointer;box-shadow:0 2px 4px rgba(0,0,0,0.05);transition:0.2s;text-align:center;" onclick="sendManualMedia(${a.id})" class="media-selector-item">
+                    ${thumb}
+                    <p style="font-size:0.75rem;margin:6px 0 0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${a.label || 'Tanpa Label'}</p>
+                </div>
+            `;
+            // add subtle hover style dynamically via CSS or inline (using CSS class is better, but this works)
+            div.onmouseover = () => div.firstElementChild.style.transform = "scale(1.02)";
+            div.onmouseout = () => div.firstElementChild.style.transform = "scale(1)";
+            grid.appendChild(div);
+        });
+
+        new bootstrap.Modal(document.getElementById('modalMediaSelector')).show();
+    }
+
+    async function sendManualMedia(mediaId) {
+        if (!currentContactId) return;
+        bootstrap.Modal.getInstance(document.getElementById('modalMediaSelector')).hide();
+        
+        try {
+            const res = await fetch('/api/send-media', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ storeId: currentStoreId, to: currentContactId, mediaId })
+            });
+            if (!res.ok) {
+                const err = await res.json();
+                toast(err.message || 'Gagal kirim media.', 'error');
+            }
+        } catch (e) {
+            toast('Gagal menghubungi server.', 'error');
         }
     }
 
@@ -1016,6 +1133,7 @@
     }
 
     function renderMediaGrid(assets) {
+        window.mediaAssetsRaw = assets; // Cache for edit modal
         const grid = document.getElementById('mediaGrid');
         if (!assets || assets.length === 0) {
             grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><i class="fas fa-photo-video"></i><p>Belum ada media untuk toko ini.<br><small>Klik "Upload Media" untuk mulai.</small></p></div>';
@@ -1052,13 +1170,11 @@
             };
             const sm = statusMap[a.analysis_status || 'pending'] || statusMap['pending'];
 
-            const analysisBox  = a.ai_analysis ? ('<div class="ai-analysis-box"><i class="fas fa-eye me-1 text-primary"></i><strong>Visual:</strong> ' + a.ai_analysis + '</div>') : '';
+            const analysisBox  = a.ai_analysis ? ('<div class="ai-analysis-box"><i class="fas fa-eye me-1 text-primary"></i><strong>Memori AI:</strong> ' + a.ai_analysis + '</div>') : '';
             const transcriptBox = a.video_transcript ? ('<div class="transcript-box"><i class="fas fa-microphone me-1"></i><strong>Narasi:</strong> ' + a.video_transcript + '</div>') : '';
+            const triggerBox   = a.trigger_words ? ('<div class="mt-2 text-danger" style="font-size:0.75rem;"><i class="fas fa-bolt me-1"></i><strong>Trigger:</strong> ' + a.trigger_words + '</div>') : '';
 
             const labelSafe = (a.label || '').replace(/'/g, "\'");
-            const selB = (a.purpose === 'both' || !a.purpose) ? 'selected' : '';
-            const selK = a.purpose === 'knowledge_only' ? 'selected' : '';
-            const selS = a.purpose === 'send_only' ? 'selected' : '';
 
             div.innerHTML =
                 '<div class="media-thumb">' + thumb + aiBadge + '</div>' +
@@ -1072,37 +1188,61 @@
                     '</div>' +
                     '<p class="media-label">' + a.label + '</p>' +
                     '<p class="media-desc">' + (a.description || '<em style="opacity:0.5">Tidak ada deskripsi manual</em>') + '</p>' +
-                    analysisBox + transcriptBox +
-                    '<select class="purpose-changer" onchange="changePurpose(' + a.id + ', this.value)">' +
-                        '<option value="both" ' + selB + '>Keduanya (Knowledge + Kirim)</option>' +
-                        '<option value="knowledge_only" ' + selK + '>Knowledge Only (tidak dikirim)</option>' +
-                        '<option value="send_only" ' + selS + '>Kirim Saja (tidak jadi knowledge)</option>' +
-                    '</select>' +
+                    analysisBox + transcriptBox + triggerBox +
                 '</div>' +
-                '<button class="btn-del-media" onclick="deleteMedia(' + a.id + ',\'' + labelSafe + '\')"><i class="fas fa-trash"></i></button>';
+                '<button class="btn-edit-media" style="position:absolute; bottom:12px; right:45px; background:var(--blue); color:white; border:none; width:30px; height:30px; border-radius:5px; transition:0.2s; cursor:pointer;" onclick="openEditMedia(' + a.id + ')"><i class="fas fa-edit"></i></button>' +
+                '<button class="btn-del-media" style="cursor:pointer;" onclick="deleteMedia(' + a.id + ',\'' + labelSafe + '\')"><i class="fas fa-trash"></i></button>';
             grid.appendChild(div);
         });
     }
 
 
-    // ── PURPOSE SELECTOR ──────────────────────────────────────
-    let selectedPurpose = 'both';
-    function selectPurpose(el) {
-        document.querySelectorAll('.purpose-option').forEach(o => o.classList.remove('active'));
-        el.classList.add('active');
-        selectedPurpose = el.dataset.value;
+    // ── EDIT MEDIA ──────────────────────────────────────────
+    function openEditMedia(id) {
+        if (!window.mediaAssetsRaw) return;
+        const asset = window.mediaAssetsRaw.find(a => a.id === id);
+        if (!asset) return;
+
+        document.getElementById('editMediaId').value = id;
+        document.getElementById('editMediaLabel').value = asset.label || '';
+        document.getElementById('editMediaDesc').value = asset.description || '';
+        document.getElementById('editMediaTrigger').value = asset.trigger_words || '';
+        document.getElementById('editMediaAI').value = asset.ai_analysis || '';
+        document.getElementById('editMediaPurpose').value = asset.purpose || 'both';
+
+        new bootstrap.Modal(document.getElementById('modalEditMedia')).show();
     }
 
-    async function changePurpose(id, purpose) {
+    async function saveEditMedia() {
+        const id = document.getElementById('editMediaId').value;
+        const btn = document.querySelector('#modalEditMedia .btn-primary');
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Menyimpan...';
+
         try {
-            const res = await fetch('/api/media/' + currentStoreId + '/' + id + '/purpose', {
-                method: 'PATCH',
+            const res = await fetch('/api/media/' + currentStoreId + '/' + id, {
+                method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ purpose })
+                body: JSON.stringify({
+                    label: document.getElementById('editMediaLabel').value,
+                    description: document.getElementById('editMediaDesc').value,
+                    trigger_words: document.getElementById('editMediaTrigger').value,
+                    ai_analysis: document.getElementById('editMediaAI').value,
+                    purpose: document.getElementById('editMediaPurpose').value
+                })
             });
-            if (res.ok) { toast('Tujuan media diperbarui!', 'success'); }
-            else { toast('Gagal mengubah tujuan.', 'error'); loadMedia(); }
-        } catch (e) { toast('Gagal mengubah tujuan.', 'error'); }
+            if (res.ok) {
+                toast('Detail media berhasil diperbarui!', 'success');
+                bootstrap.Modal.getInstance(document.getElementById('modalEditMedia')).hide();
+                loadMedia();
+            } else {
+                toast('Gagal menyimpan perubahan.', 'error');
+            }
+        } catch (e) {
+            toast('Gagal menghubungi server.', 'error');
+        } finally {
+            btn.innerHTML = originalText;
+        }
     }
 
     function onFileSelected(input) {

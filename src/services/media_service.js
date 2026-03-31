@@ -163,15 +163,23 @@ async function _runAnalysisInBackground(asset, filePath, onAnalysisDone) {
 }
 
 /**
- * Update tujuan (purpose) sebuah media.
+ * Update detail informasi sebuah media (Label, Tujuan, Deskripsi, AI Override, Trigger Words).
  * @param {number} id
  * @param {string} storeWaId - Verifikasi kepemilikan
- * @param {string} purpose   - 'both' | 'knowledge_only' | 'send_only'
+ * @param {object} data      - Object berisi field yang mau diupdate
  */
-async function updateMediaPurpose(id, storeWaId, purpose) {
+async function updateMediaDetails(id, storeWaId, data) {
   const asset = await MediaAsset.findOne({ where: { id, store_wa_id: storeWaId } });
   if (!asset) throw new Error('Media tidak ditemukan atau bukan milik toko ini.');
-  await asset.update({ purpose });
+  
+  const updateData = {};
+  if (data.label !== undefined) updateData.label = data.label;
+  if (data.description !== undefined) updateData.description = data.description;
+  if (data.purpose !== undefined) updateData.purpose = data.purpose;
+  if (data.ai_analysis !== undefined) updateData.ai_analysis = data.ai_analysis;
+  if (data.trigger_words !== undefined) updateData.trigger_words = data.trigger_words;
+
+  await asset.update(updateData);
   return asset;
 }
 
@@ -202,6 +210,6 @@ module.exports = {
   getKnowledgeMedia,
   findSendableMediaByKeyword,
   registerMedia,
-  updateMediaPurpose,
+  updateMediaDetails,
   deleteMedia
 };

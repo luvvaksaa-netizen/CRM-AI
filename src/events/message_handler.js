@@ -82,6 +82,34 @@ async function handleMessage(message, storeWaId) {
         });
         const history = recentHistory.reverse();
 
+        // 3.5 === MARKETING AUTOPILOT (Trigger Keyword Check) ===
+        // Fitur ini memungkinkan pengiriman otomatis katalog tanpa menggunakan API OpenAI (Hemat Token & Super Cepat)
+        const { MediaAsset } = require('../database/index');
+        const storeAssets = await MediaAsset.findAll({ where: { store_wa_id: storeWaId } });
+        let triggeredAsset = null;
+
+        for (const asset of storeAssets) {
+            if (!asset.trigger_words) continue;
+            const keywords = asset.trigger_words.split(',').map(k => k.trim().toLowerCase()).filter(k => k.length > 0);
+            const bodyLower = body.toLowerCase();
+            
+            if (keywords.some(kw => bodyLower.includes(kw))) {
+                triggeredAsset = asset;
+                break;
+            }
+        }
+
+        if (triggeredAsset) {
+            logger.success(`[${storeWaId}] Keyword trigger aktif. Mengirim Katalog [${triggeredAsset.label}] via Autopilot!`);
+            await chat.sendStateTyping();
+            await new Promise(r => setTimeout(r, 1200)); // Jeda manusiawi
+            
+            // Caption menggunakan Description manual dari user, atau Label jika kosong
+            const caption = triggeredAsset.description || triggeredAsset.label;
+            await _sendMediaToChat(message, triggeredAsset, caption, storeWaId, contactId, store);
+            return; // ⛔ HENTIKAN PROSES DI SINI - JANGAN PANGGIL AI ⛔
+        }
+
         // 4. Jeda Berpikir (Natural Feel)
         await new Promise(r => setTimeout(r, Math.floor(Math.random() * 700) + 500));
 

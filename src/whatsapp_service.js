@@ -132,9 +132,51 @@ async function sendManualMessage(storeWaId, to, body) {
     }
 }
 
+/**
+ * Mengirim gambar/video (katalog) secara manual dari Dashboard.
+ */
+async function sendManualMedia(storeWaId, to, mediaAsset) {
+    const client = clients.get(storeWaId);
+    if (!client) throw new Error(`Client [${storeWaId}] tidak aktif!`);
+
+    try {
+        const { MessageMedia } = require('whatsapp-web.js');
+        const { UPLOADS_DIR } = require('./config');
+        const path = require('path');
+        const fs = require('fs');
+
+        const mediaPath = path.join(UPLOADS_DIR, mediaAsset.filename);
+        if (!fs.existsSync(mediaPath)) throw new Error('File media fisik tidak ditemukan.');
+
+        const mediaMsg = MessageMedia.fromFilePath(mediaPath);
+        const caption = mediaAsset.description || mediaAsset.label || '';
+        const msg = await client.sendMessage(to, mediaMsg, { caption });
+
+        // Tampilkan sebagai HTML thumbnail di Dashboard
+        const fileExt = mediaPath.split('.').pop().toLowerCase();
+        const tag = ['mp4', 'mov', 'avi'].includes(fileExt) ? '[VIDEO' : '[MEDIA';
+        const logBody = `${tag}:/uploads/${mediaAsset.filename}] ${caption}`;
+
+        await dashboard.addToChatHistory(storeWaId, {
+            id: msg.id.id,
+            from: to,
+            body: logBody,
+            isMe: true,
+            sender_name: 'CS Manual'
+        });
+
+        logger.info(`[${storeWaId}] Media Manual [${mediaAsset.label}] dikirim ke [${to}]`);
+        return true;
+    } catch (error) {
+        logger.error(`[${storeWaId}] Gagal kirim media manual: ${error.message}`);
+        throw error;
+    }
+}
+
 module.exports = {
     createWhatsAppClient,
     setupEventListeners,
     getClients,
-    sendManualMessage
+    sendManualMessage,
+    sendManualMedia
 };

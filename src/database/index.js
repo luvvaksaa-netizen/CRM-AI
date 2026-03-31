@@ -39,6 +39,7 @@ const MediaAsset = sequelize.define('MediaAsset', {
   description:      { type: DataTypes.TEXT   },                    // Deskripsi manual dari user
   ai_analysis:      { type: DataTypes.TEXT,   defaultValue: '' }, // Hasil Vision AI (foto/frame video)
   video_transcript: { type: DataTypes.TEXT,   defaultValue: '' }, // Hasil Whisper (audio video)
+  trigger_words:    { type: DataTypes.STRING, defaultValue: '' }, // Keyword otomatis kirim katalog (pisah dengan koma)
   purpose:          {                                              // Tujuan media
     type: DataTypes.ENUM('both', 'knowledge_only', 'send_only'),
     defaultValue: 'both'

@@ -250,6 +250,24 @@ function initDashboard(port = 3000) {
     }
   });
 
+  // POST: Kirim Media Manual
+  app.post('/api/send-media', async (req, res) => {
+    try {
+      const { storeId, to, mediaId } = req.body;
+      if (!storeId || !to || !mediaId) return res.status(400).json({ success: false, message: 'Data tidak lengkap.' });
+      
+      const { MediaAsset } = require('../database/index');
+      const asset = await MediaAsset.findOne({ where: { id: mediaId, store_wa_id: storeId } });
+      if (!asset) return res.status(404).json({ success: false, message: 'Media tidak ditemukan.' });
+
+      const whatsappService = require('../whatsapp_service');
+      await whatsappService.sendManualMedia(storeId, to, asset);
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
   // ============================================================
   // MEDIA APIs — Per-Store + Vision AI + Whisper + Purpose Control
   // ============================================================
@@ -330,14 +348,16 @@ function initDashboard(port = 3000) {
     }
   });
 
-  // PATCH: Update tujuan (purpose) media tanpa re-upload
-  app.patch('/api/media/:storeId/:id/purpose', async (req, res) => {
+  // PUT: Update seluruh detail informasi media (Label, Description, Purpose, Tags, AI Override) tanpa re-upload
+  app.put('/api/media/:storeId/:id', async (req, res) => {
     try {
-      const { purpose } = req.body;
+      const { purpose, label, description, ai_analysis, trigger_words } = req.body;
       const validPurposes = ['both', 'knowledge_only', 'send_only'];
-      if (!validPurposes.includes(purpose)) return res.status(400).json({ success: false, message: 'Purpose tidak valid.' });
+      if (purpose && !validPurposes.includes(purpose)) return res.status(400).json({ success: false, message: 'Purpose tidak valid.' });
 
-      const asset = await mediaService.updateMediaPurpose(parseInt(req.params.id), req.params.storeId, purpose);
+      const asset = await mediaService.updateMediaDetails(parseInt(req.params.id), req.params.storeId, {
+          purpose, label, description, ai_analysis, trigger_words
+      });
       if (io) io.emit('mediaUpdated', { storeId: req.params.storeId });
       res.json({ success: true, asset: asset.dataValues });
     } catch (error) {
