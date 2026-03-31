@@ -928,7 +928,9 @@
                         <span style="font-weight:700;font-size:0.88rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${friendlyName}</span>
                         <span style="font-size:0.68rem;color:#94a3b8;flex-shrink:0;margin-left:8px;">${moment(last.timestamp).format('HH:mm')}</span>
                     </div>
-                    <div style="font-size:0.8rem;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${last.body}</div>
+                    <div style="font-size:0.8rem;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                        ${last.body.replace(/\[MEDIA:[^\]]+\]/g, '📷 Foto').replace(/\[VIDEO:[^\]]+\]/g, '🎥 Video')}
+                    </div>
                 </div>`;
             list.appendChild(div);
         });
@@ -946,6 +948,17 @@
         renderMessages();
     }
 
+    function parseMediaMsg(text) {
+        if(!text) return '';
+        let html = text.replace(/</g, "&lt;").replace(/>/g, "&gt;"); // XSS basic protection
+        // Render Image
+        html = html.replace(/\[MEDIA:([^\]]+)\]/g, `<div class="mt-1 mb-2"><img src="$1" style="max-width:200px; max-height:200px; border-radius:8px; display:block;" onerror="this.style.display='none'"></div>`);
+        // Render Video
+        html = html.replace(/\[VIDEO:([^\]]+)\]/g, `<div class="mt-1 mb-2"><video src="$1" controls style="max-width:200px; max-height:200px; border-radius:8px; display:block;"></video></div>`);
+        // Handle newline
+        return html.replace(/\n/g, '<br>');
+    }
+
     function renderMessages() {
         const container = document.getElementById('chatMessages');
         const myMsgs = messages.filter(m => m.contact_id === currentContactId);
@@ -957,7 +970,8 @@
         myMsgs.forEach(m => {
             const div = document.createElement('div');
             div.className = `msg ${m.is_from_me ? 'msg-out' : 'msg-in'}`;
-            div.innerHTML  = `<div>${m.body}</div><small>${moment(m.timestamp).format('HH:mm')}</small>`;
+            // Use logical payload rendering instead of raw text
+            div.innerHTML  = `<div>${parseMediaMsg(m.body)}</div><small>${moment(m.timestamp).format('HH:mm')}</small>`;
             container.appendChild(div);
         });
         container.scrollTop = container.scrollHeight;

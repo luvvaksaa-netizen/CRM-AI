@@ -7,6 +7,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { MessageMedia } = require('whatsapp-web.js');
+const { UPLOADS_DIR } = require('../config');
 
 /**
  * Handle incoming message event with Multi-Session + Smart Media (Phase 4).
@@ -28,9 +29,9 @@ async function handleMessage(message, storeWaId) {
             if (media && media.mimetype.startsWith('image/')) {
                 logger.info(`[${storeWaId}] Menerima foto dari pelanggan. Menganalisis...`);
                 
-                // Simpan sementara untuk dianalisis
-                const fileName = `customer_${Date.now()}.${media.mimetype.split('/')[1]}`;
-                tempPath = path.join(os.tmpdir(), fileName);
+                // Simpan MASA PERMANEN ke UPLOADS_DIR agar bisa dilihat di Dashboard Web CRM
+                const fileName = `customer_${storeWaId}_${Date.now()}.${media.mimetype.split('/')[1]}`;
+                tempPath = path.join(UPLOADS_DIR, fileName);
                 fs.writeFileSync(tempPath, Buffer.from(media.data, 'base64'));
 
                 // Ambil store context untuk panduan AI Vision
@@ -41,12 +42,15 @@ async function handleMessage(message, storeWaId) {
 
                 customerMediaContext = await analyzeImage(tempPath, storeContext);
                 logger.success(`[${storeWaId}] AI "melihat" foto pelanggan: ${customerMediaContext.substring(0, 50)}...`);
+                
+                // Beri tag khusus agar UI bisa menampilkan gambar
+                customerMediaContext = `[MEDIA:/uploads/${fileName}] ${customerMediaContext}`;
             }
         }
 
-        // 2. Log Pesan Pelanggan ke DB & Dashboard UI (Sertakan label foto jika ada)
+        // 2. Log Pesan Pelanggan ke DB & Dashboard UI (Sertakan tag gambar dari customerMediaContext)
         const logBody = customerMediaContext 
-            ? `[🖼️ Foto: ${customerMediaContext}]\n${body}`.trim()
+            ? `${customerMediaContext}\n${body}`.trim()
             : body;
 
         await dashboard.addToChatHistory(storeWaId, {
@@ -118,11 +122,12 @@ async function handleMessage(message, storeWaId) {
     } catch (error) {
         logger.error(`[${storeWaId}] Gagal memproses [${contactId}]: ${error.message}`);
     } finally {
-        // Hapus file temp jika ada
-        if (tempPath && fs.existsSync(tempPath)) {
+        // tempPath sekarang disimpan permanen untuk Dashboard CRM,
+        // KECUALI jika tempPath menggunakan os.tmpdir() (misal format yg tidak didukung)
+        if (tempPath && tempPath.includes(os.tmpdir()) && fs.existsSync(tempPath)) {
             try {
                 fs.unlinkSync(tempPath);
-                logger.info(`[${storeWaId}] File sementara pelanggan dibersihkan.`);
+                logger.info(`[${storeWaId}] File sementara dibersihkan.`);
             } catch (e) { /* ignore */ }
         }
     }
@@ -142,8 +147,11 @@ async function _sendMediaToChat(message, mediaAsset, caption, storeWaId, contact
         const mediaMsg = MessageMedia.fromFilePath(mediaPath);
         await message.reply(mediaMsg, undefined, { caption: caption || "" });
 
-        // Log media ke chat history
-        const logBody = `[📸 Media: ${mediaAsset.label}] ${caption}`;
+        // Log media ke chat history, tampilkan Thumbnail di Dashboard Web
+        const fileExt = mediaPath.split('.').pop().toLowerCase();
+        const tag = ['mp4', 'mov', 'avi'].includes(fileExt) ? '[VIDEO' : '[MEDIA';
+        
+        const logBody = `${tag}:/uploads/${mediaAsset.filename}] ${caption || `Katalog: ${mediaAsset.label}`}`;
         await _logBotReply(storeWaId, contactId, logBody, store?.bot_name);
         
         logger.success(`[${storeWaId}] Media [${mediaAsset.label}] dikirim ke [${contactId}]`);
