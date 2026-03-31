@@ -21,21 +21,26 @@ function getClients() {
  * Mencegah error "profile already in use" saat container restart di Railway.
  */
 function cleanupSessionLocks(clientId) {
-    const sessionDir = path.join(process.cwd(), '.wwebjs_auth', `session-${clientId}`);
-    if (!fs.existsSync(sessionDir)) return;
-
-    // Semua file lock yang perlu dihapus
+    // Gunakan DATA_DIR config agar selaras
+    const { DATA_DIR } = require('./config');
+    
+    // WA-Web.js by default menyimpan di .wwebjs_auth relatif terhadap CURRENT DIR,
+    // yang mana sudah diset sebagai DATA_DIR di production lewat Dockerfile ENV.
+    // Tapi untuk memastikan, kita gunakan path absolut ke DATA_DIR
+    const baseWwebjsDir = path.join(process.cwd(), '.wwebjs_auth');
+    const sessionDir = path.join(baseWwebjsDir, `session-${clientId}`);
+    
+    // Semua file lock yang perlu dihapus (Chronium stores this as symlinks)
     const lockFiles = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
 
     lockFiles.forEach(lockName => {
         const lockFile = path.join(sessionDir, lockName);
-        if (fs.existsSync(lockFile)) {
-            try {
-                fs.unlinkSync(lockFile);
-                logger.info(`[${clientId}] Membersihkan ${lockName}.`);
-            } catch (e) {
-                logger.warn(`[${clientId}] Gagal hapus ${lockName}: ${e.message}`);
-            }
+        try {
+            // PENTING: Gunakan rmSync force karena SingletonLock adalah dangling symlink
+            // fs.existsSync() akan me-return FALSE pada dangling symlink!
+            fs.rmSync(lockFile, { force: true });
+        } catch (e) {
+            // Abaikan error (fail silently if not exists)
         }
     });
 }

@@ -1,11 +1,12 @@
 const { Sequelize, DataTypes } = require('sequelize');
 const path = require('path');
 const logger = require('../utils/logger');
+const { DATA_DIR } = require('../config');
 
-// SQLite Connection
+// SQLite disimpan di DATA_DIR agar persisten di Volume Railway/Docker
 const sequelize = new Sequelize({
   dialect: 'sqlite',
-  storage: path.join(process.cwd(), 'database.sqlite'),
+  storage: path.join(DATA_DIR, 'database.sqlite'),
   logging: false
 });
 

@@ -21,6 +21,9 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 # 3. Direktori Kerja
 WORKDIR /usr/src/app
 
+# Set DATA_DIR agar mengarah langsung ke Volume Railway Anda yang sudah terpasang
+ENV DATA_DIR=/usr/src/app/.wwebjs_auth
+
 # 4. Install Dependencies & PAKSA BUILD DARI SOURCE
 # Ini adalah kunci untuk mengatasi error GLIBC
 COPY package*.json ./
@@ -32,8 +35,8 @@ RUN npm install
 # 6. Copy Source Code
 COPY . .
 
-# 7. Persiapan Folder Login
-RUN mkdir -p .wwebjs_auth public/uploads && chmod -R 777 .wwebjs_auth public/uploads
+# 7. Persiapan Folder Data & Volume Lock
+RUN mkdir -p .wwebjs_auth/uploads && chmod -R 777 .wwebjs_auth
 
 # 8. Expose & Start
 EXPOSE 3000

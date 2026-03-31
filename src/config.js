@@ -1,43 +1,67 @@
 /**
  * @file config.js
  * @description Loads and validates environment variables.
+ *
+ * DATA_DIR Strategy (VPS-Ready Architecture):
+ *   - Local Dev      : DATA_DIR tidak di-set → defaults ke ./data/
+ *   - Docker/Railway : DATA_DIR = /usr/src/app/.wwebjs_auth (set di Dockerfile)
+ *   - VPS            : DATA_DIR = /var/data/crm (set di systemd/env)
  */
 
 const dotenv = require('dotenv');
+const path = require('path');
+const fs = require('fs');
 const logger = require('./utils/logger');
 
-// Load environment variables from .env
+// Load .env (hanya relevan di local dev)
 const result = dotenv.config();
 
-if (result.error) {
-    logger.warn("Peringatan: File .env tidak ditemukan. Pastikan sudah ada.");
+// Hanya tampilkan warning di development agar log Railway tetap bersih
+if (result.error && process.env.NODE_ENV !== 'production') {
+    logger.warn('Peringatan: File .env tidak ditemukan (normal di production server).');
 }
 
+// ============================================================
+// DATA DIRECTORY — Pusat semua data persisten
+// ============================================================
+const DATA_DIR = process.env.DATA_DIR
+    ? path.resolve(process.env.DATA_DIR)
+    : path.join(process.cwd(), 'data'); // Local default: ./data/
+
+const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
+
+// Auto-create folders saat startup (aman dan idempotent)
+[DATA_DIR, UPLOADS_DIR].forEach(dir => {
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+});
+
 const config = {
-    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    // AI & Shipping
+    OPENAI_API_KEY:     process.env.OPENAI_API_KEY,
     RAJAONGKIR_API_KEY: process.env.RAJAONGKIR_API_KEY,
-    KOMERCE_BASE_URL: 'https://rajaongkir.komerce.id/api/v1', 
-    CLIENT_NAME: process.env.CLIENT_NAME || 'WA-AI-CS-Bot',
-    MODEL_NAME: process.env.MODEL_NAME || 'gpt-4o-mini',
-    ORIGIN_NAME: 'Kediri' // Asal pengiriman default
+    KOMERCE_BASE_URL:   'https://rajaongkir.komerce.id/api/v1',
+    CLIENT_NAME:        process.env.CLIENT_NAME || 'WA-AI-CS-Bot',
+    MODEL_NAME:         process.env.MODEL_NAME  || 'gpt-4o-mini',
+    ORIGIN_NAME:        process.env.ORIGIN_NAME || 'Kediri',
+
+    // Paths (Terpusat — gunakan di seluruh proyek, jangan hardcode lagi)
+    DATA_DIR,
+    UPLOADS_DIR,
 };
 
-// Simple validation to ensure the bot can run
 const validateConfig = () => {
     if (!config.OPENAI_API_KEY) {
-        logger.error("OPENAI_API_KEY is missing in your .env file!");
+        logger.error('OPENAI_API_KEY tidak ditemukan! Bot AI tidak akan berfungsi.');
         return false;
     }
     if (!config.RAJAONGKIR_API_KEY) {
-        logger.warn("RAJAONGKIR_API_KEY is missing! Fitur cek ongkir tidak akan aktif.");
-        logger.info("Silakan daftar di https://komerce.id/ untuk mendapatkan Collaborator API Key.");
+        logger.warn('RAJAONGKIR_API_KEY tidak ada. Fitur cek ongkir dinonaktifkan.');
     } else {
-        logger.info(`Shipping Engine: Menggunakan Komerce Collaborator API [${config.KOMERCE_BASE_URL}]`);
+        logger.info(`Shipping Engine: Komerce API [${config.KOMERCE_BASE_URL}]`);
     }
     return true;
 };
 
-module.exports = {
-    ...config,
-    validateConfig
-};
+module.exports = { ...config, validateConfig };

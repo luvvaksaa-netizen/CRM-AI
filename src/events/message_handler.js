@@ -133,7 +133,8 @@ async function handleMessage(message, storeWaId) {
  * @private
  */
 async function _sendMediaToChat(message, mediaAsset, caption, storeWaId, contactId, store) {
-    const mediaPath = path.join(process.cwd(), 'public', 'uploads', mediaAsset.filename);
+    const { UPLOADS_DIR } = require('../config');
+    const mediaPath = path.join(UPLOADS_DIR, mediaAsset.filename);
     
     try {
         if (!fs.existsSync(mediaPath)) throw new Error(`File tidak ditemukan: ${mediaAsset.filename}`);

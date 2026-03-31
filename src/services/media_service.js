@@ -184,7 +184,8 @@ async function deleteMedia(id, storeWaId) {
   const asset = await MediaAsset.findOne({ where: { id, store_wa_id: storeWaId } });
   if (!asset) throw new Error('Media tidak ditemukan atau bukan milik toko ini.');
 
-  const filePath = path.join(process.cwd(), 'public', 'uploads', asset.filename);
+  const { UPLOADS_DIR } = require('../config');
+  const filePath = path.join(UPLOADS_DIR, asset.filename);
   if (fs.existsSync(filePath)) {
     fs.unlinkSync(filePath);
     logger.info(`[Media] File fisik dihapus: ${asset.filename}`);

@@ -16,6 +16,8 @@ const multer = require('multer');
 const session = require('express-session');
 const SequelizeStore = require('connect-session-sequelize')(session.Store);
 const logger = require('../utils/logger');
+const config = require('../config');
+const { UPLOADS_DIR } = config;
 const { Store, ChatMessage, sequelize } = require('../database/index');
 const mediaService = require('./media_service');
 
@@ -91,8 +93,9 @@ app.get('/', authenticate, (req, res) => {
 // Aset statis (termasuk index.html) — diproteksi setelah route / di atas
 app.use(authenticate, express.static(path.join(process.cwd(), 'public')));
 
-// Folder uploads diproteksi
-app.use('/uploads', authenticate, express.static(path.join(process.cwd(), 'public', 'uploads')));
+// Folder uploads dari DATA_DIR (persisten di Volume)
+app.use('/uploads', authenticate, express.static(UPLOADS_DIR));
+
 
 // ============================================================
 // MULTER: File Upload Configuration
@@ -102,9 +105,9 @@ const MAX_FILE_SIZE = 16 * 1024 * 1024; // 16MB hard ceiling
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadPath = path.join(process.cwd(), 'public', 'uploads');
-    if (!fs.existsSync(uploadPath)) fs.mkdirSync(uploadPath, { recursive: true });
-    cb(null, uploadPath);
+    // Simpan ke UPLOADS_DIR (ada di dalam Volume, persisten)
+    if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+    cb(null, UPLOADS_DIR);
   },
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
