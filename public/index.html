@@ -814,6 +814,8 @@
     let currentContactId = null;
     let currentAgentId = null; // The agent controlling current store
     let messages = []; // Full chat history for current store
+    const qrCache = {}; // Cache QR code per store_wa_id
+    const statusCache = {}; // Cache status per store_wa_id
     let selectedFile = null;
     let selectedPurpose = 'both';
 
@@ -903,12 +905,15 @@
 
         currentAgentId = store.agent_id;
 
-        // Update UI texts
+        // Update UI texts & status badge
         document.getElementById('storeTitleChat').innerText  = store.name;
         document.getElementById('connectStoreName').innerText = store.name;
         
         const status = store.status || 'Offline';
         document.getElementById('hdrStatusDot').innerText = status;
+        
+        // Sync the connection card (QR/Spinner/Success View)
+        updateConnectView(status);
         
         // Update connection dropdown & toggle
         document.getElementById('selConnectAgent').value = store.agent_id || '';
@@ -1554,6 +1559,12 @@
         loading.classList.toggle('d-none', isOnline || isScan);
         qrWrap.classList.toggle('d-none', isOnline || !isScan);
 
+        if (isScan && qrCache[currentStoreId]) {
+            const qrDiv = document.getElementById('qrcode');
+            qrDiv.innerHTML = '';
+            new QRCode(qrDiv, { text: qrCache[currentStoreId], width: 230, height: 230 });
+        }
+
         if (isOnline) { badge.style.background = '#d1fae5'; badge.style.color = '#065f46'; }
         else if (isScan) { badge.style.background = '#fef3c7'; badge.style.color = '#92400e'; }
         else { badge.style.background = '#f1f5f9'; badge.style.color = '#64748b'; }
@@ -1580,12 +1591,19 @@
     });
 
     socket.on('qrUpdate', ({ storeId, qr }) => {
+        qrCache[storeId] = qr;
         if (storeId !== currentStoreId) return;
-        document.getElementById('qrWrapper').classList.remove('d-none');
-        document.getElementById('connectLoading').classList.add('d-none');
-        const qrDiv = document.getElementById('qrcode');
-        qrDiv.innerHTML = '';
-        new QRCode(qrDiv, { text: qr, width: 230, height: 230 });
+        updateConnectView('Menunggu Scan QR...');
+    });
+
+    socket.on('statusUpdate', ({ storeId, status }) => {
+        // Update local store cache
+        const s = stores.find(str => str.wa_id === storeId);
+        if (s) s.status = status;
+        
+        if (storeId !== currentStoreId) return;
+        updateConnectView(status);
+        document.getElementById('hdrStatusDot').innerText = status;
     });
 
     socket.on('mediaUpdated', ({ agentId }) => {
