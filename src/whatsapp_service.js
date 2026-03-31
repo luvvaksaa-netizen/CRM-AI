@@ -62,7 +62,9 @@ function createWhatsAppClient(storeWaId) {
         puppeteer: {
             args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
             headless: true,
-            handleSIGINT: false
+            handleSIGINT: false,
+            timeout: 60000,           // 60 detik timeout launch
+            protocolTimeout: 600000   // 10 menit timeout pengiriman data base64 CDP
         }
     });
 
