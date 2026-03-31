@@ -428,10 +428,10 @@
 <!-- ======= SIDEBAR 2: NAVIGATION ======= -->
 <div id="navSidebar">
     <div class="nav-btn active" onclick="switchView('chat')" id="nav-chat">
-        <i class="fas fa-comment-alt"></i><span>Chat</span>
+        <i class="fas fa-comment-alt"></i><span>Live Chat</span>
     </div>
-    <div class="nav-btn" onclick="switchView('bot')" id="nav-bot">
-        <i class="fas fa-brain"></i><span>AI Bot</span>
+    <div class="nav-btn" onclick="switchView('agents')" id="nav-agents">
+        <i class="fas fa-brain"></i><span>AI Agents</span>
     </div>
     <div class="nav-btn" onclick="switchView('media')" id="nav-media">
         <i class="fas fa-photo-video"></i><span>Media</span>
@@ -444,11 +444,11 @@
 <!-- ======= MAIN WINDOW ======= -->
 <div id="mainWindow">
 
-    <!-- === VIEW: CHAT === -->
+    <!-- === VIEW 1: LIVE CHAT CRM === -->
     <div class="view active" id="view-chat">
         <div id="convPanel">
             <div class="panel-top">
-                <h5 id="storeTitleChat">Memuat...</h5>
+                <h5 id="storeTitleChat">Memuat Chat...</h5>
                 <p>Live CRM Dashboard</p>
             </div>
             <div id="convSearch"><input type="text" placeholder="🔍  Cari pelanggan..." oninput="filterConv(this.value)"></div>
@@ -466,10 +466,6 @@
                 </div>
                 <div class="d-flex align-items-center gap-3">
                     <span id="hdrStatusDot" class="badge-status bg-secondary bg-opacity-10 text-secondary">Offline</span>
-                    <div class="form-check form-switch m-0 d-flex align-items-center gap-2">
-                        <label class="small fw-bold text-muted" style="font-size:0.72rem;letter-spacing:0.5px;">AI AUTO</label>
-                        <input class="form-check-input" type="checkbox" id="botToggle" checked onchange="document.getElementById('botToggle2').checked = this.checked; saveSettings()">
-                    </div>
                 </div>
             </div>
 
@@ -488,67 +484,78 @@
         </div>
     </div>
 
-    <!-- === VIEW: BOT/SETTINGS === -->
-    <div class="view" id="view-bot">
+    <!-- === VIEW 2: MASTER AI AGENTS (NEW) === -->
+    <div class="view" id="view-agents">
         <div class="page-view">
-            <div class="page-header">
-                <h3>Konfigurasi AI Bot</h3>
-                <p>Atur karakter, gaya bicara, dan knowledge base untuk akun: <strong id="botViewTitle">—</strong></p>
+            <div class="page-header d-flex justify-content-between align-items-center">
+                <div>
+                    <h3 class="fw-bold"><i class="fas fa-brain me-2 text-primary"></i>Master AI Agents</h3>
+                    <p class="text-muted">Desain "Otak" AI Anda di sini. Satu agen bisa mengontrol banyak nomor WA sekaligus.</p>
+                </div>
+                <button class="btn-primary-custom" onclick="createNewAgent()"><i class="fas fa-plus me-2"></i>Buat Agen Baru</button>
             </div>
 
-            <div class="row g-4">
-                <div class="col-lg-8">
-                    <div class="card-glass">
-                        <div class="row g-3 mb-4">
-                            <div class="col-md-6">
-                                <label class="form-label">Nama Toko/Cabang</label>
-                                <input type="text" class="form-ctrl" id="inpStoreName" placeholder="Contoh: Toko Baju Kita">
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Nama Agen AI</label>
-                                <input type="text" class="form-ctrl" id="inpBotName" placeholder="Contoh: CS Dini">
-                            </div>
+            <div class="row g-4" id="agentListContainer">
+                <!-- Agent cards injected by JS -->
+                <div class="col-12 text-center p-5 text-muted">Memuat data agen...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- === VIEW 3: AGENT EDITOR (UNIFIED BRAIN & MEDIA) === -->
+    <div class="view" id="view-bot">
+        <div class="page-view d-flex flex-column h-100 pb-0">
+            <div class="page-header d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h3 class="fw-bold d-flex align-items-center">
+                        <button class="btn btn-sm btn-outline-secondary rounded-pill border-0 me-3" onclick="switchView('agents')"><i class="fas fa-arrow-left"></i></button>
+                        Master Agent: <span id="agentEditName" class="text-primary ms-1"></span>
+                    </h3>
+                    <p class="text-muted">Kelola kepribadian dan gudang media (katalog) agen ini di satu tempat.</p>
+                </div>
+                <button class="btn-primary-custom" onclick="saveAgentSettings()">
+                    <i class="fas fa-save me-2"></i>Simpan Perubahan
+                </button>
+            </div>
+
+            <div class="row g-4 flex-grow-1 overflow-hidden" style="min-height: 500px;">
+                <!-- KIRI: Pengetahuan & Kepribadian -->
+                <div class="col-lg-7 h-100">
+                    <div class="card-glass h-100 overflow-auto p-4">
+                        <div class="mb-4">
+                            <label class="form-label fw-bold"><i class="fas fa-id-card-alt me-2 text-primary"></i>Internal Label</label>
+                            <input type="text" class="form-ctrl" id="inpAgentInternalName" placeholder="Contoh: Agen Sarung Premium">
                         </div>
                         <div class="mb-4">
-                            <label class="form-label">System Prompt — Karakter & Cara Bicara</label>
-                            <textarea class="form-ctrl" id="inpPrompt" rows="4" placeholder="Contoh: Kamu adalah CS bernama Dini. Balas dengan ramah, singkat, dan gunakan sapaan 'Kak'."></textarea>
+                            <label class="form-label fw-bold"><i class="fas fa-robot me-2 text-primary"></i>Panggilan Bot (Ke Customer)</label>
+                            <input type="text" class="form-ctrl" id="inpBotName" placeholder="Contoh: CS Dini">
                         </div>
                         <div class="mb-4">
-                            <label class="form-label">Product Knowledge — Data Produk & FAQ</label>
-                            <textarea class="form-ctrl" id="inpKnowledge" rows="9" placeholder="Masukkan daftar produk, harga, FAQ, dan informasi penting lainnya...&#10;&#10;Contoh:&#10;- Kaos polos Rp 35.000&#10;- DP minimal 50%..."></textarea>
+                            <label class="form-label fw-bold"><i class="fas fa-quote-left me-2 text-primary"></i>Kepribadian (System Prompt)</label>
+                            <textarea class="form-ctrl" id="inpPrompt" rows="3" placeholder="Gaya bahasa, cara menjawab..."></textarea>
                         </div>
-                        <div class="d-flex align-items-center gap-3">
-                            <button class="btn-primary-custom" onclick="saveSettings()"><i class="fas fa-save me-2"></i>Simpan Konfigurasi</button>
-                            <small class="text-muted">Perubahan berlaku segera untuk pesan berikutnya.</small>
+                        <div class="mb-0">
+                            <label class="form-label fw-bold"><i class="fas fa-book me-2 text-primary"></i>Ilmu Pengetahuan & FAQ</label>
+                            <textarea class="form-ctrl" id="inpKnowledge" rows="10" placeholder="Semua data produk Anda di sini..."></textarea>
                         </div>
                     </div>
                 </div>
-                <div class="col-lg-4">
-                    <div class="card-glass" style="background: linear-gradient(135deg, #5b5ef4, #4643d4); color: white; height: fit-content;">
-                        <h6 class="fw-bold mb-3"><i class="fas fa-lightbulb me-2"></i> Panduan Prompt Efektif</h6>
-                        <ul style="list-style: none; padding: 0; font-size: 0.82rem; opacity: 0.9; line-height: 1.8;">
-                            <li>💬 Gunakan sapaan "Kak" agar akrab</li>
-                            <li>🎯 Arahkan ke close deal jika sudah tertarik</li>
-                            <li>📦 Sebutkan garansi / keunggulan produk</li>
-                            <li>🤝 Tawarkan bantuan proses pembayaran</li>
-                            <li>⚡ Respons singkat padat untuk mobile</li>
-                        </ul>
-                    </div>
 
-                    <div class="card-glass mt-4">
-                        <h6 class="fw-bold mb-3">Status & Kontrol</h6>
-                        <div class="d-flex justify-content-between align-items-center mb-3">
-                            <div>
-                                <div class="fw-bold" style="font-size:0.9rem">AI Otomatis</div>
-                                <small class="text-muted">Bot menjawab secara otomatis</small>
-                            </div>
-                            <div class="form-check form-switch m-0">
-                                <input class="form-check-input" type="checkbox" id="botToggle2" onchange="document.getElementById('botToggle').checked = this.checked; saveSettings()">
-                            </div>
+                <!-- KANAN: Media Library Agen -->
+                <div class="col-lg-5 h-100">
+                    <div class="card-glass h-100 d-flex flex-column p-4">
+                        <div class="d-flex justify-content-between align-items-center mb-4">
+                            <h6 class="fw-bold m-0"><i class="fas fa-images me-2 text-primary"></i>Media & Katalog Agen</h6>
+                            <button class="btn btn-sm btn-primary rounded-pill px-3" data-bs-toggle="modal" data-bs-target="#modalUpload">
+                                <i class="fas fa-upload me-1"></i>Upload
+                            </button>
                         </div>
-                        <hr style="border-color: #f1f5f9;">
-                        <div style="font-size:0.82rem; color: #94a3b8;">
-                            Status Koneksi: <strong id="statusInBot">—</strong>
+                        <div id="agentMediaGrid" class="flex-grow-1 overflow-auto" style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                            <!-- Injected via script -->
+                            <div class="text-center p-5 text-muted small">Memuat media...</div>
+                        </div>
+                        <div class="mt-4 p-3 bg-white rounded-3 border" style="font-size: 0.78rem;">
+                            <i class="fas fa-info-circle text-primary me-2"></i> Media ini milik Agen. Semua nomor WA yang terikat akan memakai katalog yang sama.
                         </div>
                     </div>
                 </div>
@@ -556,42 +563,51 @@
         </div>
     </div>
 
-    <!-- === VIEW: MEDIA (Phase 4) === -->
+    <!-- === VIEW 4: MEDIA LIBRARY (AGENTS CENTRIC) === -->
     <div class="view" id="view-media">
         <div class="page-view">
             <div class="page-header d-flex justify-content-between align-items-start">
                 <div>
-                    <h3>Katalog Media AI</h3>
-                    <p>Upload foto/video produk. AI akan mengirimkannya secara otomatis saat relevan dengan pertanyaan pelanggan.</p>
+                    <h3>Media Library (Katalog Agen)</h3>
+                    <p>Kelola aset foto/video untuk membantu agen AI menjawab pelanggan.</p>
                 </div>
-                <button class="btn-primary-custom" data-bs-toggle="modal" data-bs-target="#modalUpload">
+                <button class="btn-primary-custom" data-bs-toggle="modal" data-bs-target="#modalUpload" id="btnOpenUpload">
                     <i class="fas fa-cloud-upload-alt me-2"></i>Upload Media
                 </button>
-            </div>
-
-            <!-- Limit Info -->
-            <div class="limit-info mb-4">
-                <ul class="list-unstyled m-0">
-                    <li><i class="fas fa-image me-2 text-primary"></i><strong>Foto:</strong> Maks. 5MB — Format: JPG, PNG, GIF, WebP</li>
-                    <li class="mt-1"><i class="fas fa-video me-2 text-warning"></i><strong>Video:</strong> Maks. 16MB / Durasi ≤ 60 detik — Format: MP4, MOV</li>
-                </ul>
             </div>
 
             <div id="mediaGrid" class="media-grid">
                 <div class="empty-state" style="grid-column: 1/-1;">
                     <i class="fas fa-photo-video"></i>
-                    <p>Belum ada media. Klik "Upload Media" untuk mulai.</p>
+                    <p>Silakan pilih Agen atau Store terlebih dahulu untuk melihat media.</p>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- === VIEW: CONNECT/QR === -->
+    <!-- === VIEW 5: WHATSAPP CONNECTION & BINDING === -->
     <div class="view" id="view-connect">
-        <div id="connectView" class="page-view d-flex flex-column align-items-center justify-content-center">
-            <div class="connect-card card-glass text-center">
-                <h4 class="fw-bold mb-2">Koneksi WhatsApp</h4>
-                <p class="text-muted mb-4" style="font-size:0.88rem;">Akun: <strong id="connectStoreName">—</strong></p>
+        <div class="page-view d-flex flex-column align-items-center justify-content-center">
+            <div class="connect-card card-glass text-center" style="max-width: 450px;">
+                <h4 class="fw-bold mb-2">WhatsApp Device Status</h4>
+                <p class="text-muted mb-4" id="connectStoreName">Pilih Perangkat di Sidebar</p>
+
+                <div class="mb-4 text-start">
+                    <label class="form-label fw-bold">Agen Pusat yang Menggerakan Perangkat Ini</label>
+                    <select class="form-ctrl" id="selConnectAgent" onchange="updateStoreAgentBinding()">
+                        <option value="">-- Tanpa Agen (Bot Off) --</option>
+                    </select>
+                </div>
+
+                <div class="mb-5 d-flex align-items-center justify-content-between p-3" style="background:#f8fafc; border-radius:14px; border:1px solid #f1f5f9;">
+                    <div class="text-start">
+                        <p class="fw-bold m-0" style="font-size:0.9rem;">Auto-Reply AI</p>
+                        <small class="text-muted">Balas chat otomatis via Agen.</small>
+                    </div>
+                    <div class="form-check form-switch m-0">
+                        <input class="form-check-input" type="checkbox" id="botToggle" onchange="updateStoreAgentBinding()" style="width:1.8em;height:1em;cursor:pointer;">
+                    </div>
+                </div>
 
                 <div id="qrWrapper" class="mx-auto mb-4">
                     <div id="qrcode"></div>
@@ -607,12 +623,13 @@
                     <p class="text-muted mt-3 mb-0" style="font-size:0.85rem;">Menghubungkan...</p>
                 </div>
 
-                <div class="badge-status" id="connectStatusBadge" style="background:#f1f5f9;color:#64748b;">Memuat status...</div>
+                <div class="badge-status mx-auto" id="connectStatusBadge" style="background:#f1f5f9;color:#64748b; width: fit-content; padding: 6px 15px;">Off-sync</div>
+            </div>
             </div>
         </div>
     </div>
 
-</div><!-- end mainWindow -->
+</div> <!-- end mainWindow -->
 
 <!-- ======= MODALS ======= -->
 
@@ -625,9 +642,17 @@
                 <button class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <p class="text-muted mb-4" style="font-size:0.88rem;">Setelah ditambahkan, bot akan memintai QR Code baru untuk nomor WhatsApp selanjutnya.</p>
-                <label class="form-label">Nama Toko / Cabang</label>
-                <input type="text" class="form-ctrl mb-4" id="newStoreName" placeholder="Contoh: Cabang Surabaya" onkeydown="if(event.key==='Enter')addStore()">
+                <p class="text-muted mb-4" style="font-size:0.88rem;">Setiap perangkat (tubuh) harus memiliki Agen (otak) yang menggerakannya.</p>
+                
+                <label class="form-label">Nama Perangkat / Cabang</label>
+                <input type="text" class="form-ctrl mb-3" id="newStoreName" placeholder="Contoh: CS Surabaya 1">
+
+                <label class="form-label">Pilih Agen Penggerak (Otak AI)</label>
+                <select class="form-ctrl mb-4" id="selNewStoreAgent">
+                    <!-- Dynamic agent list -->
+                    <option value="">-- Buat Agen Dulu --</option>
+                </select>
+
                 <button class="btn-primary-custom w-100" onclick="addStore()">
                     <i class="fas fa-plus-circle me-2"></i>Tambahkan & Scan QR
                 </button>
@@ -784,17 +809,20 @@
     // ============================================================
     const socket = io();
     let stores = [];
+    let agents = []; // Master Agents list
     let currentStoreId = null;
     let currentContactId = null;
+    let currentAgentId = null; // The agent controlling current store
     let messages = []; // Full chat history for current store
     let selectedFile = null;
+    let selectedPurpose = 'both';
 
     // ============================================================
     // INIT
     // ============================================================
     async function init() {
+        await loadAgents();
         await loadStores();
-        // loadMedia() dipanggil oleh switchStore() secara otomatis
     }
 
     // ============================================================
@@ -838,20 +866,22 @@
     }
 
     async function addStore() {
-        const name = document.getElementById('newStoreName').value.trim();
-        if (!name) { toast('Nama toko tidak boleh kosong!', 'error'); return; }
+        const name    = document.getElementById('newStoreName').value.trim();
+        const agentId = document.getElementById('selNewStoreAgent').value;
+        if (!name)     { toast('Nama perangkat tidak boleh kosong!', 'error'); return; }
+        if (!agentId)  { toast('Silakan pilih Agen Penggerak terlebih dahulu!', 'error'); return; }
 
         try {
             const res = await fetch('/api/stores', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name })
+                body: JSON.stringify({ name, agent_id: agentId })
             });
             const data = await res.json();
             if (data.success) {
                 bootstrap.Modal.getInstance(document.getElementById('modalAddStore')).hide();
                 document.getElementById('newStoreName').value = '';
-                toast(`Akun "${name}" ditambahkan! Scan QR di tab Koneksi.`, 'success');
+                toast(`Toko "${name}" terdaftar & terikat ke Agen! Scan QR di tab Koneksi.`, 'success');
                 await loadStores();
                 switchStore(data.store.wa_id);
                 switchView('connect');
@@ -859,7 +889,7 @@
                 toast(data.message, 'error');
             }
         } catch (e) {
-            toast('Gagal menambahkan toko.', 'error');
+            toast('Gagal menambahkan perangkat.', 'error');
         }
     }
 
@@ -871,71 +901,221 @@
         const store = stores.find(s => s.wa_id === id);
         if (!store) return;
 
+        currentAgentId = store.agent_id;
+
         // Update UI texts
         document.getElementById('storeTitleChat').innerText  = store.name;
-        document.getElementById('botViewTitle').innerText    = store.name;
         document.getElementById('connectStoreName').innerText = store.name;
+        
         const status = store.status || 'Offline';
         document.getElementById('hdrStatusDot').innerText = status;
-        document.getElementById('statusInBot').innerText  = status;
+        
+        // Update connection dropdown & toggle
+        document.getElementById('selConnectAgent').value = store.agent_id || '';
+        document.getElementById('botToggle').checked = store.is_bot_active;
 
         // Load data
-        await loadSettings();
         await loadChatHistory();
-        loadMedia(); // Reload media per-toko (Phase 5 Fix)
+        if (currentAgentId) loadMedia(); 
+        else renderMediaGrid([]); // Clear if no agent
     }
 
-    // ============================================================
-    // SETTINGS / BOT CONFIG
-    // ============================================================
-    async function loadSettings() {
+    async function updateStoreAgentBinding() {
         if (!currentStoreId) return;
-        try {
-            const res = await fetch(`/api/settings/${currentStoreId}`);
-            if (!res.ok) return;
-            const s = await res.json();
-            document.getElementById('inpStoreName').value  = s.name || '';
-            document.getElementById('inpBotName').value    = s.bot_name || '';
-            document.getElementById('inpPrompt').value     = s.system_prompt || '';
-            document.getElementById('inpKnowledge').value  = s.product_knowledge || '';
-            document.getElementById('botToggle').checked   = s.is_bot_active;
-            document.getElementById('botToggle2').checked  = s.is_bot_active;
-            document.getElementById('statusInBot').innerText = s.status || 'Offline';
-
-            // Update connect view
-            updateConnectView(s.status);
-        } catch (e) {}
-    }
-
-    async function saveSettings() {
-        if (!currentStoreId) return;
-        const data = {
-            name:             document.getElementById('inpStoreName').value,
-            bot_name:         document.getElementById('inpBotName').value,
-            system_prompt:    document.getElementById('inpPrompt').value,
-            product_knowledge: document.getElementById('inpKnowledge').value,
-            is_bot_active:    document.getElementById('botToggle').checked
-        };
-        // Ensure both toggles stay perfectly in sync visually via direct reference
-        document.getElementById('botToggle2').checked = data.is_bot_active;
-
+        const agentId = document.getElementById('selConnectAgent').value;
+        const isBotActive = document.getElementById('botToggle').checked;
         try {
             const res = await fetch(`/api/settings/${currentStoreId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    agent_id: agentId,
+                    is_bot_active: isBotActive 
+                })
+            });
+            if (res.ok) {
+                toast('Konfigurasi perangkat berhasil disimpan!', 'success');
+                const s = stores.find(str => str.wa_id === currentStoreId);
+                if (s) {
+                    s.agent_id = agentId ? parseInt(agentId) : null;
+                    s.is_bot_active = isBotActive;
+                }
+                currentAgentId = s.agent_id;
+                loadMedia(); // Refresh media if agent changed
+            }
+        } catch (e) { toast('Koneksi gagal.', 'error'); }
+    }
+
+    // ============================================================
+    // AGENTS (The Brains)
+    // ============================================================
+    async function loadAgents() {
+        try {
+            const res = await fetch('/api/agents');
+            agents = await res.json();
+            renderAgents();
+            populateAgentDropdowns();
+        } catch (e) { console.error('Gagal muat agen:', e); }
+    }
+
+    function renderAgents() {
+        const container = document.getElementById('agentListContainer');
+        if (!agents || agents.length === 0) {
+            container.innerHTML = '<div class="col-12 text-center p-5 text-muted">Belum ada Agen AI. Silahkan "Buat Agen Baru".</div>';
+            return;
+        }
+        container.innerHTML = '';
+        agents.forEach(a => {
+            const div = document.createElement('div');
+            div.className = 'col-md-4 mb-3';
+            div.innerHTML = `
+                <div class="card-glass h-100 p-4 d-flex flex-column" style="cursor:pointer; transition:0.2s;" onclick="openAgentEditor(${a.id})">
+                    <div class="d-flex align-items-center mb-3">
+                        <div style="background:var(--clr-bg); width:45px; height:45px; border-radius:12px; display:flex; align-items:center; justify-content:center; color:var(--clr-primary); margin-right:12px;">
+                            <i class="fas fa-robot"></i>
+                        </div>
+                        <h6 class="fw-bold m-0">${a.name}</h6>
+                    </div>
+                    <p class="text-muted" style="font-size:0.8rem; flex-grow:1;">${a.system_prompt ? a.system_prompt.substring(0, 80) + '...' : 'Belum ada prompt.'}</p>
+                    <div class="mt-3 pt-3 border-top d-flex justify-content-between align-items-center">
+                        <small class="text-primary fw-bold">Edit Otak <i class="fas fa-arrow-right ms-1"></i></small>
+                        <small class="badge bg-light text-dark border">${stores.filter(s => s.agent_id === a.id).length} Device</small>
+                    </div>
+                </div>
+            `;
+            container.appendChild(div);
+        });
+    }
+
+    function populateAgentDropdowns() {
+        const selects = ['selConnectAgent', 'selNewStoreAgent'];
+        selects.forEach(id => {
+            const sel = document.getElementById(id);
+            if (!sel) return;
+            const currentVal = sel.value;
+            sel.innerHTML = id === 'selConnectAgent' 
+                ? '<option value="">-- Tanpa Agen (Bot Off) --</option>' 
+                : '<option value="">-- Pilih Agen Penggerak --</option>';
+            agents.forEach(a => {
+                const opt = document.createElement('option');
+                opt.value = a.id;
+                opt.innerText = a.name;
+                sel.appendChild(opt);
+            });
+            sel.value = currentVal;
+        });
+    }
+
+    function createNewAgent() {
+        const name = prompt("Masukkan Nama Internal Agen (Misal: Agen Sarung):");
+        if (!name) return;
+        fetch('/api/agents', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+        }).then(res => res.json()).then(data => {
+            if (data.success) {
+                toast('Agen baru berhasil diciptakan!', 'success');
+                loadAgents();
+            }
+        });
+    }
+
+    let activeEditingAgentId = null;
+    async function openAgentEditor(id) {
+        const agent = agents.find(a => a.id === id);
+        if (!agent) return;
+        activeEditingAgentId = id;
+        currentAgentId = id; // Sync context for media upload modal
+        
+        document.getElementById('agentEditName').innerText = agent.name;
+        document.getElementById('inpAgentInternalName').value = agent.name;
+        document.getElementById('inpBotName').value = agent.bot_name;
+        document.getElementById('inpPrompt').value = agent.system_prompt;
+        document.getElementById('inpKnowledge').value = agent.product_knowledge;
+        
+        // Load media specific to THIS agent inside the editor
+        loadAgentMedia(id);
+        
+        switchView('bot'); // Reused view-bot as editor
+    }
+
+    async function loadAgentMedia(agentId) {
+        const grid = document.getElementById('agentMediaGrid');
+        grid.innerHTML = '<div class="col-12 text-center p-3 small text-muted">Memuat media...</div>';
+        try {
+            const res = await fetch(`/api/media/${agentId}`);
+            const assets = await res.json();
+            renderAgentMediaGrid(assets);
+        } catch (e) { grid.innerHTML = 'Gagal memuat.'; }
+    }
+
+    function renderAgentMediaGrid(assets) {
+        window.mediaAssetsRaw = assets; // Cache for edit modal
+        const grid = document.getElementById('agentMediaGrid');
+        if (!assets || assets.length === 0) {
+            grid.innerHTML = '<div class="col-12 text-center p-4 text-muted small">Belum ada media katalog untuk agen ini.</div>';
+            return;
+        }
+        grid.innerHTML = '';
+        assets.forEach(a => {
+            const div = document.createElement('div');
+            div.className = 'agent-media-item';
+            div.style = 'position:relative; width:100%; aspect-ratio:1; background:#f1f5f9; border-radius:10px; overflow:hidden; border:1px solid #e2e8f0;';
+            const srcUrl = '/uploads/' + a.filename;
+            const thumb = a.type === 'image' 
+                ? `<img src="${srcUrl}" style="width:100%;height:100%;object-fit:cover;">`
+                : `<video src="${srcUrl}" style="width:100%;height:100%;object-fit:cover;"></video>`;
+            
+            div.innerHTML = `
+                ${thumb}
+                <div style="position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,0.6); color:white; font-size:0.65rem; padding:4px 6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                    ${a.label}
+                </div>
+                <button onclick="openEditMedia(${a.id})" style="position:absolute; top:5px; right:5px; width:22px; height:22px; border-radius:50%; background:white; border:none; font-size:0.6rem; cursor:pointer;"><i class="fas fa-edit"></i></button>
+            `;
+            grid.appendChild(div);
+        });
+    }
+
+    async function saveAgentSettings() {
+        if (!activeEditingAgentId) return;
+        const data = {
+            name: document.getElementById('inpAgentInternalName').value,
+            bot_name: document.getElementById('inpBotName').value,
+            system_prompt: document.getElementById('inpPrompt').value,
+            product_knowledge: document.getElementById('inpKnowledge').value
+        };
+        try {
+            const res = await fetch(`/api/agents/${activeEditingAgentId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(data)
             });
             if (res.ok) {
-                toast('Pengaturan berhasil disimpan!', 'success');
-                const store = stores.find(s => s.wa_id === currentStoreId);
-                if (store) store.name = data.name;
-                renderStoreSidebar();
-                document.getElementById('storeTitleChat').innerText = data.name;
-                document.getElementById('botViewTitle').innerText = data.name;
+                toast('Data agen berhasil diperbarui!', 'success');
+                loadAgents();
             }
-        } catch (e) {
-            toast('Gagal menyimpan.', 'error');
-        }
+        } catch (e) { toast('Gagal menyimpan.', 'error'); }
+    }
+
+    async function updateStoreAgentBinding() {
+        if (!currentStoreId) return;
+        const agentId = document.getElementById('selConnectAgent').value;
+        try {
+            const res = await fetch(`/api/settings/${currentStoreId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ agent_id: agentId })
+            });
+            if (res.ok) {
+                toast('Agent berhasil di-binding ke nomor ini!', 'success');
+                const s = stores.find(str => str.wa_id === currentStoreId);
+                if (s) s.agent_id = agentId ? parseInt(agentId) : null;
+                currentAgentId = s.agent_id;
+                loadMedia(); // Refresh media if agent changed
+            }
+        } catch (e) { toast('Koneksi gagal.', 'error'); }
     }
 
     // ============================================================
@@ -965,12 +1145,24 @@
     function renderConvList(filter = '') {
         const list = document.getElementById('convList');
         const map  = {};
+        const nameMap = {}; // Cache nama asli customer (berdasarkan pesan MASUK)
+        
         messages.forEach(m => {
             const c = m.contact_id;
+            // Simpan pesan paling update untuk sorting & preview body
             if (!map[c] || new Date(m.timestamp) > new Date(map[c].timestamp)) map[c] = m;
+            
+            // Khusus pesan dari customer (isMe false), simpan namanya untuk label baris
+            if (!m.is_from_me && m.sender_name && m.sender_name !== c) {
+                nameMap[c] = m.sender_name;
+            }
         });
+
         const contacts = Object.keys(map)
-            .filter(c => !filter || c.toLowerCase().includes(filter.toLowerCase()) || formatWaNumber(c).includes(filter))
+            .filter(c => {
+                const name = nameMap[c] || formatWaNumber(c);
+                return !filter || c.toLowerCase().includes(filter.toLowerCase()) || name.toLowerCase().includes(filter.toLowerCase());
+            })
             .sort((a,b) => new Date(map[b].timestamp) - new Date(map[a].timestamp));
 
         if (contacts.length === 0) {
@@ -981,7 +1173,8 @@
         contacts.forEach(c => {
             const last = map[c];
             const div  = document.createElement('div');
-            const friendlyName = last.sender_name && last.sender_name !== c ? last.sender_name : formatWaNumber(c);
+            // Prioritaskan nama customer yang diekstrak dari nameMap, fall back ke nomor
+            const friendlyName = nameMap[c] || formatWaNumber(c);
             
             div.className = `conv-item ${currentContactId === c ? 'active' : ''}`;
             div.onclick = () => selectContact(c, friendlyName);
@@ -1122,9 +1315,9 @@
     // MEDIA (Phase 5: Per-Store + Vision AI)
     // ============================================================
     async function loadMedia() {
-        if (!currentStoreId) return;
+        if (!currentAgentId) return;
         try {
-            const res = await fetch(`/api/media/${currentStoreId}`);
+            const res = await fetch(`/api/media/${currentAgentId}`);
             const assets = await res.json();
             renderMediaGrid(assets);
         } catch (e) {
@@ -1220,7 +1413,7 @@
         btn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Menyimpan...';
 
         try {
-            const res = await fetch('/api/media/' + currentStoreId + '/' + id, {
+            const res = await fetch('/api/media/' + currentAgentId + '/' + id, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1234,7 +1427,7 @@
             if (res.ok) {
                 toast('Detail media berhasil diperbarui!', 'success');
                 bootstrap.Modal.getInstance(document.getElementById('modalEditMedia')).hide();
-                loadMedia();
+                refreshAllMediaGrids();
             } else {
                 toast('Gagal menyimpan perubahan.', 'error');
             }
@@ -1243,6 +1436,12 @@
         } finally {
             btn.innerHTML = originalText;
         }
+    }
+
+    function refreshAllMediaGrids() {
+        if (!currentAgentId) return;
+        loadMedia();
+        loadAgentMedia(currentAgentId);
     }
 
     function onFileSelected(input) {
@@ -1277,7 +1476,7 @@
         if (!selectedFile) { toast('Pilih file terlebih dahulu!', 'error'); return; }
         const label = document.getElementById('mediaLabel').value.trim();
         if (!label)  { toast('Label / tag media wajib diisi!', 'error'); return; }
-        if (!currentStoreId) { toast('Pilih toko terlebih dahulu!', 'error'); return; }
+        if (!currentAgentId) { toast('Pilih Agen terlebih dahulu (via Master Agents atau Koneksi)!', 'error'); return; }
 
         const desc = document.getElementById('mediaDesc').value.trim();
         const form = new FormData();
@@ -1290,7 +1489,7 @@
         document.getElementById('btnUpload').disabled = true;
 
         try {
-            const res  = await fetch('/api/media/' + currentStoreId, { method: 'POST', body: form });
+            const res  = await fetch('/api/media/' + currentAgentId, { method: 'POST', body: form });
             const data = await res.json();
             if (data.success) {
                 const isImage   = selectedFile.type.startsWith('image/');
@@ -1309,7 +1508,7 @@
                 document.querySelectorAll('.purpose-option').forEach(o => o.classList.remove('active'));
                 const defaultPurpose = document.querySelector('.purpose-option[data-value="both"]');
                 if (defaultPurpose) defaultPurpose.classList.add('active');
-                loadMedia();
+                refreshAllMediaGrids();
             } else {
                 toast(data.message || 'Upload gagal.', 'error');
             }
@@ -1325,11 +1524,10 @@
     async function deleteMedia(id, label) {
         if (!confirm(`Hapus media "${label}"? AI tidak akan lagi bisa mengirim file ini.`)) return;
         try {
-            // FIX 1: Delete dengan verifikasi kepemilikan toko
-            const res = await fetch(`/api/media/${currentStoreId}/${id}`, { method: 'DELETE' });
+            const res = await fetch(`/api/media/${currentAgentId}/${id}`, { method: 'DELETE' });
             if (res.ok) {
                 toast(`Media "${label}" dihapus.`, 'success');
-                loadMedia();
+                refreshAllMediaGrids();
             } else {
                 const err = await res.json();
                 toast(err.message || 'Gagal hapus.', 'error');
@@ -1377,7 +1575,6 @@
         renderStoreSidebar();
         if (storeId === currentStoreId) {
             document.getElementById('hdrStatusDot').innerText = status;
-            document.getElementById('statusInBot').innerText  = status;
             updateConnectView(status);
         }
     });
@@ -1391,15 +1588,18 @@
         new QRCode(qrDiv, { text: qr, width: 230, height: 230 });
     });
 
-    socket.on('mediaUpdated', ({ storeId }) => {
-        if (storeId === currentStoreId) loadMedia();
+    socket.on('mediaUpdated', ({ agentId }) => {
+        if (agentId === currentAgentId) {
+            loadMedia();
+            loadAgentMedia(agentId);
+        }
     });
 
-    // FIX 2: Vision AI analisis selesai — refresh media card yang relevan
-    socket.on('mediaAnalysisReady', ({ storeId, assetId, ai_analysis }) => {
-        if (storeId !== currentStoreId) return;
+    socket.on('mediaAnalysisReady', ({ agentId, assetId, ai_analysis }) => {
+        if (agentId !== currentAgentId) return;
         toast('🤖 Vision AI selesai menganalisis gambar!', 'success');
-        loadMedia(); // Refresh grid untuk tampilkan hasil analisis
+        loadMedia(); 
+        loadAgentMedia(agentId);
     });
 
     // ============================================================
@@ -1408,9 +1608,22 @@
     function switchView(id) {
         document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
         document.querySelectorAll('.nav-btn').forEach(v => v.classList.remove('active'));
-        document.getElementById(`view-${id}`).classList.add('active');
-        document.getElementById(`nav-${id}`).classList.add('active');
-        if (id === 'connect') loadSettings();
+        
+        const targetView = document.getElementById(`view-${id}`);
+        const targetNav  = document.getElementById(`nav-${id}`);
+        
+        if (targetView) targetView.classList.add('active');
+        if (targetNav)  targetNav.classList.add('active');
+
+        // Context-aware loading
+        if (id === 'agents') loadAgents();
+        if (id === 'media')  loadMedia();
+    }
+
+    function selectPurpose(el) {
+        document.querySelectorAll('.purpose-option').forEach(o => o.classList.remove('active'));
+        el.classList.add('active');
+        selectedPurpose = el.getAttribute('data-value');
     }
 
     // ============================================================

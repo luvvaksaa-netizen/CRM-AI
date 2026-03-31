@@ -27,24 +27,26 @@ const RESPONSE_TYPE = {
  * Mendapatkan respons AI dengan Knowledge-Aware Media Architecture + Customer Media Awareness.
  * @param {string} userMessage          - Pesan teks dari pelanggan
  * @param {Array}  history              - Riwayat chat dari DB
- * @param {object} store                - Konfigurasi toko
+ * @param {object} store                - Konfigurasi toko (Device)
+ * @param {object} agent                - Konfigurasi Agen (The Brain)
  * @param {string} customerMediaContext - Hasil analisis gambar/media yang dikirim pelanggan (opsional)
  * @returns {Promise<{ type: string, content: string, mediaList?: Array }>}
  */
-async function getAIResponse(userMessage, history = [], store = null, customerMediaContext = "") {
+async function getAIResponse(userMessage, history = [], store = null, agent = null, customerMediaContext = "") {
     if (!config.OPENAI_API_KEY || config.OPENAI_API_KEY.includes('your_openai_api_key')) {
         logger.error("OpenAI API Key belum dikonfigurasi!");
         return { type: RESPONSE_TYPE.TEXT, content: ERRORS.AI_FALLBACK };
     }
 
     try {
-        const sysPrompt = store?.system_prompt || 'Anda adalah admin CS yang ramah.';
-        const knowledge = store?.product_knowledge || 'Kami melayani pembuatan barang berkualitas.';
+        const sysPrompt = agent?.system_prompt || store?.system_prompt || 'Anda adalah admin CS yang ramah.';
+        const knowledge = agent?.product_knowledge || store?.product_knowledge || 'Kami melayani pembuatan barang berkualitas.';
         const modelName = config.MODEL_NAME || 'gpt-4o-mini';
-        const storeWaId = store?.wa_id || 'default';
+        const agentId   = agent?.id || null;
 
         // ── KNOWLEDGE MEDIA: Media yang jadi pengetahuan AI ──────────────────
-        const knowledgeMedia = await getKnowledgeMedia(storeWaId);
+        // Jika tidak ada agen, knowledge media kosong (fallback aman)
+        const knowledgeMedia = agentId ? await getKnowledgeMedia(agentId) : [];
         const knowledgeSection = knowledgeMedia.length > 0
             ? knowledgeMedia.map(m => {
                 const icon = m.type === 'video' ? '🎬 VIDEO' : '📸 FOTO';
@@ -57,7 +59,7 @@ async function getAIResponse(userMessage, history = [], store = null, customerMe
             : '(Belum ada media knowledge)';
 
         // ── SENDABLE CATALOG: Media yang bisa dikirim ke customer ────────────
-        const sendableMedia = await getSendableMedia(storeWaId);
+        const sendableMedia = agentId ? await getSendableMedia(agentId) : [];
         const catalogSection = sendableMedia.length > 0
             ? sendableMedia.map(m =>
                 `- ID: ${m.id} | Label: "${m.label}" | Tipe: ${m.type}`
@@ -185,8 +187,13 @@ ATURAN PENTING:
                     const ids = args.media_ids || [];
                     logger.info(`[Tool] AI memilih mengirim media IDs: ${ids.join(', ')}`);
 
+                    if (!agentId) {
+                         messages.push({ tool_call_id: toolCall.id, role: "tool", name: "kirim_media_katalog", content: "Gagal: Perangkat ini belum terikat ke agen manapun." });
+                         continue;
+                    }
+
                     const foundMedia = await MediaAsset.findAll({
-                        where: { id: ids, store_wa_id: storeWaId }
+                        where: { id: ids, agent_id: agentId }
                     });
 
                     // Filter hanya yang boleh dikirim (purpose !== knowledge_only)

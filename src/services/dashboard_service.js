@@ -150,6 +150,52 @@ function initDashboard(port = 3000) {
   app.use('/api', authenticate);
 
   // ============================================================
+  // AGENT APIs (Multi-Tenant AI Brains)
+  // ============================================================
+
+  // Ambil semua Agent
+  app.get('/api/agents', async (req, res) => {
+    try {
+      const { BotAgent } = require('../database/index');
+      const agents = await BotAgent.findAll({ order: [['id', 'ASC']] });
+      res.json(agents);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Buat Agent Baru
+  app.post('/api/agents', async (req, res) => {
+    try {
+      const { name, bot_name, system_prompt, product_knowledge } = req.body;
+      const { BotAgent } = require('../database/index');
+      const newAgent = await BotAgent.create({
+        name: name || 'Agen Baru',
+        bot_name: bot_name || 'CS Bot',
+        system_prompt: system_prompt || 'Kamu adalah CS yang ramah.',
+        product_knowledge: product_knowledge || ''
+      });
+      res.json({ success: true, agent: newAgent });
+    } catch (e) {
+      res.status(500).json({ success: false, message: e.message });
+    }
+  });
+
+  // Update Agent
+  app.put('/api/agents/:id', async (req, res) => {
+    try {
+      const { name, bot_name, system_prompt, product_knowledge } = req.body;
+      const { BotAgent } = require('../database/index');
+      const agent = await BotAgent.findByPk(req.params.id);
+      if (!agent) return res.status(404).json({ success: false, message: 'Agent tidak ditemukan' });
+      await agent.update({ name, bot_name, system_prompt, product_knowledge });
+      res.json({ success: true, agent });
+    } catch (e) {
+      res.status(500).json({ success: false, message: e.message });
+    }
+  });
+
+  // ============================================================
   // STORE APIs
   // ============================================================
 
@@ -166,15 +212,13 @@ function initDashboard(port = 3000) {
   // POST: Tambah Store Baru
   app.post('/api/stores', async (req, res) => {
     try {
-      const { name } = req.body;
+      const { name, agent_id } = req.body;
       if (!name?.trim()) return res.status(400).json({ success: false, message: 'Nama toko wajib diisi!' });
 
       const wa_id = `${name.toLowerCase().replace(/[^a-z0-9]/g, '-').substring(0, 12)}-${Date.now().toString().slice(-4)}`;
       const newStore = await Store.create({
         wa_id, name: name.trim(),
-        bot_name: 'CS Bot',
-        system_prompt: 'Kamu adalah Customer Service yang ramah dan membantu.',
-        product_knowledge: '',
+        agent_id: agent_id ? parseInt(agent_id) : null,
         is_bot_active: true
       });
 
@@ -207,11 +251,18 @@ function initDashboard(port = 3000) {
     }
   });
 
-  // POST: Update Settings Store
+  // POST: Update Settings Store (Device Binding)
   app.post('/api/settings/:storeId', async (req, res) => {
     try {
-      const { bot_name, system_prompt, product_knowledge, is_bot_active, name } = req.body;
-      await Store.upsert({ wa_id: req.params.storeId, name, bot_name, system_prompt, product_knowledge, is_bot_active: is_bot_active ?? true });
+      const { name, is_bot_active, agent_id } = req.body;
+      const store = await Store.findOne({ where: { wa_id: req.params.storeId } });
+      if (!store) return res.status(404).json({ success: false, message: 'Store tidak ditemukan.' });
+      
+      await store.update({ 
+          name, 
+          is_bot_active: is_bot_active ?? true,
+          agent_id: agent_id ? parseInt(agent_id) : null
+      });
       res.json({ success: true });
       if (io) io.emit('storeUpdated', { storeId: req.params.storeId });
     } catch (error) {
@@ -256,9 +307,12 @@ function initDashboard(port = 3000) {
       const { storeId, to, mediaId } = req.body;
       if (!storeId || !to || !mediaId) return res.status(400).json({ success: false, message: 'Data tidak lengkap.' });
       
-      const { MediaAsset } = require('../database/index');
-      const asset = await MediaAsset.findOne({ where: { id: mediaId, store_wa_id: storeId } });
-      if (!asset) return res.status(404).json({ success: false, message: 'Media tidak ditemukan.' });
+      const { MediaAsset, Store } = require('../database/index');
+      const store = await Store.findOne({ where: { wa_id: storeId } });
+      if (!store) return res.status(404).json({ success: false, message: 'Store tidak ditemukan.' });
+
+      const asset = await MediaAsset.findOne({ where: { id: mediaId, agent_id: store.agent_id } });
+      if (!asset) return res.status(404).json({ success: false, message: 'Media tidak ditemukan untuk agen ini.' });
 
       const whatsappService = require('../whatsapp_service');
       await whatsappService.sendManualMedia(storeId, to, asset);
@@ -272,10 +326,10 @@ function initDashboard(port = 3000) {
   // MEDIA APIs — Per-Store + Vision AI + Whisper + Purpose Control
   // ============================================================
 
-  // GET: Semua media milik toko tertentu
-  app.get('/api/media/:storeId', async (req, res) => {
+  // GET: Semua media milik agen tertentu
+  app.get('/api/media/:agentId', async (req, res) => {
     try {
-      const assets = await mediaService.getMediaByStore(req.params.storeId);
+      const assets = await mediaService.getMediaByAgent(req.params.agentId);
       res.json(assets);
     } catch (e) {
       res.status(500).json({ error: e.message });
@@ -283,7 +337,7 @@ function initDashboard(port = 3000) {
   });
 
   // POST: Upload media baru (semua tipe) + analisis AI otomatis di background
-  app.post('/api/media/:storeId', upload.single('file'), async (req, res) => {
+  app.post('/api/media/:agentId', upload.single('file'), async (req, res) => {
     if (!req.file) return res.status(400).json({ success: false, message: 'File tidak ditemukan.' });
 
     const tempPath = req.file.path;
@@ -292,7 +346,7 @@ function initDashboard(port = 3000) {
       const mimeType  = req.file.mimetype;
       const fileType  = mimeType.startsWith('image') ? 'image' : 'video';
       const fileSizeKb = Math.round(req.file.size / 1024);
-      const storeId   = req.params.storeId;
+      const agentId   = req.params.agentId;
 
       // Validasi ukuran
       const maxSizeKb = fileType === 'image' ? 5120 : 16384;
@@ -301,11 +355,12 @@ function initDashboard(port = 3000) {
         return res.status(400).json({ success: false, message: `File terlalu besar. Maks ${fileType === 'image' ? '5MB' : '16MB'}.` });
       }
 
-      // Validasi toko
-      const store = await Store.findOne({ where: { wa_id: storeId } });
-      if (!store) {
+      // Validasi agen
+      const { BotAgent } = require('../database/index');
+      const agent = await BotAgent.findByPk(agentId);
+      if (!agent) {
         fs.unlinkSync(tempPath);
-        return res.status(404).json({ success: false, message: 'Store tidak ditemukan.' });
+        return res.status(404).json({ success: false, message: 'Agent tidak ditemukan.' });
       }
 
       // Validasi purpose
@@ -313,7 +368,7 @@ function initDashboard(port = 3000) {
       const mediaPurpose = validPurposes.includes(purpose) ? purpose : 'both';
 
       const assetData = {
-        store_wa_id:   storeId,
+        agent_id:      agentId,
         filename:      req.file.filename,
         original_name: req.file.originalname,
         type:          fileType,
@@ -326,17 +381,17 @@ function initDashboard(port = 3000) {
       // Semua upload bersifat non-blocking: daftarkan dulu, analisis di background
       const analysisMsg = fileType === 'image'
         ? 'Foto diupload! AI Vision sedang menganalisis isi gambar...'
-        : 'Video diupload! AI sedang menarikripsi narasi & menganalisis visual...';
+        : 'Video diupload! AI sedang mentranskripsi narasi & menganalisis visual...';
 
       mediaService.registerMedia(assetData, (asset) => {
         // Callback saat analisis selesai
         if (io) {
-          io.emit('mediaUpdated',      { storeId });
-          io.emit('mediaAnalysisReady', { storeId, assetId: asset.id });
+          io.emit('mediaUpdated',      { agentId });
+          io.emit('mediaAnalysisReady', { agentId, assetId: asset.id });
         }
       }).then(() => {
         // Emit update awal setelah record dibuat (sebelum analisis selesai)
-        if (io) io.emit('mediaUpdated', { storeId });
+        if (io) io.emit('mediaUpdated', { agentId });
       }).catch(err => logger.error(`Upload register error: ${err.message}`));
 
       res.json({ success: true, message: analysisMsg, purpose: mediaPurpose });
@@ -349,27 +404,27 @@ function initDashboard(port = 3000) {
   });
 
   // PUT: Update seluruh detail informasi media (Label, Description, Purpose, Tags, AI Override) tanpa re-upload
-  app.put('/api/media/:storeId/:id', async (req, res) => {
+  app.put('/api/media/:agentId/:id', async (req, res) => {
     try {
       const { purpose, label, description, ai_analysis, trigger_words } = req.body;
       const validPurposes = ['both', 'knowledge_only', 'send_only'];
       if (purpose && !validPurposes.includes(purpose)) return res.status(400).json({ success: false, message: 'Purpose tidak valid.' });
 
-      const asset = await mediaService.updateMediaDetails(parseInt(req.params.id), req.params.storeId, {
+      const asset = await mediaService.updateMediaDetails(parseInt(req.params.id), req.params.agentId, {
           purpose, label, description, ai_analysis, trigger_words
       });
-      if (io) io.emit('mediaUpdated', { storeId: req.params.storeId });
+      if (io) io.emit('mediaUpdated', { agentId: req.params.agentId });
       res.json({ success: true, asset: asset.dataValues });
     } catch (error) {
       res.status(400).json({ success: false, message: error.message });
     }
   });
 
-  // DELETE: Hapus media dengan verifikasi kepemilikan toko
-  app.delete('/api/media/:storeId/:id', async (req, res) => {
+  // DELETE: Hapus media dengan verifikasi kepemilikan agen
+  app.delete('/api/media/:agentId/:id', async (req, res) => {
     try {
-      await mediaService.deleteMedia(parseInt(req.params.id), req.params.storeId);
-      if (io) io.emit('mediaUpdated', { storeId: req.params.storeId });
+      await mediaService.deleteMedia(parseInt(req.params.id), req.params.agentId);
+      if (io) io.emit('mediaUpdated', { agentId: req.params.agentId });
       res.json({ success: true });
     } catch (error) {
       logger.error(`Delete media error: ${error.message}`);

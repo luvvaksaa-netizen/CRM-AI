@@ -9,6 +9,13 @@ const os = require('os');
 const { MessageMedia } = require('whatsapp-web.js');
 const { UPLOADS_DIR } = require('../config');
 
+function formatWaNumber(id) {
+    if (!id) return '';
+    let num = id.split('@')[0];
+    if (num.startsWith('62')) return `+62 ${num.slice(2, 5)}-${num.slice(5, 9)}-${num.slice(9)}`;
+    return `+${num}`;
+}
+
 /**
  * Handle incoming message event with Multi-Session + Smart Media (Phase 4).
  * @param {object} message  - WhatsApp message object
@@ -34,11 +41,21 @@ async function handleMessage(message, storeWaId) {
                 tempPath = path.join(UPLOADS_DIR, fileName);
                 fs.writeFileSync(tempPath, Buffer.from(media.data, 'base64'));
 
-                // Ambil store context untuk panduan AI Vision
-                const store = await Store.findOne({ where: { wa_id: storeWaId } });
-                const storeContext = store 
-                    ? `Nama Toko: ${store.name}\nPengetahuan Produk: ${store.product_knowledge}`
-                    : "";
+                // Ambil store & agent context untuk panduan AI Vision
+                const { BotAgent } = require('../database/index');
+                const store = await Store.findOne({ 
+                    where: { wa_id: storeWaId },
+                    include: [{ model: BotAgent, as: 'BotAgent' }]
+                });
+                const agent = store?.BotAgent;
+
+                const contextParts = [];
+                if (store) contextParts.push(`Nama Toko: ${store.name}`);
+                if (agent) {
+                    contextParts.push(`Nama Agen: ${agent.bot_name}`);
+                    contextParts.push(`Pengetahuan: ${agent.product_knowledge}`);
+                }
+                const storeContext = contextParts.join('\n');
 
                 customerMediaContext = await analyzeImage(tempPath, storeContext);
                 logger.success(`[${storeWaId}] AI "melihat" foto pelanggan: ${customerMediaContext.substring(0, 50)}...`);
@@ -53,22 +70,36 @@ async function handleMessage(message, storeWaId) {
             ? `${customerMediaContext}\n${body}`.trim()
             : body;
 
+        const contact = await message.getContact();
+        const senderName = contact.name || contact.pushname || contact.shortName || formatWaNumber(contactId);
+
         await dashboard.addToChatHistory(storeWaId, {
             from: contactId,
             body: logBody,
             isMe: false,
             timestamp: new Date(),
-            sender_name: message._data?.notifyName || contactId
+            sender_name: senderName
         });
 
         logger.info(`[${storeWaId}] Pesan Masuk [${contactId}]: ${body}`);
 
-        // 3. Ambil Konfigurasi Bot dari DB
-        const store = await Store.findOne({ where: { wa_id: storeWaId } });
+        // 3. Ambil Konfigurasi Bot & Agen dari DB
+        const { BotAgent } = require('../database/index');
+        const store = await Store.findOne({ 
+            where: { wa_id: storeWaId },
+            include: [{ model: BotAgent, as: 'BotAgent' }]
+        });
+        const agent = store?.BotAgent;
 
-        // JIKA BOT OFF: Log saja, lalu berhenti
-        if (store && store.is_bot_active === false) {
-            logger.info(`[${storeWaId}] Bot OFF. Pesan [${contactId}] tercatat untuk CS manual.`);
+        // JIKA STORE TIDAK ADA atau BOT OFF: Berhenti
+        if (!store || store.is_bot_active === false) {
+            logger.info(`[${storeWaId}] Bot OFF atau Perangkat tidak ditemukan.`);
+            return;
+        }
+
+        // JIKA BELUM ADA AGEN TERPASANG: Berhenti
+        if (!agent) {
+            logger.warn(`[${storeWaId}] Perangkat ini belum terikat ke Agen AI manapun.`);
             return;
         }
 
@@ -82,13 +113,12 @@ async function handleMessage(message, storeWaId) {
         });
         const history = recentHistory.reverse();
 
-        // 3.5 === MARKETING AUTOPILOT (Trigger Keyword Check) ===
-        // Fitur ini memungkinkan pengiriman otomatis katalog tanpa menggunakan API OpenAI (Hemat Token & Super Cepat)
+        // 3.5 === MARKETING AUTOPILOT (Trigger Keyword Check - Via Agent) ===
         const { MediaAsset } = require('../database/index');
-        const storeAssets = await MediaAsset.findAll({ where: { store_wa_id: storeWaId } });
+        const agentAssets = await MediaAsset.findAll({ where: { agent_id: agent.id } });
         let triggeredAsset = null;
 
-        for (const asset of storeAssets) {
+        for (const asset of agentAssets) {
             if (!asset.trigger_words) continue;
             const keywords = asset.trigger_words.split(',').map(k => k.trim().toLowerCase()).filter(k => k.length > 0);
             const bodyLower = body.toLowerCase();
@@ -100,14 +130,13 @@ async function handleMessage(message, storeWaId) {
         }
 
         if (triggeredAsset) {
-            logger.success(`[${storeWaId}] Keyword trigger aktif. Mengirim Katalog [${triggeredAsset.label}] via Autopilot!`);
+            logger.success(`[${storeWaId}] Keyword trigger [${agent.name}] aktif. Mengirim Katalog via Autopilot!`);
             await chat.sendStateTyping();
-            await new Promise(r => setTimeout(r, 1200)); // Jeda manusiawi
+            await new Promise(r => setTimeout(r, 1200)); 
             
-            // Caption menggunakan Description manual dari user, atau Label jika kosong
             const caption = triggeredAsset.description || triggeredAsset.label;
-            await _sendMediaToChat(message, triggeredAsset, caption, storeWaId, contactId, store);
-            return; // ⛔ HENTIKAN PROSES DI SINI - JANGAN PANGGIL AI ⛔
+            await _sendMediaToChat(message, triggeredAsset, caption, storeWaId, contactId, agent);
+            return; 
         }
 
         // 4. Jeda Berpikir (Natural Feel)
@@ -116,8 +145,8 @@ async function handleMessage(message, storeWaId) {
         // 5. Status Mengetik
         await chat.sendStateTyping();
 
-        // 6. === PHASE 4: PROSES AI (Text + Smart Media + Visual Perception) ===
-        const aiResult = await getAIResponse(body, history, store, customerMediaContext);
+        // 6. === PHASE 4: PROSES AI (Text + Smart Media + Visual Perception + Agent Awareness) ===
+        const aiResult = await getAIResponse(body, history, store, agent, customerMediaContext);
 
         // 7. Jeda Mengetik (Natural Feel)
         const typingDelay = calculateTypingDelay(aiResult.content);
@@ -128,7 +157,7 @@ async function handleMessage(message, storeWaId) {
             // --- MODE MULTI-MEDIA: Kirim satu per satu ---
             for (let i = 0; i < aiResult.mediaList.length; i++) {
                 const item = aiResult.mediaList[i];
-                await _sendMediaToChat(message, item.media, item.caption || "", storeWaId, contactId, store);
+                await _sendMediaToChat(message, item.media, item.caption || "", storeWaId, contactId, agent);
                 
                 if (i < aiResult.mediaList.length - 1) {
                     await new Promise(r => setTimeout(r, 1500));
@@ -137,12 +166,12 @@ async function handleMessage(message, storeWaId) {
 
             if (aiResult.content) {
                 await message.reply(aiResult.content);
-                await _logBotReply(storeWaId, contactId, aiResult.content, store?.bot_name);
+                await _logBotReply(storeWaId, contactId, aiResult.content, agent.bot_name);
             }
         } else {
             // --- MODE TEKS: Kirim Pesan Biasa ---
             await message.reply(aiResult.content);
-            await _logBotReply(storeWaId, contactId, aiResult.content, store?.bot_name);
+            await _logBotReply(storeWaId, contactId, aiResult.content, agent.bot_name);
         }
 
         logger.success(`[${storeWaId}] Sesi [${contactId}] — Dibalas via AI dengan persepsi visual.`);
@@ -164,8 +193,14 @@ async function handleMessage(message, storeWaId) {
 /**
  * Mengirimkan file media (foto/video) ke chat WhatsApp.
  * @private
+ * @param {object} message
+ * @param {object} mediaAsset
+ * @param {string} caption
+ * @param {string} storeWaId
+ * @param {string} contactId
+ * @param {object} agent - Object agen pemilik media
  */
-async function _sendMediaToChat(message, mediaAsset, caption, storeWaId, contactId, store) {
+async function _sendMediaToChat(message, mediaAsset, caption, storeWaId, contactId, agent) {
     const { UPLOADS_DIR } = require('../config');
     const mediaPath = path.join(UPLOADS_DIR, mediaAsset.filename);
     
@@ -180,7 +215,7 @@ async function _sendMediaToChat(message, mediaAsset, caption, storeWaId, contact
         const tag = ['mp4', 'mov', 'avi'].includes(fileExt) ? '[VIDEO' : '[MEDIA';
         
         const logBody = `${tag}:/uploads/${mediaAsset.filename}] ${caption || `Katalog: ${mediaAsset.label}`}`;
-        await _logBotReply(storeWaId, contactId, logBody, store?.bot_name);
+        await _logBotReply(storeWaId, contactId, logBody, agent?.bot_name);
         
         logger.success(`[${storeWaId}] Media [${mediaAsset.label}] dikirim ke [${contactId}]`);
     } catch (mediaError) {

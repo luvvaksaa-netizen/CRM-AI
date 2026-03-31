@@ -19,26 +19,25 @@ const fs = require('fs');
 // ============================================================
 
 /**
- * Ambil semua media milik toko tertentu.
- * @param {string} storeWaId
+ * Ambil semua media milik Agen tertentu.
+ * @param {number} agentId
  */
-async function getMediaByStore(storeWaId) {
+async function getMediaByAgent(agentId) {
   return MediaAsset.findAll({
-    where: { store_wa_id: storeWaId },
+    where: { agent_id: agentId },
     order: [['createdAt', 'DESC']]
   });
 }
 
 /**
  * Ambil media yang tersedia untuk DIKIRIM ke customer (purpose: both | send_only).
- * Digunakan oleh AI saat memilih media untuk dikirim.
- * @param {string} storeWaId
+ * @param {number} agentId
  */
-async function getSendableMedia(storeWaId) {
+async function getSendableMedia(agentId) {
   const { Op } = require('sequelize');
   return MediaAsset.findAll({
     where: {
-      store_wa_id: storeWaId,
+      agent_id: agentId,
       purpose: { [Op.in]: ['both', 'send_only'] }
     },
     order: [['createdAt', 'DESC']]
@@ -47,14 +46,13 @@ async function getSendableMedia(storeWaId) {
 
 /**
  * Ambil media yang memberikan KNOWLEDGE ke AI (purpose: both | knowledge_only).
- * Digunakan oleh AI saat membangun system prompt.
- * @param {string} storeWaId
+ * @param {number} agentId
  */
-async function getKnowledgeMedia(storeWaId) {
+async function getKnowledgeMedia(agentId) {
   const { Op } = require('sequelize');
   return MediaAsset.findAll({
     where: {
-      store_wa_id: storeWaId,
+      agent_id: agentId,
       purpose: { [Op.in]: ['both', 'knowledge_only'] }
     },
     order: [['createdAt', 'DESC']]
@@ -63,11 +61,11 @@ async function getKnowledgeMedia(storeWaId) {
 
 /**
  * Cari media yang bisa dikirim berdasarkan keyword (untuk tool calling AI).
- * @param {string} storeWaId
+ * @param {number} agentId
  * @param {string} keyword
  */
-async function findSendableMediaByKeyword(storeWaId, keyword) {
-  const sendable = await getSendableMedia(storeWaId);
+async function findSendableMediaByKeyword(agentId, keyword) {
+  const sendable = await getSendableMedia(agentId);
   return sendable.find(a => {
     const searchTarget = `${a.label} ${a.description} ${a.ai_analysis} ${a.video_transcript}`.toLowerCase();
     return searchTarget.includes(keyword.toLowerCase());
@@ -80,16 +78,13 @@ async function findSendableMediaByKeyword(storeWaId, keyword) {
 
 /**
  * Registrasi media baru + jalankan analisis AI di latar belakang.
- * Foto   → Vision AI (analisis visual otomatis)
- * Video  → Whisper (transkripsi narasi) + Frame Vision (analisis visual)
- *
  * @param {object} data - Data media + filePath untuk analisis
  * @param {Function} onAnalysisDone - Callback saat analisis selesai (opsional)
  */
 async function registerMedia(data, onAnalysisDone = null) {
   // Buat record terlebih dahulu dengan status 'pending'
   const asset = await MediaAsset.create({
-    store_wa_id:   data.store_wa_id,
+    agent_id:      data.agent_id,
     filename:      data.filename,
     original_name: data.original_name,
     type:          data.type,
@@ -103,7 +98,7 @@ async function registerMedia(data, onAnalysisDone = null) {
     max_duration_sec: data.type === 'video' ? 60 : null
   });
 
-  logger.success(`[Media] "${asset.label}" (${data.type}) terdaftar untuk toko [${data.store_wa_id}]. Analisis dimulai...`);
+  logger.success(`[Media] "${asset.label}" terdaftar untuk Agen ID [${data.agent_id}]. Analisis dimulai...`);
 
   // Jalankan analisis di latar belakang (non-blocking)
   _runAnalysisInBackground(asset, data.filePath, onAnalysisDone);
@@ -112,20 +107,20 @@ async function registerMedia(data, onAnalysisDone = null) {
 }
 
 /**
- * Proses analisis AI di latar belakang (non-blocking) dengan Konteks Toko.
+ * Proses analisis AI di latar belakang (non-blocking) dengan Konteks Otak Agen.
  * @private
  */
 async function _runAnalysisInBackground(asset, filePath, onAnalysisDone) {
   try {
     await asset.update({ analysis_status: 'processing' });
 
-    // AMBIL KONTEKS TOKO (Nama & Knowledge) dari Database
-    const { Store } = require('../database/index');
-    const store = await Store.findOne({ where: { wa_id: asset.store_wa_id } });
+    // AMBIL KONTEKS AGEN (Nama & Knowledge) dari Database
+    const { BotAgent } = require('../database/index');
+    const agent = await BotAgent.findByPk(asset.agent_id);
     
     // Bangun string konteks untuk memandu AI agar tidak "ngawur"
-    const storeContext = store 
-      ? `Nama Toko: ${store.name}\nPengetahuan Produk: ${store.product_knowledge}`
+    const agentContext = agent 
+      ? `Nama Bot: ${agent.bot_name}\nInternal Label: ${agent.name}\nPengetahuan Produk: ${agent.product_knowledge}`
       : "Identifikasi gambar produk secara umum.";
 
     let aiAnalysis = '';
@@ -134,13 +129,13 @@ async function _runAnalysisInBackground(asset, filePath, onAnalysisDone) {
     if (asset.type === 'image') {
       // === FOTO: Vision AI (Context-Aware) ===
       if (isImageSupportedByVision(asset.filename)) {
-        logger.info(`[Vision] Menganalisis foto dengan konteks: "${store?.name || 'Unknown'}"`);
-        aiAnalysis = await analyzeImage(filePath, storeContext);
+        logger.info(`[Vision] Menganalisis foto dengan konteks Agen: "${agent?.name || 'Unknown'}"`);
+        aiAnalysis = await analyzeImage(filePath, agentContext);
       }
     } else if (asset.type === 'video') {
       // === VIDEO: Whisper + Frame Vision (Context-Aware) ===
-      logger.info(`[VideoAnalysis] Menganalisis video dengan konteks: "${store?.name || 'Unknown'}"`);
-      const { transcript, visualAnalysis } = await analyzeVideo(filePath, asset.label, storeContext);
+      logger.info(`[VideoAnalysis] Menganalisis video dengan konteks Agen: "${agent?.name || 'Unknown'}"`);
+      const { transcript, visualAnalysis } = await analyzeVideo(filePath, asset.label, agentContext);
       videoTranscript = transcript;
       aiAnalysis = visualAnalysis;
     }
@@ -151,7 +146,7 @@ async function _runAnalysisInBackground(asset, filePath, onAnalysisDone) {
       analysis_status:  'done'
     });
 
-    logger.success(`[Media] Analisis kontekstual selesai: "${asset.label}"`);
+    logger.success(`[Media] Analisis kontekstual selesai: "${asset.label}" untuk Agen [${agent?.name}]`);
 
     // Panggil callback jika ada (untuk emit socket event)
     if (onAnalysisDone) onAnalysisDone(asset);
@@ -165,12 +160,12 @@ async function _runAnalysisInBackground(asset, filePath, onAnalysisDone) {
 /**
  * Update detail informasi sebuah media (Label, Tujuan, Deskripsi, AI Override, Trigger Words).
  * @param {number} id
- * @param {string} storeWaId - Verifikasi kepemilikan
+ * @param {number} agentId   - Verifikasi kepemilikan
  * @param {object} data      - Object berisi field yang mau diupdate
  */
-async function updateMediaDetails(id, storeWaId, data) {
-  const asset = await MediaAsset.findOne({ where: { id, store_wa_id: storeWaId } });
-  if (!asset) throw new Error('Media tidak ditemukan atau bukan milik toko ini.');
+async function updateMediaDetails(id, agentId, data) {
+  const asset = await MediaAsset.findOne({ where: { id, agent_id: agentId } });
+  if (!asset) throw new Error('Media tidak ditemukan atau bukan milik agen ini.');
   
   const updateData = {};
   if (data.label !== undefined) updateData.label = data.label;
@@ -186,11 +181,11 @@ async function updateMediaDetails(id, storeWaId, data) {
 /**
  * Hapus media dari database dan file sistem.
  * @param {number} id
- * @param {string} storeWaId - Verifikasi kepemilikan sebelum hapus
+ * @param {number} agentId - Verifikasi kepemilikan sebelum hapus
  */
-async function deleteMedia(id, storeWaId) {
-  const asset = await MediaAsset.findOne({ where: { id, store_wa_id: storeWaId } });
-  if (!asset) throw new Error('Media tidak ditemukan atau bukan milik toko ini.');
+async function deleteMedia(id, agentId) {
+  const asset = await MediaAsset.findOne({ where: { id, agent_id: agentId } });
+  if (!asset) throw new Error('Media tidak ditemukan atau bukan milik agen ini.');
 
   const { UPLOADS_DIR } = require('../config');
   const filePath = path.join(UPLOADS_DIR, asset.filename);
@@ -200,12 +195,12 @@ async function deleteMedia(id, storeWaId) {
   }
 
   await asset.destroy();
-  logger.info(`[Media] Record DB "${asset.label}" dihapus dari toko [${storeWaId}].`);
+  logger.info(`[Media] Record DB "${asset.label}" dihapus dari Agen [${agentId}].`);
   return true;
 }
 
 module.exports = {
-  getMediaByStore,
+  getMediaByAgent,
   getSendableMedia,
   getKnowledgeMedia,
   findSendableMediaByKeyword,
