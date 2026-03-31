@@ -226,12 +226,12 @@ function initDashboard(port = 3000) {
   // GET: Chat History (Per Store)
   app.get('/api/chat/:storeId', async (req, res) => {
     try {
-      const history = await ChatMessage.findAll({
+      let history = await ChatMessage.findAll({
         where: { store_wa_id: req.params.storeId },
         limit: 150,
-        order: [['timestamp', 'ASC']]
+        order: [['timestamp', 'DESC']]
       });
-      res.json(history);
+      res.json(history.reverse());
     } catch (e) {
       res.status(500).json({ error: e.message });
     }

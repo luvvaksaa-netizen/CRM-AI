@@ -468,7 +468,7 @@
                     <span id="hdrStatusDot" class="badge-status bg-secondary bg-opacity-10 text-secondary">Offline</span>
                     <div class="form-check form-switch m-0 d-flex align-items-center gap-2">
                         <label class="small fw-bold text-muted" style="font-size:0.72rem;letter-spacing:0.5px;">AI AUTO</label>
-                        <input class="form-check-input" type="checkbox" id="botToggle" checked onchange="saveSettings()">
+                        <input class="form-check-input" type="checkbox" id="botToggle" checked onchange="document.getElementById('botToggle2').checked = this.checked; saveSettings()">
                     </div>
                 </div>
             </div>
@@ -542,7 +542,7 @@
                                 <small class="text-muted">Bot menjawab secara otomatis</small>
                             </div>
                             <div class="form-check form-switch m-0">
-                                <input class="form-check-input" type="checkbox" id="botToggle2" onchange="saveSettings()">
+                                <input class="form-check-input" type="checkbox" id="botToggle2" onchange="document.getElementById('botToggle').checked = this.checked; saveSettings()">
                             </div>
                         </div>
                         <hr style="border-color: #f1f5f9;">
@@ -850,10 +850,9 @@
             bot_name:         document.getElementById('inpBotName').value,
             system_prompt:    document.getElementById('inpPrompt').value,
             product_knowledge: document.getElementById('inpKnowledge').value,
-            is_bot_active:    document.getElementById('botToggle2').checked || document.getElementById('botToggle').checked
+            is_bot_active:    document.getElementById('botToggle').checked
         };
-        // Sync both toggles
-        document.getElementById('botToggle').checked  = data.is_bot_active;
+        // Ensure both toggles stay perfectly in sync visually via direct reference
         document.getElementById('botToggle2').checked = data.is_bot_active;
 
         try {

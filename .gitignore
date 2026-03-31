@@ -4,6 +4,7 @@ node_modules/
 .wwebjs_cache/
 public/uploads/
 database.sqlite
+data/
 chat_history.json
 settings.json
 npm-debug.log
