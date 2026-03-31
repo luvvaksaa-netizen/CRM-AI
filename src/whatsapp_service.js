@@ -17,19 +17,27 @@ function getClients() {
 }
 
 /**
- * Membersihkan SingletonLock per-ClientId untuk stabilitas.
+ * Membersihkan semua Singleton Lock Files per-ClientId.
+ * Mencegah error "profile already in use" saat container restart di Railway.
  */
 function cleanupSessionLocks(clientId) {
     const sessionDir = path.join(process.cwd(), '.wwebjs_auth', `session-${clientId}`);
-    const lockFile = path.join(sessionDir, 'SingletonLock');
-    if (fs.existsSync(lockFile)) {
-        try {
-            fs.unlinkSync(lockFile);
-            logger.info(`[${clientId}] Membersihkan SingletonLock.`);
-        } catch (e) {
-            // Abaikan jika gagal (biasanya karena file tidak ada)
+    if (!fs.existsSync(sessionDir)) return;
+
+    // Semua file lock yang perlu dihapus
+    const lockFiles = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+
+    lockFiles.forEach(lockName => {
+        const lockFile = path.join(sessionDir, lockName);
+        if (fs.existsSync(lockFile)) {
+            try {
+                fs.unlinkSync(lockFile);
+                logger.info(`[${clientId}] Membersihkan ${lockName}.`);
+            } catch (e) {
+                logger.warn(`[${clientId}] Gagal hapus ${lockName}: ${e.message}`);
+            }
         }
-    }
+    });
 }
 
 /**

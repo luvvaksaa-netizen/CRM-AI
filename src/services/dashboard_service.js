@@ -1,9 +1,10 @@
 /**
  * @file dashboard_service.js
  * @description Web Dashboard & API Server (Express + Socket.io)
- * Phase 5 Fixes:
- *  - Media API terisolasi per toko (store_wa_id)
- *  - Vision AI auto-analysis terintegrasi
+ * Security Phase:
+ *  - Session-based authentication (persistent via Sequelize / SQLite)
+ *  - Route protection middleware
+ *  - Production-ready session store (no MemoryStore warnings)
  */
 
 const express = require('express');
@@ -12,43 +13,86 @@ const { Server } = require('socket.io');
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
-const session = require('express-session'); // Tambahkan session
+const session = require('express-session');
+const SequelizeStore = require('connect-session-sequelize')(session.Store);
 const logger = require('../utils/logger');
-const config = require('../config');
-const { Store, ChatMessage } = require('../database/index');
+const { Store, ChatMessage, sequelize } = require('../database/index');
 const mediaService = require('./media_service');
 
-// Kredensial Login (Ambil dari .env atau default)
+// Kredensial Login (Selalu dari env di production)
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'admin123';
 
 let io;
-const storeStatuses = {}; // { [storeWaId]: statusString }
+const storeStatuses = {};
 const app = express();
 const server = http.createServer(app);
 
 // ============================================================
-// MIDDLEWARE & SESSION
+// PRODUCTION-READY SESSION (Persistent via SQLite, bukan RAM)
 // ============================================================
+const sessionStore = new SequelizeStore({ db: sequelize });
+sessionStore.sync(); // Buat tabel session jika belum ada
+
 app.use(express.json());
 app.use(session({
-  secret: 'rekapoin-crm-secret-key',
+  secret: process.env.SESSION_SECRET || 'rekapoin-crm-xyz-secret-2025',
+  store: sessionStore,         // ← Simpan di SQLite, bukan RAM
   resave: false,
   saveUninitialized: false,
-  cookie: { maxAge: 24 * 60 * 60 * 1000 } // 24 Jam
+  cookie: {
+    maxAge: 24 * 60 * 60 * 1000,  // 24 Jam
+    httpOnly: true,                // Lindungi dari XSS
+    secure: false                  // Set true jika full HTTPS
+  }
 }));
 
-// Middleware Proteksi Halaman
+// ============================================================
+// STATIC FILES (Publik — login.html bisa diakses tanpa auth)
+// ============================================================
+app.use('/login.html', express.static(path.join(process.cwd(), 'public', 'login.html')));
+app.use('/assets', express.static(path.join(process.cwd(), 'public', 'assets')));
+
+// ============================================================
+// AUTH MIDDLEWARE
+// ============================================================
 const authenticate = (req, res, next) => {
-  if (req.session && req.session.authenticated) {
-    return next();
+  if (req.session && req.session.authenticated) return next();
+
+  const isApiRequest = req.originalUrl.startsWith('/api');
+  if (isApiRequest) {
+    return res.status(401).json({ error: 'Unauthorized. Silakan login terlebih dahulu.' });
   }
-  // Jika akses API kirim 401, jika akses halaman redirect ke login
-  if (req.path.startsWith('/api')) {
-    return res.status(401).json({ error: 'Unauthorized. Silakan login.' });
-  }
-  res.redirect('/login.html');
+  return res.redirect('/login.html');
 };
+
+// ============================================================
+// AUTH ROUTES (Login & Logout — tidak perlu autentikasi)
+// ============================================================
+app.post('/api/login', (req, res) => {
+  const { user, pass } = req.body;
+  if (user === ADMIN_USER && pass === ADMIN_PASS) {
+    req.session.authenticated = true;
+    req.session.user = user;
+    return res.json({ success: true, message: 'Login berhasil!' });
+  }
+  return res.status(401).json({ success: false, message: 'Username atau password salah.' });
+});
+
+app.get('/api/logout', (req, res) => {
+  req.session.destroy(() => res.redirect('/login.html'));
+});
+
+// Route utama — proteksi di sini
+app.get('/', authenticate, (req, res) => {
+  res.sendFile(path.join(process.cwd(), 'public', 'index.html'));
+});
+
+// Aset statis (termasuk index.html) — diproteksi setelah route / di atas
+app.use(authenticate, express.static(path.join(process.cwd(), 'public')));
+
+// Folder uploads diproteksi
+app.use('/uploads', authenticate, express.static(path.join(process.cwd(), 'public', 'uploads')));
 
 // ============================================================
 // MULTER: File Upload Configuration
@@ -93,43 +137,15 @@ app.post('/api/login', (req, res) => {
 });
 
 // GET LOGOUT
-app.get('/api/logout', (req, res) => {
-  req.session.destroy();
-  res.redirect('/login.html');
-});
-
-// Proteksi Halaman Dashboard Utama (index.html)
-app.get('/', authenticate, (req, res) => {
-  res.sendFile(path.join(process.cwd(), 'public', 'index.html'));
-});
-
-// Proteksi folder uploads & public statis (KECUALI login.html)
-app.use('/uploads', authenticate, express.static(path.join(process.cwd(), 'public', 'uploads')));
-
-// Routing publik (Login page & assets penunjang)
-app.use('/login.html', express.static(path.join(process.cwd(), 'public', 'login.html')));
-app.use('/assets', express.static(path.join(process.cwd(), 'public', 'assets')));
-
 // ============================================================
 // INIT DASHBOARD
 // ============================================================
 function initDashboard(port = 3000) {
   io = new Server(server, { cors: { origin: '*' } });
 
-  // PENTING: Gunakan middleware 'authenticate' untuk SEMUA API internal
-  // Agar data chat tidak bisa dicuri via API publik
-  app.use('/api', (req, res, next) => {
-    // Route login & logout harus bisa diakses tanpa login
-    if (req.path === '/login' || req.path === '/logout') return next();
-    return authenticate(req, res, next);
-  });
+  // Proteksi semua /api/* (kecuali /api/login & /api/logout yang sudah di atas)
+  app.use('/api', authenticate);
 
-  // Home Route (Redirect ke dashboard utama)
-  app.get('/', (req, res) => {
-    res.redirect('/index.html');
-  });
-
-  // SEMUA ROUTE DI BAWAH INI SEKARANG TERPROTEKSI KARENA DI ATAS ADA PROTEKSI /api
   // ============================================================
   // STORE APIs
   // ============================================================
