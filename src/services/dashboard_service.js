@@ -12,14 +12,43 @@ const { Server } = require('socket.io');
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
+const session = require('express-session'); // Tambahkan session
 const logger = require('../utils/logger');
+const config = require('../config');
 const { Store, ChatMessage } = require('../database/index');
 const mediaService = require('./media_service');
+
+// Kredensial Login (Ambil dari .env atau default)
+const ADMIN_USER = process.env.ADMIN_USER || 'admin';
+const ADMIN_PASS = process.env.ADMIN_PASS || 'admin123';
 
 let io;
 const storeStatuses = {}; // { [storeWaId]: statusString }
 const app = express();
 const server = http.createServer(app);
+
+// ============================================================
+// MIDDLEWARE & SESSION
+// ============================================================
+app.use(express.json());
+app.use(session({
+  secret: 'rekapoin-crm-secret-key',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { maxAge: 24 * 60 * 60 * 1000 } // 24 Jam
+}));
+
+// Middleware Proteksi Halaman
+const authenticate = (req, res, next) => {
+  if (req.session && req.session.authenticated) {
+    return next();
+  }
+  // Jika akses API kirim 401, jika akses halaman redirect ke login
+  if (req.path.startsWith('/api')) {
+    return res.status(401).json({ error: 'Unauthorized. Silakan login.' });
+  }
+  res.redirect('/login.html');
+};
 
 // ============================================================
 // MULTER: File Upload Configuration
@@ -50,14 +79,57 @@ const upload = multer({
 });
 
 // ============================================================
+// AUTH ROUTES & PROTECTION
+// ============================================================
+
+// API LOGIN
+app.post('/api/login', (req, res) => {
+  const { user, pass } = req.body;
+  if (user === ADMIN_USER && pass === ADMIN_PASS) {
+    req.session.authenticated = true;
+    return res.json({ success: true, message: 'Login berhasil!' });
+  }
+  res.status(401).json({ success: false, message: 'Username atau password salah.' });
+});
+
+// GET LOGOUT
+app.get('/api/logout', (req, res) => {
+  req.session.destroy();
+  res.redirect('/login.html');
+});
+
+// Proteksi Halaman Dashboard Utama (index.html)
+app.get('/', authenticate, (req, res) => {
+  res.sendFile(path.join(process.cwd(), 'public', 'index.html'));
+});
+
+// Proteksi folder uploads & public statis (KECUALI login.html)
+app.use('/uploads', authenticate, express.static(path.join(process.cwd(), 'public', 'uploads')));
+
+// Routing publik (Login page & assets penunjang)
+app.use('/login.html', express.static(path.join(process.cwd(), 'public', 'login.html')));
+app.use('/assets', express.static(path.join(process.cwd(), 'public', 'assets')));
+
+// ============================================================
 // INIT DASHBOARD
 // ============================================================
 function initDashboard(port = 3000) {
   io = new Server(server, { cors: { origin: '*' } });
 
-  app.use(express.json());
-  app.use(express.static(path.join(process.cwd(), 'public')));
+  // PENTING: Gunakan middleware 'authenticate' untuk SEMUA API internal
+  // Agar data chat tidak bisa dicuri via API publik
+  app.use('/api', (req, res, next) => {
+    // Route login & logout harus bisa diakses tanpa login
+    if (req.path === '/login' || req.path === '/logout') return next();
+    return authenticate(req, res, next);
+  });
 
+  // Home Route (Redirect ke dashboard utama)
+  app.get('/', (req, res) => {
+    res.redirect('/index.html');
+  });
+
+  // SEMUA ROUTE DI BAWAH INI SEKARANG TERPROTEKSI KARENA DI ATAS ADA PROTEKSI /api
   // ============================================================
   // STORE APIs
   // ============================================================
