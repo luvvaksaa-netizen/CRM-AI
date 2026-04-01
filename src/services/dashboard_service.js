@@ -15,6 +15,7 @@ const fs = require('fs');
 const multer = require('multer');
 const session = require('express-session');
 const SequelizeStore = require('connect-session-sequelize')(session.Store);
+const rateLimit = require('express-rate-limit');
 const logger = require('../utils/logger');
 const config = require('../config');
 const { UPLOADS_DIR } = config;
@@ -29,6 +30,28 @@ let io;
 const storeStatuses = {};
 const app = express();
 const server = http.createServer(app);
+
+// 1. SECURITY: Rate Limiter (Prevent Brute Force)
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 Menit
+  max: 12, // Maks 12 kali coba per 15 menit
+  message: 'Terlalu banyak percobaan login. Silakan coba lagi nanti (15 menit).',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// 2. LIVE SYSTEM LOGGING (Wow Factor)
+// Kirim log penting ke Dashboard UI secara real-time via Socket.io
+const originalBotLogger = logger.bot;
+logger.bot = (msg) => {
+    if (io) io.emit('sysLog', { type: 'BOT', msg, time: new Date().toLocaleTimeString() });
+    originalBotLogger(msg);
+};
+const originalErrorLogger = logger.error;
+logger.error = (msg) => {
+    if (io) io.emit('sysLog', { type: 'ERROR', msg, time: new Date().toLocaleTimeString() });
+    originalErrorLogger(msg);
+};
 
 // ============================================================
 // PRODUCTION-READY SESSION (Persistent via SQLite, bukan RAM)
@@ -129,8 +152,8 @@ const upload = multer({
 // AUTH ROUTES & PROTECTION
 // ============================================================
 
-// API LOGIN
-app.post('/api/login', (req, res) => {
+// API LOGIN (Security: Rate Limited)
+app.post('/api/login', loginLimiter, (req, res) => {
   const { user, pass } = req.body;
   if (user === ADMIN_USER && pass === ADMIN_PASS) {
     req.session.authenticated = true;
@@ -226,16 +249,42 @@ function initDashboard(port = 3000) {
       const whatsappService = require('../whatsapp_service');
       const client = whatsappService.createWhatsAppClient(wa_id);
       whatsappService.setupEventListeners(client, wa_id);
-      client.initialize().catch(err => logger.error(`[${wa_id}] Init error: ${err.message}`));
+      client.initialize(); 
 
-      logger.success(`Store baru "${name}" (${wa_id}) ditambahkan!`);
-      res.json({ success: true, store: newStore.dataValues });
-    } catch (error) {
-      logger.error(`Gagal tambah store: ${error.message}`);
-      res.status(500).json({ success: false, message: error.message });
+      res.json({ success: true, store: newStore });
+    } catch (e) {
+      res.status(500).json({ success: false, message: e.message });
     }
   });
 
+  // ============================================================
+  // SYSTEM & BACKUP APIs (Professional Grade)
+  // ============================================================
+  
+  // GET: List Backups
+  app.get('/api/system/backups', async (req, res) => {
+    try {
+      const BACKUP_DIR = path.join(process.cwd(), 'backups');
+      if (!fs.existsSync(BACKUP_DIR)) return res.json([]);
+      const files = fs.readdirSync(BACKUP_DIR)
+        .filter(f => f.endsWith('.sqlite'))
+        .map(f => {
+          const stat = fs.statSync(path.join(BACKUP_DIR, f));
+          return { name: f, size: Math.round(stat.size / 1024), time: stat.mtime };
+        })
+        .sort((a,b) => b.time - a.time);
+      res.json(files);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // GET: Download Backup
+  app.get('/api/system/backups/:name', (req, res) => {
+    try {
+      const filePath = path.join(process.cwd(), 'backups', req.params.name);
+      if (!fs.existsSync(filePath)) return res.status(404).send('Not Found');
+      res.download(filePath);
+    } catch (e) { res.status(500).send(e.message); }
+  });
   // ============================================================
   // SETTINGS APIs
   // ============================================================

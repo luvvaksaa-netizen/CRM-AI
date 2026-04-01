@@ -439,6 +439,9 @@
     <div class="nav-btn" onclick="switchView('connect')" id="nav-connect">
         <i class="fas fa-qrcode"></i><span>Koneksi</span>
     </div>
+    <div class="nav-btn" onclick="switchView('system')" id="nav-system">
+        <i class="fas fa-terminal"></i><span>Sistem</span>
+    </div>
 </div>
 
 <!-- ======= MAIN WINDOW ======= -->
@@ -625,6 +628,46 @@
 
                 <div class="badge-status mx-auto" id="connectStatusBadge" style="background:#f1f5f9;color:#64748b; width: fit-content; padding: 6px 15px;">Off-sync</div>
             </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- VIEW 4: SYSTEM MONITOR -->
+    <div class="view h-100 p-4" id="view-system">
+        <div class="d-flex flex-column w-100">
+            <div class="mb-4 d-flex align-items-center">
+                <h4 class="fw-bold m-0"><i class="fas fa-terminal me-2 text-primary"></i>Monitor Sistem & Log</h4>
+                <span class="ms-3 badge rounded-pill bg-light text-dark fw-normal border">Real-time Stream</span>
+                <button class="btn btn-sm btn-outline-danger ms-auto" onclick="document.getElementById('sysLogContainer').innerHTML=''">
+                    <i class="fas fa-trash-alt me-1"></i>Hapus Log
+                </button>
+            </div>
+            <div id="sysLogContainer" class="flex-grow-1 bg-dark text-light p-3 rounded" style="font-family:'Courier New', monospace; font-size:0.82rem; min-height:450px; max-height:450px; overflow-y:auto; line-height:1.6; border: 4px solid #1e293b;">
+                <div class="text-muted opacity-50 mb-2">--- Menunggu aktivitas sistem ---</div>
+            </div>
+
+            <div class="mt-4">
+                <div class="d-flex align-items-center mb-3">
+                    <h5 class="fw-bold m-0"><i class="fas fa-database me-2 text-primary"></i>Snapshot Database</h5>
+                    <button class="btn btn-sm btn-link text-decoration-none ms-auto" onclick="loadBackups()">
+                        <i class="fas fa-sync-alt me-1"></i>Refresh
+                    </button>
+                </div>
+                <div class="p-4 rounded-4 bg-light shadow-sm" style="border: 2px dashed #e2e8f0;">
+                    <table class="table table-hover align-middle m-0" style="font-size:0.85rem;">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Nama Snapshot</th>
+                                <th>Ukuran</th>
+                                <th>Tanggal</th>
+                                <th class="text-end">Aksi</th>
+                            </tr>
+                        </thead>
+                        <tbody id="backupTableBody">
+                            <tr><td colspan="4" class="text-center text-muted p-4">Klik Refresh untuk memuat data backup.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>
@@ -1620,6 +1663,27 @@
         loadAgentMedia(agentId);
     });
 
+    socket.on('sysLog', ({ type, msg, time }) => {
+        const container = document.getElementById('sysLogContainer');
+        if (!container) return;
+        const entry = document.createElement('div');
+        entry.className = 'mb-1';
+        
+        const typeColor = type === 'BOT' ? '#a78bfa' : '#ef4444';
+        const typeIcon = type === 'BOT' ? '🤖' : '❌';
+        
+        entry.innerHTML = `
+            <span class="text-muted" style="font-size:0.75rem;">[${time}]</span> 
+            <span style="color:${typeColor}; font-weight:700;">${typeIcon} [${type}]</span> ${msg}
+        `;
+        
+        container.appendChild(entry);
+        container.scrollTop = container.scrollHeight;
+        
+        // Batasi log agar tidak memberatkan browser
+        if (container.children.length > 200) container.removeChild(container.firstChild);
+    });
+
     // ============================================================
     // NAVIGATION
     // ============================================================
@@ -1636,6 +1700,35 @@
         // Context-aware loading
         if (id === 'agents') loadAgents();
         if (id === 'media')  loadMedia();
+        if (id === 'system') {
+            const el = document.getElementById('sysLogContainer');
+            if (el) el.scrollTop = el.scrollHeight;
+            loadBackups();
+        }
+    }
+
+    async function loadBackups() {
+        try {
+            const res = await fetch('/api/system/backups');
+            const backups = await res.json();
+            const body = document.getElementById('backupTableBody');
+            body.innerHTML = backups.length ? '' : '<tr><td colspan="4" class="text-center p-3 opacity-50">Belum ada backup.</td></tr>';
+            
+            backups.forEach(b => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><code>${b.name}</code></td>
+                    <td>${b.size} KB</td>
+                    <td>${moment(b.time).format('DD MMM YYYY, HH:mm')}</td>
+                    <td class="text-end">
+                        <a href="/api/system/backups/${b.name}" class="btn btn-sm btn-primary">
+                            <i class="fas fa-download"></i>
+                        </a>
+                    </td>
+                `;
+                body.appendChild(tr);
+            });
+        } catch (e) { toast('Gagal memuat daftar backup.', 'error'); }
     }
 
     function selectPurpose(el) {

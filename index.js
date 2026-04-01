@@ -3,6 +3,7 @@ const { validateConfig } = require('./src/config');
 const logger = require('./src/utils/logger');
 const dashboard = require('./src/services/dashboard_service');
 const { initDB, Store } = require('./src/database/index');
+const { initBackupService, performBackup } = require('./src/services/backup_service');
 
 /**
  * Start the Multi-Session WhatsApp AI & CRM Dashboard.
@@ -14,8 +15,12 @@ async function startBot() {
         process.exit(1);
     }
 
-    // 1. Inisialisasi Database
+    // 1. Inisialisasi Database & Backup
     await initDB();
+    initBackupService();
+    
+    // Snapshot pertama kali saat startup (Opsional)
+    performBackup();
 
     // 2. Inisialisasi Web Dashboard
     dashboard.initDashboard(3000);
