@@ -87,9 +87,28 @@ function setupEventListeners(client, storeWaId) {
         dashboard.updateWAStatus(storeWaId, "Terautentikasi...");
     });
 
-    client.on('ready', () => {
+    client.on('ready', async () => {
         logger.success(`[${storeWaId}] WhatsApp SIAP DIGUNAKAN! ✅`);
         dashboard.updateWAStatus(storeWaId, "Dihubungkan (Online)");
+        
+        // FITUR PREMANEN: Sinkronisasi pesan yang masuk saat Bot sedang Offline (Update/Restart)
+        try {
+            logger.info(`[${storeWaId}] Memulai sinkronisasi pesan tertunda...`);
+            const chats = await client.getChats();
+            const unreadChats = chats.filter(chat => chat.unreadCount > 0);
+            
+            for (const chat of unreadChats) {
+                const messages = await chat.fetchMessages({ limit: chat.unreadCount });
+                for (const msg of messages) {
+                    // Proses pesan seolah-olah baru masuk sekarang
+                    await handleMessage(msg, storeWaId);
+                }
+                await chat.sendSeen(); // Tandai sudah dibaca agar tidak double sync
+            }
+            if (unreadChats.length > 0) logger.success(`[${storeWaId}] Berhasil menarik ${unreadChats.length} chat tertunda.`);
+        } catch (e) {
+            logger.warn(`[${storeWaId}] Gagal sinkronisasi chat: ${e.message}`);
+        }
     });
 
     client.on('message', async (message) => {
