@@ -8,7 +8,11 @@ const { initDB, Store } = require('./src/database/index');
  * Start the Multi-Session WhatsApp AI & CRM Dashboard.
  */
 async function startBot() {
-    logger.bot('Memulai Multi-Session WhatsApp AI & CRM Dashboard...');
+    // 0. Validasi Konfigurasi
+    if (!validateConfig()) {
+        logger.error('Startup gagal karena konfigurasi tidak valid.');
+        process.exit(1);
+    }
 
     // 1. Inisialisasi Database
     await initDB();

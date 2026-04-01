@@ -46,20 +46,19 @@ const config = {
     MODEL_NAME:         process.env.MODEL_NAME  || 'gpt-4o-mini',
     ORIGIN_NAME:        process.env.ORIGIN_NAME || 'Kediri',
 
-    // Paths (Terpusat — gunakan di seluruh proyek, jangan hardcode lagi)
+    // Paths (Terpusat)
     DATA_DIR,
     UPLOADS_DIR,
+
+    // Admin Credentials
+    ADMIN_USER: process.env.ADMIN_USER || 'admin',
+    ADMIN_PASS: process.env.ADMIN_PASS || 'admin123'
 };
 
 const validateConfig = () => {
     if (!config.OPENAI_API_KEY) {
-        logger.error('OPENAI_API_KEY tidak ditemukan! Bot AI tidak akan berfungsi.');
+        logger.error('CRITICAL: OPENAI_API_KEY is missing in .env!');
         return false;
-    }
-    if (!config.RAJAONGKIR_API_KEY) {
-        logger.warn('RAJAONGKIR_API_KEY tidak ada. Fitur cek ongkir dinonaktifkan.');
-    } else {
-        logger.info(`Shipping Engine: Komerce API [${config.KOMERCE_BASE_URL}]`);
     }
     return true;
 };
