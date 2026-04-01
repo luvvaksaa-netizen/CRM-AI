@@ -634,10 +634,19 @@
 
     <!-- VIEW 4: SYSTEM MONITOR -->
     <div class="view h-100 p-4" id="view-system">
-        <div class="d-flex flex-column w-100">
+        <div class="d-flex flex-column w-100 h-100">
             <div class="mb-4 d-flex align-items-center">
-                <h4 class="fw-bold m-0"><i class="fas fa-terminal me-2 text-primary"></i>Monitor Sistem & Log</h4>
-                <span class="ms-3 badge rounded-pill bg-light text-dark fw-normal border">Real-time Stream</span>
+                <h4 class="fw-bold m-0"><i class="fas fa-terminal me-2 text-primary"></i>Monitor Sistem & Health</h4>
+                
+                <div class="ms-4 d-flex gap-4">
+                    <div id="statRAM" class="d-flex align-items-center gap-2">
+                        <span class="badge bg-light text-dark border">RAM: --%</span>
+                    </div>
+                    <div id="statCPU" class="d-flex align-items-center gap-2">
+                        <span class="badge bg-light text-dark border">CPU Load: --</span>
+                    </div>
+                </div>
+                
                 <button class="btn btn-sm btn-outline-danger ms-auto" onclick="document.getElementById('sysLogContainer').innerHTML=''">
                     <i class="fas fa-trash-alt me-1"></i>Hapus Log
                 </button>
@@ -1661,6 +1670,15 @@
         toast('🤖 Vision AI selesai menganalisis gambar!', 'success');
         loadMedia(); 
         loadAgentMedia(agentId);
+    });
+
+    socket.on('sysStats', ({ ram, cpu }) => {
+        document.getElementById('statRAM').innerHTML = `
+            <span class="badge ${ram.perc > 85 ? 'bg-danger' : 'bg-success'} text-white">RAM: ${ram.perc}% (${ram.used}/${ram.total}GB)</span>
+        `;
+        document.getElementById('statCPU').innerHTML = `
+            <span class="badge bg-primary text-white">CPU Load: ${cpu}%</span>
+        `;
     });
 
     socket.on('sysLog', ({ type, msg, time }) => {

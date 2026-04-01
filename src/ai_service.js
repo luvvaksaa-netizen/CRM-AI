@@ -23,16 +23,38 @@ const RESPONSE_TYPE = {
     MEDIA: 'media'
 };
 
-/**
- * Mendapatkan respons AI dengan Knowledge-Aware Media Architecture + Customer Media Awareness.
- * @param {string} userMessage          - Pesan teks dari pelanggan
- * @param {Array}  history              - Riwayat chat dari DB
- * @param {object} store                - Konfigurasi toko (Device)
- * @param {object} agent                - Konfigurasi Agen (The Brain)
- * @param {string} customerMediaContext - Hasil analisis gambar/media yang dikirim pelanggan (opsional)
- * @returns {Promise<{ type: string, content: string, mediaList?: Array }>}
- */
+// === LIGHTWEIGHT CONCURRENCY LIMITER ===
+// Membatasi agar AI hanya memproses 3 chat serentak (mencegah CPU Spike pada 2GB RAM).
+let activeRequests = 0;
+const MAX_CONCURRENCY = 3;
+const pendingQueue = [];
+
+function runNextInQueue() {
+    if (activeRequests < MAX_CONCURRENCY && pendingQueue.length > 0) {
+        const { resolve, execute } = pendingQueue.shift();
+        activeRequests++;
+        execute().then(res => {
+            activeRequests--;
+            resolve(res);
+            runNextInQueue();
+        });
+    }
+}
+
 async function getAIResponse(userMessage, history = [], store = null, agent = null, customerMediaContext = "") {
+    return new Promise((resolve) => {
+        pendingQueue.push({
+            resolve,
+            execute: () => _processAIResponse(userMessage, history, store, agent, customerMediaContext)
+        });
+        runNextInQueue();
+    });
+}
+
+/**
+ * Logika internal pemrosesan AI (Metode asli dipindah ke sini)
+ */
+async function _processAIResponse(userMessage, history = [], store = null, agent = null, customerMediaContext = "") {
     if (!config.OPENAI_API_KEY || config.OPENAI_API_KEY.includes('your_openai_api_key')) {
         logger.error("OpenAI API Key belum dikonfigurasi!");
         return { type: RESPONSE_TYPE.TEXT, content: ERRORS.AI_FALLBACK };

@@ -40,10 +40,40 @@ function performBackup() {
             files.slice(7).forEach(f => fs.unlinkSync(path.join(BACKUP_DIR, f.name)));
         }
 
+        rotateLogs(); // Tambahkan pembersihan LOG
         logger.success(`Database Snapshot dibuat: ${path.basename(backupPath)}`);
     } catch (e) {
         logger.error(`Gagal membuat backup database: ${e.message}`);
     }
+}
+
+/**
+ * Mencegah file log membengkak (Log Rotation)
+ */
+function rotateLogs() {
+    const logPath = path.join(process.cwd(), 'logs', 'app.log');
+    if (!fs.existsSync(logPath)) return;
+
+    try {
+        const stats = fs.statSync(logPath);
+        const maxSize = 8 * 1024 * 1024; // 8MB
+
+        if (stats.size > maxSize) {
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            fs.copyFileSync(logPath, path.join(process.cwd(), 'logs', `app-${timestamp}.log`));
+            fs.writeFileSync(logPath, `[Log Rotated ${timestamp}]\n`);
+            
+            // Hapus log lama (Hanya simpan 3 file log terakhir)
+            const logFiles = fs.readdirSync(path.join(process.cwd(), 'logs'))
+                .filter(f => f.startsWith('app-') && f.endsWith('.log'))
+                .map(f => ({ name: f, time: fs.statSync(path.join(process.cwd(), 'logs', f)).mtime }))
+                .sort((a,b) => b.time - a.time);
+
+            if (logFiles.length > 3) {
+                logFiles.slice(3).forEach(f => fs.unlinkSync(path.join(process.cwd(), 'logs', f.name)));
+            }
+        }
+    } catch (e) {}
 }
 
 module.exports = { initBackupService, performBackup };

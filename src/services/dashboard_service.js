@@ -169,6 +169,27 @@ app.post('/api/login', loginLimiter, (req, res) => {
 function initDashboard(port = 3000) {
   io = new Server(server, { cors: { origin: '*' } });
 
+  // 1. HEALTH MONITOR (Transmit to UI)
+  setInterval(() => {
+    try {
+        const os = require('os');
+        const free = os.freemem();
+        const total = os.totalmem();
+        const used = total - free;
+        const load = os.loadavg()[0]; // 1-minute load average
+        if (io) {
+            io.emit('sysStats', {
+                ram: { 
+                    perc: Math.round((used / total) * 100), 
+                    used: (used / 1024 / 1024 / 1024).toFixed(2), 
+                    total: (total / 1024 / 1024 / 1024).toFixed(1) 
+                },
+                cpu: Math.round(load * 10), // Scale to 100% roughly
+            });
+        }
+    } catch (e) {}
+  }, 10000); // 10 Detik sekali
+
   // Proteksi semua /api/* (kecuali /api/login & /api/logout yang sudah di atas)
   app.use('/api', authenticate);
 
