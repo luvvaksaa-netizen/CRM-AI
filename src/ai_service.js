@@ -8,6 +8,8 @@
  */
 
 const OpenAI = require('openai');
+const moment = require('moment');
+const fs = require('fs');
 const config = require('./config');
 const { ERRORS } = require('./constants');
 const logger = require('./utils/logger');
@@ -121,6 +123,9 @@ ATURAN PENTING:
 3. Gunakan tool "kirim_media_katalog" HANYA jika pelanggan minta lihat foto/video. 
 4. Kamu bisa mengirim beberapa ID sekaligus dalam satu kali panggil tool.
 5. Jika pelanggan minta "semua katalog", masukkan semua ID katalog di atas ke dalam array media_ids.
+6. PROTOKOL PEMBAYARAN: Jika pelanggan mengklaim "Sudah Transfer" atau "Sudah Bayar", kamu WAJIB meminta FOTO BUKTI TRANSFER sebagai syarat konfirmasi. Jangan memproses pesanan atau mengucapkan terima kasih atas pembayaran sebelum mereka mengirim foto bukti tersebut.
+
+WAKTU SEKARANG: ${moment().format('dddd, DD MMMM YYYY, HH:mm')}
 `.trim();
 
         // === TOOL DEFINITIONS ===
@@ -167,12 +172,23 @@ ATURAN PENTING:
             userContent = `[SISTEM: Pelanggan baru saja mengirim MEDIA/FOTO. Berikut adalah deskripsi visualnya untuk panduanmu: ${customerMediaContext}]\n\nPESAN PELANGGAN: ${userMessage || '(Hanya mengirim foto)'}`;
         }
 
+        const filteredHistory = history.length > 0 
+            ? history.slice(0, history.length - 1) 
+            : [];
+
         let messages = [
             { role: "system", content: fullSystemInstruction },
-            ...history.map(h => ({
-                role: h.is_from_me ? 'assistant' : 'user',
-                content: h.body || h.content || ""
-            })),
+            ...filteredHistory.map(h => {
+                const dayStr = h.timestamp ? moment(h.timestamp).format('DD MMM HH:mm') : "";
+                return {
+                    role: h.is_from_me ? 'assistant' : 'user',
+                    content: `[LOG-WAKTU: ${dayStr}]\n${h.body || h.content || ""}`
+                };
+            }),
+            { 
+                role: "system", 
+                content: `--- INSTRUKSI PRIORITAS: Gunakan riwayat di atas untuk mengenali PELANGGAN (nama, konteks) dan melanjutkan topik yang sedang dibahas. Jangan mengulangi pertanyaan yang sudah terjawab di atas. Jangan sertakan tag [LOG-WAKTU] dalam jawabanmu. ---` 
+            },
             { role: "user", content: userContent }
         ];
 
@@ -261,6 +277,53 @@ ATURAN PENTING:
 }
 
 /**
+ * TAHAP 4: Generate Chat Summary (Rekap Pembahasan)
+ * Mengubah 20+ chat menjadi 3-5 poin penting status pelanggan.
+ */
+async function generateChatSummary(history = []) {
+    if (history.length < 3) return "Percakapan baru saja dimulai. Belum ada rekapan.";
+    
+    try {
+        const historyText = history.map(h => 
+            `${h.is_from_me ? 'Admin' : 'Pelanggan'}: ${h.body || h.content}`
+        ).join('\n');
+
+        const response = await openai.chat.completions.create({
+            model: config.MODEL_NAME || "gpt-4o-mini",
+            messages: [
+                { role: "system", content: "Tugasmu adalah membuat REKAP PEMBAHASAN CHAT singkat (3-5 poin). Fokus pada: 1. Nama/identitas pelanggan jika sudah tahu, 2. Produk yang diminati, 3. Progress diskusi (misal: sudah deal harga, baru tanya-tanya, atau mau kirim desain). Gunakan Bahasa Indonesia yang sangat ringkas." },
+                { role: "user", content: `Berikut riwayat chatnya, buatkan rekapannya:\n\n${historyText}` }
+            ],
+            temperature: 0.3 // Lebih stabil untuk rekap
+        });
+
+        return response.choices[0].message.content.trim();
+    } catch (e) {
+        logger.error(`Gagal generate summary: ${e.message}`);
+        return "Gagal memperbarui rekapan.";
+    }
+}
+
+/**
+ * TAHAP 5: Voice Note Transcription (Whisper)
+ * Mengubah pesan suara (VN) menjadi teks agar AI bisa "mendengar".
+ */
+async function transcribeAudio(audioPath) {
+    if (!fs.existsSync(audioPath)) return null;
+    try {
+        const response = await openai.audio.transcriptions.create({
+            file: fs.createReadStream(audioPath),
+            model: "whisper-1",
+            language: "id" // Fokus ke Bahasa Indonesia
+        });
+        return response.text;
+    } catch (e) {
+        logger.error(`Gagal transkripsi VN: ${e.message}`);
+        return null;
+    }
+}
+
+/**
  * Menghitung jeda mengetik yang realistis (Natural Human Typing).
  */
 function calculateTypingDelay(text, minCharDelay = 60, maxDelay = 5000) {
@@ -273,6 +336,8 @@ function calculateTypingDelay(text, minCharDelay = 60, maxDelay = 5000) {
 
 module.exports = {
     getAIResponse,
+    generateChatSummary,
+    transcribeAudio,
     calculateTypingDelay,
     RESPONSE_TYPE
 };

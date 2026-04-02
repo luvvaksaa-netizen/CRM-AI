@@ -21,9 +21,17 @@ function initBackupService() {
     logger.info('Backup Service diaktifkan (Auto-snapshot setiap 24 jam).');
 }
 
-function performBackup() {
+function performBackup(force = false) {
     try {
         if (!fs.existsSync(DB_FILE)) return;
+
+        const dateStr = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
+        const existingBackups = fs.readdirSync(BACKUP_DIR).filter(f => f.startsWith(`snapshot-${dateStr}`));
+
+        // Jika hari ini sudah ada backup & tidak dipaksa (force), lewati.
+        if (existingBackups.length > 0 && !force) {
+            return;
+        }
 
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const backupPath = path.join(BACKUP_DIR, `snapshot-${timestamp}.sqlite`);

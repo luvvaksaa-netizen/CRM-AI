@@ -41,15 +41,21 @@ const loginLimiter = rateLimit({
 });
 
 // 2. LIVE SYSTEM LOGGING (Wow Factor)
-// Kirim log penting ke Dashboard UI secara real-time via Socket.io
+let lastLogMsg = ""; 
 const originalBotLogger = logger.bot;
 logger.bot = (msg) => {
-    if (io) io.emit('sysLog', { type: 'BOT', msg, time: new Date().toLocaleTimeString() });
+    if (io && msg !== lastLogMsg) {
+        io.emit('sysLog', { type: 'BOT', msg, time: new Date().toLocaleTimeString() });
+        lastLogMsg = msg;
+    }
     originalBotLogger(msg);
 };
 const originalErrorLogger = logger.error;
 logger.error = (msg) => {
-    if (io) io.emit('sysLog', { type: 'ERROR', msg, time: new Date().toLocaleTimeString() });
+    if (io && msg !== lastLogMsg) {
+        io.emit('sysLog', { type: 'ERROR', msg, time: new Date().toLocaleTimeString() });
+        lastLogMsg = msg;
+    }
     originalErrorLogger(msg);
 };
 
@@ -273,6 +279,88 @@ function initDashboard(port = 3000) {
       client.initialize(); 
 
       res.json({ success: true, store: newStore });
+    } catch (e) {
+      res.status(500).json({ success: false, message: e.message });
+    }
+  });
+
+  // ============================================================
+  // TAHAP 3: HUMAN OVERRIDE APIs (Bot Pause Control)
+  // ============================================================
+
+  // Cek Status Pause
+  app.get('/api/stores/:id/contacts/:contactId/pause', (req, res) => {
+    try {
+      const { pausedContacts } = require('../events/message_handler');
+      const isPaused = pausedContacts.has(`${req.params.id}_${req.params.contactId}`);
+      res.json({ isPaused });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Merubah Status Pause (Toggle)
+  app.post('/api/stores/:id/contacts/:contactId/pause', (req, res) => {
+    try {
+      const { isPaused } = req.body;
+      const { pauseBotForContact, resumeBotForContact } = require('../events/message_handler');
+      
+      if (isPaused) {
+        pauseBotForContact(req.params.id, req.params.contactId);
+      } else {
+        resumeBotForContact(req.params.id, req.params.contactId);
+      }
+      res.json({ success: true, isPaused });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // TAHAP 4: REKAP PEMBAHASAN API
+  app.get('/api/summaries', async (req, res) => {
+    try {
+      const { ChatSummary } = require('../database/index');
+      // Ambil semua rekap, diurutkan dari yang terbaru
+      const summaries = await ChatSummary.findAll({
+        order: [['last_updated', 'DESC']]
+      });
+      res.json(summaries);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // DELETE: Hapus Store & Bersihkan Semua Data (Clean Slate)
+  app.delete('/api/stores/:id', async (req, res) => {
+    try {
+      const wa_id = req.params.id;
+      const whatsappService = require('../whatsapp_service');
+      const { ChatMessage } = require('../database/index');
+
+      // 1. Matikan dan putuskan sesi fisik WA secara tuntas
+      await whatsappService.logoutClient(wa_id);
+
+      // 2. Hapus seluruh riwayat chat agen ini agar tidak mencampur data dengan nomor baru
+      await ChatMessage.destroy({ where: { store_wa_id: wa_id } });
+
+      // 3. Hapus profil Toko dari Database
+      await Store.destroy({ where: { wa_id } });
+
+      logger.success(`[${wa_id}] Toko dan data histori telah dihapus total (Wiped).`);
+      res.json({ success: true, message: 'Toko dan seluruh data berhasil dimusnahkan.' });
+    } catch (e) {
+      res.status(500).json({ success: false, message: e.message });
+    }
+  });
+
+  // POST: Logout Sesi (Putuskan WA tanpa hapus data)
+  app.post('/api/stores/:id/logout', async (req, res) => {
+    try {
+      const wa_id = req.params.id;
+      const whatsappService = require('../whatsapp_service');
+      await whatsappService.logoutClient(wa_id);
+      
+      res.json({ success: true, message: 'Sesi WA berhasil diputuskan.' });
     } catch (e) {
       res.status(500).json({ success: false, message: e.message });
     }

@@ -16,12 +16,27 @@ function formatWaNumber(id) {
     return `+${num}`;
 }
 
+// === IN-MEMORY PAUSE REGISTRY (Human Override) ===
+// Menyimpan status pause untuk kontak tertentu agar bot tidak membalas
+const pausedContacts = new Set(); // Key: 'storeWaId_contactId'
+
+function pauseBotForContact(storeWaId, contactId) {
+    pausedContacts.add(`${storeWaId}_${contactId}`);
+    logger.info(`[${storeWaId}] Bot DIPAUSE secara manual untuk kontak: ${contactId}`);
+}
+
+function resumeBotForContact(storeWaId, contactId) {
+    pausedContacts.delete(`${storeWaId}_${contactId}`);
+    logger.info(`[${storeWaId}] Bot DIAKTIFKAN KEMBALI untuk kontak: ${contactId}`);
+}
+
 /**
  * Handle incoming message event with Multi-Session + Smart Media (Phase 4).
  * @param {object} message  - WhatsApp message object
  * @param {string} storeWaId - ID Session Toko (Context Aware)
+ * @param {boolean} shouldAIReply - Jika true, AI akan memproses balasan. Jika false, hanya catat ke DB.
  */
-async function handleMessage(message, storeWaId) {
+async function handleMessage(message, storeWaId, shouldAIReply = true) {
     if (message.isStatus || message.from.includes('@g.us')) return;
 
     const contactId = message.from;
@@ -30,18 +45,18 @@ async function handleMessage(message, storeWaId) {
     let tempPath = "";
 
     try {
-        // === 1. CEK & ANALISIS MEDIA DARI PELANGGAN (AI Mata) ===
+        // === 1. CEK & ANALISIS MEDIA DARI PELANGGAN (AI Mata & Telinga) ===
         if (message.hasMedia) {
             const media = await message.downloadMedia();
-            if (media && media.mimetype.startsWith('image/')) {
+            if (!media) throw new Error("Gagal mengunduh media dari pesan.");
+
+            // A. FOTO (Vision)
+            if (media.mimetype.startsWith('image/')) {
                 logger.info(`[${storeWaId}] Menerima foto dari pelanggan. Menganalisis...`);
-                
-                // Simpan MASA PERMANEN ke UPLOADS_DIR agar bisa dilihat di Dashboard Web CRM
                 const fileName = `customer_${storeWaId}_${Date.now()}.${media.mimetype.split('/')[1]}`;
                 tempPath = path.join(UPLOADS_DIR, fileName);
                 fs.writeFileSync(tempPath, Buffer.from(media.data, 'base64'));
 
-                // Ambil store & agent context untuk panduan AI Vision
                 const { BotAgent } = require('../database/index');
                 const store = await Store.findOne({ 
                     where: { wa_id: storeWaId },
@@ -49,19 +64,30 @@ async function handleMessage(message, storeWaId) {
                 });
                 const agent = store?.BotAgent;
 
-                const contextParts = [];
-                if (store) contextParts.push(`Nama Toko: ${store.name}`);
-                if (agent) {
-                    contextParts.push(`Nama Agen: ${agent.bot_name}`);
-                    contextParts.push(`Pengetahuan: ${agent.product_knowledge}`);
-                }
-                const storeContext = contextParts.join('\n');
-
-                customerMediaContext = await analyzeImage(tempPath, storeContext);
-                logger.success(`[${storeWaId}] AI "melihat" foto pelanggan: ${customerMediaContext.substring(0, 50)}...`);
+                const storeContext = `Nama Toko: ${store?.name || 'Toko'}\nKonten Agen: ${agent?.product_knowledge || ''}`;
+                const analysis = await analyzeImage(tempPath, storeContext);
                 
-                // Beri tag khusus agar UI bisa menampilkan gambar
-                customerMediaContext = `[MEDIA:/uploads/${fileName}] ${customerMediaContext}`;
+                logger.success(`[${storeWaId}] AI "melihat" foto pelanggan.`);
+                // Gunakan format khusus untuk AI Insight agar diproses dashboard
+                customerMediaContext = `[MEDIA:/uploads/${fileName}]\n\n[AI-VISION: ${analysis}]`;
+            }
+
+            // B. VOICE NOTE (Transcription)
+            if (media.mimetype.startsWith('audio/')) {
+                logger.info(`[${storeWaId}] Menerima Voice Note. Mendengarkan...`);
+                // Whisper suka ogg/mp3/wav. WhatsApp biasanya ogg.
+                const audioExt = media.mimetype.split('/')[1].split(';')[0] || 'ogg';
+                const audioName = `voice_${storeWaId}_${Date.now()}.${audioExt}`;
+                const audioPath = path.join(UPLOADS_DIR, audioName);
+                fs.writeFileSync(audioPath, Buffer.from(media.data, 'base64'));
+
+                const { transcribeAudio } = require('../ai_service');
+                const transcription = await transcribeAudio(audioPath);
+
+                if (transcription) {
+                    logger.success(`[${storeWaId}] AI "mendengar" VN: ${transcription}`);
+                    customerMediaContext = `[AI-TRANSKRIPSI: ${transcription}]`;
+                }
             }
         }
 
@@ -81,7 +107,19 @@ async function handleMessage(message, storeWaId) {
             sender_name: senderName
         });
 
-        logger.info(`[${storeWaId}] Pesan Masuk [${contactId}]: ${body}`);
+        logger.info(`[${storeWaId}] Pesan masuk terdaftar: ${contactId}`);
+
+        // === FIREWALL: CEK JALUR AUTO-REPLY (TAHAP 1) ===
+        if (!shouldAIReply) {
+            logger.info(`[${storeWaId}] Jalur Sinkronisasi: Pesan dicatat, AI Dilewati.`);
+            return;
+        }
+
+        // === FIREWALL 2: HUMAN OVERRIDE (TAHAP 3) ===
+        if (pausedContacts.has(`${storeWaId}_${contactId}`)) {
+            logger.info(`[${storeWaId}] Bot sedang dipause (Diambil alih human) untuk: ${contactId}`);
+            return; // Berhenti membalas kalau human lagi intervensi
+        }
 
         // 3. Ambil Konfigurasi Bot & Agen dari DB
         const { BotAgent } = require('../database/index');
@@ -93,7 +131,7 @@ async function handleMessage(message, storeWaId) {
 
         // JIKA STORE TIDAK ADA atau BOT OFF: Berhenti
         if (!store || store.is_bot_active === false) {
-            logger.info(`[${storeWaId}] Bot OFF atau Perangkat tidak ditemukan.`);
+            logger.info(`[${storeWaId}] Bot NON-AKTIF untuk Toko ini.`);
             return;
         }
 
@@ -108,10 +146,11 @@ async function handleMessage(message, storeWaId) {
         // 3. Ambil Riwayat Chat dari DB (konteks percakapan)
         const recentHistory = await ChatMessage.findAll({
             where: { contact_id: contactId, store_wa_id: storeWaId },
-            limit: 10,
+            limit: 20, // Diperbanyak agar ingatan lebih tajam
             order: [['timestamp', 'DESC']]
         });
-        const history = recentHistory.reverse();
+        // Pastikan kita mengambil data mentah (plain) agar role-mapping lancar
+        const history = recentHistory.map(h => h.get({ plain: true })).reverse();
 
         // 3.5 === MARKETING AUTOPILOT (Trigger Keyword Check - Via Agent) ===
         const { MediaAsset } = require('../database/index');
@@ -169,12 +208,15 @@ async function handleMessage(message, storeWaId) {
                 await _logBotReply(storeWaId, contactId, aiResult.content, agent.bot_name);
             }
         } else {
-            // --- MODE TEKS: Kirim Pesan Biasa ---
             await message.reply(aiResult.content);
             await _logBotReply(storeWaId, contactId, aiResult.content, agent.bot_name);
         }
 
         logger.success(`[${storeWaId}] Sesi [${contactId}] — Dibalas via AI dengan persepsi visual.`);
+
+        // TAHAP 4: Update Rekap Chat (Summary) secara background (Non-blocking)
+        _updateConversationSummary(storeWaId, contactId, history); 
+
 
     } catch (error) {
         logger.error(`[${storeWaId}] Gagal memproses [${contactId}]: ${error.message}`);
@@ -238,4 +280,41 @@ async function _logBotReply(storeWaId, contactId, body, botName) {
     });
 }
 
-module.exports = { handleMessage };
+/**
+ * TAHAP 4: Background Summary Updater
+ * Menggunakan AI untuk merangkum percakapan agar admin bisa lihat progress per customer.
+ */
+async function _updateConversationSummary(storeWaId, contactId, history) {
+    try {
+        const { ChatSummary } = require('../database/index');
+        const { generateChatSummary } = require('../ai_service');
+        
+        const summaryText = await generateChatSummary(history);
+        
+        // SQLite upsert in Sequelize often fails with composite keys.
+        // We use manual find/create or update instead.
+        const [summary, created] = await ChatSummary.findOrCreate({
+            where: { store_wa_id: storeWaId, contact_id: contactId },
+            defaults: { summary: summaryText, last_updated: new Date() }
+        });
+
+        if (!created) {
+            summary.summary = summaryText;
+            summary.last_updated = new Date();
+            await summary.save();
+        }
+        
+        logger.info(`[${storeWaId}] Rekap Chat Pelanggan [${contactId}] Berhasil Diperbarui.`);
+    } catch (e) {
+        logger.error(`Gagal update summary: ${e.message}`);
+    }
+}
+
+
+
+module.exports = { 
+    handleMessage,
+    pauseBotForContact,
+    resumeBotForContact,
+    pausedContacts
+};

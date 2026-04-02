@@ -136,8 +136,36 @@
             min-width: 0;
         }
 
-        .view { display: none; width: 100%; height: 100%; }
-        .view.active { display: flex; }
+        .view { display: none; width: 100%; height: 100%; min-height: 0; }
+        .view.active { display: flex; flex-direction: column; }
+        #view-chat.active { flex-direction: row; }
+
+        /* === AI INSIGHT STYLES (Phase 5) === */
+        .ai-insight-box {
+            background: #f8fafc;
+            border: 1px dashed #cbd5e1;
+            border-left: 3px solid var(--clr-primary) !important;
+            border-radius: 12px;
+            padding: 12px 14px;
+            margin: 10px 0;
+            font-size: 0.82rem;
+            color: #475569;
+            line-height: 1.5;
+            box-shadow: inset 0 2px 6px rgba(0,0,0,0.03);
+            text-align: left;
+        }
+        .ai-insight-box i { color: var(--clr-primary); font-size: 0.9rem; margin-right: 8px; }
+        .ai-insight-box b { color: #1e293b; display: block; margin-bottom: 4px; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 1px; }
+
+        /* Media Queries for Responsiveness */
+        @media (max-width: 1024px) {
+            #convPanel { width: 280px !important; }
+        }
+        @media (max-width: 768px) {
+            #navSidebar { width: 70px !important; }
+            #navSidebar .nav-btn span { display: none; }
+            #convPanel { display: none !important; } /* Sembunyikan daftar chat di mobile agar lega */
+        }
 
         /* ===================== CHAT VIEW ===================== */
         #convPanel {
@@ -436,6 +464,10 @@
     <div class="nav-btn" onclick="switchView('media')" id="nav-media">
         <i class="fas fa-photo-video"></i><span>Media</span>
     </div>
+    <!-- TAHAP 4: REKAP PEMBAHASAN -->
+    <div class="nav-btn" onclick="switchView('summaries')" id="nav-summaries">
+        <i class="fas fa-list-check"></i><span>Rekap</span>
+    </div>
     <div class="nav-btn" onclick="switchView('connect')" id="nav-connect">
         <i class="fas fa-qrcode"></i><span>Koneksi</span>
     </div>
@@ -468,6 +500,12 @@
                     </div>
                 </div>
                 <div class="d-flex align-items-center gap-3">
+                    <!-- TAHAP 3: GUI Human Override (Toggle per Chat) -->
+                    <div class="form-check form-switch m-0 d-none" id="chatBotToggleContainer" title="Matikan untuk membalas manual tanpa diganggu bot AI">
+                        <input class="form-check-input" type="checkbox" id="chatBotToggle" onchange="toggleBotForChat()" style="cursor:pointer; width: 2em; height: 1.1em;" checked>
+                        <label class="form-check-label fw-bold ms-1" style="font-size:0.85rem; color:var(--clr-primary);" id="chatBotToggleLabel">AI Menjawab</label>
+                    </div>
+
                     <span id="hdrStatusDot" class="badge-status bg-secondary bg-opacity-10 text-secondary">Offline</span>
                 </div>
             </div>
@@ -483,6 +521,27 @@
                 <button class="btn btn-light border" style="width:45px;height:45px;border-radius:12px;color:var(--slate-500);transition:0.2s;" onclick="openMediaSelector()" title="Sisipkan Katalog/Gambar"><i class="fas fa-paperclip"></i></button>
                 <input type="text" id="replyInput" class="form-ctrl m-0" placeholder="Ketik balasan manual (Enter untuk kirim)..." onkeydown="if(event.key==='Enter')sendManual()">
                 <button id="btnSend" onclick="sendManual()"><i class="fas fa-paper-plane"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- === TAHAP 4: VIEW REKAP PEMBAHASAN (NEW) === -->
+    <div class="view" id="view-summaries">
+        <div class="page-view">
+            <div class="page-header d-flex justify-content-between align-items-center">
+                <div>
+                    <h2 class="fw-bold m-0" style="color:var(--clr-primary)"><i class="fas fa-list-check me-3"></i>Rekap Pembahasan</h2>
+                    <p class="text-muted m-0">Ringkasan pembicaraan & status deal per pelanggan</p>
+                </div>
+                <button class="btn btn-primary" onclick="loadSummaries()"><i class="fas fa-sync-alt me-2"></i>Segarkan Rekap</button>
+            </div>
+
+            <div id="summaryGrid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap:20px;">
+                <!-- Card Rekap akan muncul di sini -->
+                <div class="empty-state m-auto p-5 text-center w-100" style="grid-column: 1 / -1;">
+                    <i class="fas fa-spinner fa-spin fa-2x mb-3 text-primary"></i>
+                    <p>Memuat data rekapan...</p>
+                </div>
             </div>
         </div>
     </div>
@@ -627,6 +686,16 @@
                 </div>
 
                 <div class="badge-status mx-auto" id="connectStatusBadge" style="background:#f1f5f9;color:#64748b; width: fit-content; padding: 6px 15px;">Off-sync</div>
+
+                <!-- NEW CONTROL BUTTONS (Data Mixing Prevention) -->
+                <div class="mt-4 pt-3 border-top d-flex justify-content-center gap-2">
+                    <button class="btn btn-outline-warning btn-sm" onclick="logoutStore()" title="Putuskan koneksi WA tanpa menghapus histori chat">
+                        <i class="fas fa-sign-out-alt"></i> Keluar
+                    </button>
+                    <button class="btn btn-outline-danger btn-sm" onclick="deleteStore()" title="Buang Toko ini secara permanen">
+                        <i class="fas fa-trash-alt"></i> Hapus Toko & Data
+                    </button>
+                </div>
             </div>
             </div>
         </div>
@@ -651,20 +720,21 @@
                     <i class="fas fa-trash-alt me-1"></i>Hapus Log
                 </button>
             </div>
-            <div id="sysLogContainer" class="flex-grow-1 bg-dark text-light p-3 rounded" style="font-family:'Courier New', monospace; font-size:0.82rem; min-height:450px; max-height:450px; overflow-y:auto; line-height:1.6; border: 4px solid #1e293b;">
-                <div class="text-muted opacity-50 mb-2">--- Menunggu aktivitas sistem ---</div>
+            <div id="sysLogContainer" class="flex-grow-1 bg-dark text-light p-3 rounded mb-4 shadow-inner" 
+                 style="font-family:'Courier New', monospace; font-size:0.82rem; height: 350px; overflow-y:auto; line-height:1.6; border: 2px solid #1e293b; background: #0f172a !important;">
+                <div class="text-muted opacity-50 mb-2">--- Monitoring Aktif ---</div>
             </div>
 
-            <div class="mt-4">
+            <div class="mt-auto" style="min-height: 300px;">
                 <div class="d-flex align-items-center mb-3">
                     <h5 class="fw-bold m-0"><i class="fas fa-database me-2 text-primary"></i>Snapshot Database</h5>
                     <button class="btn btn-sm btn-link text-decoration-none ms-auto" onclick="loadBackups()">
                         <i class="fas fa-sync-alt me-1"></i>Refresh
                     </button>
                 </div>
-                <div class="p-4 rounded-4 bg-light shadow-sm" style="border: 2px dashed #e2e8f0;">
-                    <table class="table table-hover align-middle m-0" style="font-size:0.85rem;">
-                        <thead class="table-light">
+                <div class="p-3 rounded-4 bg-light shadow-sm border overflow-auto" style="max-height: 250px;">
+                    <table class="table table-hover align-middle m-0" style="font-size:0.82rem;">
+                        <thead class="table-light sticky-top">
                             <tr>
                                 <th>Nama Snapshot</th>
                                 <th>Ukuran</th>
@@ -673,7 +743,7 @@
                             </tr>
                         </thead>
                         <tbody id="backupTableBody">
-                            <tr><td colspan="4" class="text-center text-muted p-4">Klik Refresh untuk memuat data backup.</td></tr>
+                            <tr><td colspan="4" class="text-center text-muted p-4">Memuat data...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -1003,6 +1073,31 @@
         } catch (e) { toast('Koneksi gagal.', 'error'); }
     }
 
+    async function logoutStore() {
+        if (!currentStoreId) return;
+        if (!confirm('Apakah Anda yakin ingin memutus koneksi/logout perangkat ini?\nHistori chat tetap aman di server.')) return;
+        
+        try {
+            const res = await fetch(`/api/stores/${currentStoreId}/logout`, { method: 'POST' });
+            if (res.ok) {
+                toast('Sesi fisik WA berhasil diledakkan. Status kini Offline.', 'success');
+            }
+        } catch (e) { toast('Gagal memutuskan sesi.', 'error'); }
+    }
+
+    async function deleteStore() {
+        if (!currentStoreId) return;
+        if (!confirm('⛔ PERINGATAN BAHAYA!\nJika Anda menekan OK, seluruh pengaturan Toko dan RATUSAN histori chat akan dihapus secara PERMANEN untuk mencegah data tercampur di masa depan.\n\nApakah Anda benar-benar yakin ingin memusnahkan Toko ini?')) return;
+        
+        try {
+            const res = await fetch(`/api/stores/${currentStoreId}`, { method: 'DELETE' });
+            if (res.ok) {
+                toast('Toko dan Data diledakkan sukses 💣', 'success');
+                setTimeout(() => window.location.reload(), 1500); // Reload agar sinkron ulang dengan server
+            }
+        } catch (e) { toast('Gagal menghapus toko.', 'error'); }
+    }
+
     // ============================================================
     // AGENTS (The Brains)
     // ============================================================
@@ -1041,6 +1136,46 @@
                 </div>
             `;
             container.appendChild(div);
+        });
+    }
+
+    // ============================================================
+    // TAHAP 4: REKAP PEMBAHASAN UI (Live Insights)
+    // ============================================================
+    async function loadSummaries() {
+        const grid = document.getElementById('summaryGrid');
+        try {
+            const res = await fetch('/api/summaries');
+            const summaries = await res.json();
+            renderSummaries(summaries);
+        } catch (e) { grid.innerHTML = '<div class="text-danger p-4">Gagal memuat rekap.</div>'; }
+    }
+
+    function renderSummaries(summaries) {
+        const grid = document.getElementById('summaryGrid');
+        if (!summaries || summaries.length === 0) {
+            grid.innerHTML = '<div class="empty-state m-auto p-5 text-center w-100" style="grid-column: 1 / -1;"><i class="fas fa-comment-slash"></i><p>Belum ada rekapan diskusi. Mulailah chat dengan pelanggan!</p></div>';
+            return;
+        }
+        grid.innerHTML = '';
+        summaries.forEach(s => {
+            const div = document.createElement('div');
+            div.className = 'card-glass p-4';
+            div.innerHTML = `
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                    <div class="d-flex align-items-center">
+                        <div class="conv-avatar me-3" style="background:var(--clr-primary); color:white">${s.contact_id.substring(0, 2)}</div>
+                        <div>
+                            <h6 class="fw-bold m-0">${formatWaNumber(s.contact_id)}</h6>
+                            <small class="text-muted"><i class="fas fa-clock me-1"></i> Update: ${moment(s.last_updated).fromNow()}</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-light p-3 rounded-3 border" style="font-size:0.9rem; color:#334155; line-height:1.6; white-space:pre-wrap; border-left:4px solid var(--clr-primary) !important;">
+                    ${s.summary}
+                </div>
+            `;
+            grid.appendChild(div);
         });
     }
 
@@ -1258,17 +1393,73 @@
         document.getElementById('hdrName').innerText   = displayName;
         document.getElementById('hdrAvatar').innerHTML = `<i class="fas fa-user"></i>`;
         document.getElementById('hdrSub').innerText    = 'Percakapan aktif';
+        
+        // TAHAP 3: Tampilkan & Cek status Human Override
+        document.getElementById('chatBotToggleContainer').classList.remove('d-none');
+        loadBotToggleState();
+
         renderConvList();
         renderMessages();
     }
 
+    // TAHAP 3: HUMAN OVERRIDE LOGIC
+    async function loadBotToggleState() {
+        if (!currentStoreId || !currentContactId) return;
+        try {
+            const res = await fetch(`/api/stores/${currentStoreId}/contacts/${currentContactId}/pause`);
+            const { isPaused } = await res.json();
+            const toggle = document.getElementById('chatBotToggle');
+            const label  = document.getElementById('chatBotToggleLabel');
+            
+            toggle.checked = !isPaused; // Jika TIDAK pause, berarti checked (AI Aktif)
+            if (isPaused) {
+                label.innerText = 'AI Dipause (Human Override)';
+                label.classList.replace('text-primary', 'text-danger');
+            } else {
+                label.innerText = 'AI Menjawab';
+                label.classList.replace('text-danger', 'text-primary');
+            }
+        } catch (e) {
+            console.error('Failed to load bot pause state.');
+        }
+    }
+
+    async function toggleBotForChat() {
+        if (!currentStoreId || !currentContactId) return;
+        const isAIActive = document.getElementById('chatBotToggle').checked;
+        const isPaused = !isAIActive; // Toggle checked = AI On = Pause False
+        
+        try {
+            const res = await fetch(`/api/stores/${currentStoreId}/contacts/${currentContactId}/pause`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ isPaused })
+            });
+            if (res.ok) {
+                toast(isPaused ? 'AI ditidurkan. Silakan membalas.' : 'AI Aktif kembali memantau chat ini.', 'success');
+                loadBotToggleState(); // Refresh UI
+            }
+        } catch (e) {
+            toast('Gagal mengatur status AI.', 'error');
+            document.getElementById('chatBotToggle').checked = !isAIActive; // Revert
+        }
+    }
+
     function parseMediaMsg(text) {
         if(!text) return '';
-        let html = text.replace(/</g, "&lt;").replace(/>/g, "&gt;"); // XSS basic protection
-        // Render Image
-        html = html.replace(/\[MEDIA:([^\]]+)\]/g, `<div class="mt-1 mb-2"><img src="$1" style="max-width:200px; max-height:200px; border-radius:8px; display:block;" onerror="this.style.display='none'"></div>`);
-        // Render Video
-        html = html.replace(/\[VIDEO:([^\]]+)\]/g, `<div class="mt-1 mb-2"><video src="$1" controls style="max-width:200px; max-height:200px; border-radius:8px; display:block;"></video></div>`);
+        let html = text.replace(/</g, "&lt;").replace(/>/g, "&gt;"); // XSS
+        
+        // 1. Render Media Tags
+        html = html.replace(/\[MEDIA:([^\]]+)\]/g, `<div class="mt-2 mb-3"><img src="$1" style="max-width:280px; max-height:280px; border-radius:14px; border:1px solid #e2e8f0; display:block; box-shadow:0 10px 25px rgba(0,0,0,0.08);" onerror="this.style.display='none'"></div>`);
+        html = html.replace(/\[VIDEO:([^\]]+)\]/g, `<div class="mt-2 mb-3"><video src="$1" controls style="max-width:280px; max-height:280px; border-radius:14px; border:1px solid #e2e8f0; display:block; box-shadow:0 10px 25px rgba(0,0,0,0.08);"></video></div>`);
+
+        // 2. Render AI Insights (Professional Styling)
+        // Match [AI-VISION: ...]
+        html = html.replace(/\[AI-VISION:\s*([^\]]+)\]/g, `<div class="ai-insight-box"><b><i class="fas fa-eye"></i>Pengamatan Visual AI</b>$1</div>`);
+        
+        // Match [AI-TRANSKRIPSI: ...]
+        html = html.replace(/\[AI-TRANSKRIPSI:\s*([^\]]+)\]/g, `<div class="ai-insight-box"><b><i class="fas fa-ear-listen"></i>Hasil Transkripsi Suara</b>$1</div>`);
+
         // Handle newline
         return html.replace(/\n/g, '<br>');
     }
@@ -1306,6 +1497,8 @@
             })
             if (res.ok) {
                 input.value = '';
+                // TAHAP 3: Jika manusia balas manual, UI Toggle otomatis berubah jadi "Dipause"
+                loadBotToggleState(); 
             } else {
                 const err = await res.json();
                 toast(err.message || 'Gagal kirim pesan.', 'error');
@@ -1362,6 +1555,10 @@
             if (!res.ok) {
                 const err = await res.json();
                 toast(err.message || 'Gagal kirim media.', 'error');
+            } else {
+                toast('Media manual berhasil dikirim.', 'success');
+                // TAHAP 3: Update Toggle
+                loadBotToggleState();
             }
         } catch (e) {
             toast('Gagal menghubungi server.', 'error');
@@ -1718,6 +1915,7 @@
         // Context-aware loading
         if (id === 'agents') loadAgents();
         if (id === 'media')  loadMedia();
+        if (id === 'summaries') loadSummaries();
         if (id === 'system') {
             const el = document.getElementById('sysLogContainer');
             if (el) el.scrollTop = el.scrollHeight;

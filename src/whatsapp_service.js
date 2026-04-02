@@ -100,8 +100,8 @@ function setupEventListeners(client, storeWaId) {
             for (const chat of unreadChats) {
                 const messages = await chat.fetchMessages({ limit: chat.unreadCount });
                 for (const msg of messages) {
-                    // Proses pesan seolah-olah baru masuk sekarang
-                    await handleMessage(msg, storeWaId);
+                    // CUKUP CATAT KE DB (TAHAP 1): Jangan membalas otomatis untuk pesan lama
+                    await handleMessage(msg, storeWaId, false);
                 }
                 await chat.sendSeen(); // Tandai sudah dibaca agar tidak double sync
             }
@@ -145,7 +145,11 @@ async function sendManualMessage(storeWaId, to, body) {
             sender_name: 'CS Manual'
         });
 
-        logger.info(`[${storeWaId}] Pesan Manual dikirim ke [${to}]`);
+        // TAHAP 3: Auto-Pause AI
+        const { pauseBotForContact } = require('./events/message_handler');
+        pauseBotForContact(storeWaId, to);
+
+        logger.info(`[${storeWaId}] Pesan Manual dikirim ke [${to}]. AI otomatis ditidurkan untuk kontak ini.`);
         return true;
     } catch (error) {
         logger.error(`[${storeWaId}] Gagal kirim manual: ${error.message}`);
@@ -186,7 +190,11 @@ async function sendManualMedia(storeWaId, to, mediaAsset) {
             sender_name: 'CS Manual'
         });
 
-        logger.info(`[${storeWaId}] Media Manual [${mediaAsset.label}] dikirim ke [${to}]`);
+        // TAHAP 3: Auto-Pause AI jika kirim media
+        const { pauseBotForContact } = require('./events/message_handler');
+        pauseBotForContact(storeWaId, to);
+
+        logger.info(`[${storeWaId}] Media Manual [${mediaAsset.label}] dikirim ke [${to}]. AI dipause.`);
         return true;
     } catch (error) {
         logger.error(`[${storeWaId}] Gagal kirim media manual: ${error.message}`);
@@ -194,10 +202,44 @@ async function sendManualMedia(storeWaId, to, mediaAsset) {
     }
 }
 
+/**
+ * Logout Client, Putuskan Koneksi WA, dan Hapus Sesi Fisik
+ * @param {string} storeWaId 
+ */
+async function logoutClient(storeWaId) {
+    const client = clients.get(storeWaId);
+    
+    // 1. Matikan Client secara aman
+    if (client) {
+        try {
+            await client.logout();
+        } catch (e) {
+            logger.warn(`[${storeWaId}] Logout API gagal (mungkin sudah terputus): ${e.message}`);
+        }
+        try {
+            await client.destroy();
+        } catch (e) {}
+        clients.delete(storeWaId);
+    }
+    
+    // 2. Hapus total folder sesi fisik (Clean Slate)
+    const baseWwebjsDir = path.join(process.cwd(), '.wwebjs_auth');
+    const sessionDir = path.join(baseWwebjsDir, `session-${storeWaId}`);
+    try {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        logger.success(`[${storeWaId}] Sesi fisik berhasil dihapus secara paksa.`);
+    } catch (e) {
+        logger.warn(`[${storeWaId}] Folder sesi mungkin sudah hilang.`);
+    }
+
+    dashboard.updateWAStatus(storeWaId, "Terputus (Sesi Bersih)");
+}
+
 module.exports = {
     createWhatsAppClient,
     setupEventListeners,
     getClients,
     sendManualMessage,
-    sendManualMedia
+    sendManualMedia,
+    logoutClient
 };

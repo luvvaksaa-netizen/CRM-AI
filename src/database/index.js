@@ -78,6 +78,17 @@ const ChatMessage = sequelize.define('ChatMessage', {
 });
 
 /**
+ * Model: Chat Summary (Rekap Pembahasan per Customer)
+ */
+const ChatSummary = sequelize.define('ChatSummary', {
+  store_wa_id: { type: DataTypes.STRING, primaryKey: true, allowNull: false },
+  contact_id:  { type: DataTypes.STRING, primaryKey: true, allowNull: false },
+  summary:     { type: DataTypes.TEXT,   defaultValue: 'Belum ada rekapan.' },
+  last_updated:{ type: DataTypes.DATE,   defaultValue: Sequelize.NOW }
+});
+
+
+/**
  * Initialize & Sync Database (alter: true = auto-migrate safely)
  */
 async function migrateLegacyData() {
@@ -151,5 +162,6 @@ module.exports = {
   Store,
   MediaAsset,
   ChatMessage,
+  ChatSummary,
   initDB
 };
