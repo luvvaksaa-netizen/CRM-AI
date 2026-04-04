@@ -50,6 +50,12 @@ function cleanupSessionLocks(clientId) {
  * @param {string} storeWaId - Unik identifier dari tabel Store.
  */
 function createWhatsAppClient(storeWaId) {
+    // CEK DUPLIKAT: Jangan buat client baru jika ID sudah ada & aktif
+    if (clients.has(storeWaId)) {
+        logger.warn(`[${storeWaId}] Client sudah ada. Menggunakan yang lama.`);
+        return clients.get(storeWaId);
+    }
+
     cleanupSessionLocks(storeWaId);
     
     logger.info(`[${storeWaId}] Menyiapkan Browser & Sesi...`);

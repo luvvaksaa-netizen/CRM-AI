@@ -143,14 +143,17 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
 
         const chat = await message.getChat();
 
-        // 3. Ambil Riwayat Chat dari DB (konteks percakapan)
+        // 3. Ambil Riwayat Chat & Rekapan Sebelumnya (konteks percakapan)
         const recentHistory = await ChatMessage.findAll({
             where: { contact_id: contactId, store_wa_id: storeWaId },
-            limit: 20, // Diperbanyak agar ingatan lebih tajam
+            limit: 15, // Limit 15 pesan terakhir sudah cukup jika dibantu Rekapan
             order: [['timestamp', 'DESC']]
         });
-        // Pastikan kita mengambil data mentah (plain) agar role-mapping lancar
         const history = recentHistory.map(h => h.get({ plain: true })).reverse();
+
+        const { ChatSummary } = require('../database/index');
+        const summaryRecord = await ChatSummary.findOne({ where: { store_wa_id: storeWaId, contact_id: contactId } });
+        const summary = summaryRecord?.summary || "Percakapan baru saja dimulai.";
 
         // 3.5 === MARKETING AUTOPILOT (Trigger Keyword Check - Via Agent) ===
         const { MediaAsset } = require('../database/index');
@@ -184,8 +187,8 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
         // 5. Status Mengetik
         await chat.sendStateTyping();
 
-        // 6. === PHASE 4: PROSES AI (Text + Smart Media + Visual Perception + Agent Awareness) ===
-        const aiResult = await getAIResponse(body, history, store, agent, customerMediaContext);
+        // 6. === PHASE 4: PROSES AI (Text + Smart Media + Visual Perception + Agent Awareness + Long-Term Memory Summary) ===
+        const aiResult = await getAIResponse(body, history, store, agent, customerMediaContext, summary);
 
         // 7. Jeda Mengetik (Natural Feel)
         const typingDelay = calculateTypingDelay(aiResult.content);
@@ -215,14 +218,12 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
         logger.success(`[${storeWaId}] Sesi [${contactId}] — Dibalas via AI dengan persepsi visual.`);
 
         // TAHAP 4: Update Rekap Chat (Summary) secara background (Non-blocking)
-        _updateConversationSummary(storeWaId, contactId, history); 
+        _updateConversationSummary(storeWaId, contactId, senderName, history); 
 
 
     } catch (error) {
         logger.error(`[${storeWaId}] Gagal memproses [${contactId}]: ${error.message}`);
     } finally {
-        // tempPath sekarang disimpan permanen untuk Dashboard CRM,
-        // KECUALI jika tempPath menggunakan os.tmpdir() (misal format yg tidak didukung)
         if (tempPath && tempPath.includes(os.tmpdir()) && fs.existsSync(tempPath)) {
             try {
                 fs.unlinkSync(tempPath);
@@ -234,13 +235,6 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
 
 /**
  * Mengirimkan file media (foto/video) ke chat WhatsApp.
- * @private
- * @param {object} message
- * @param {object} mediaAsset
- * @param {string} caption
- * @param {string} storeWaId
- * @param {string} contactId
- * @param {object} agent - Object agen pemilik media
  */
 async function _sendMediaToChat(message, mediaAsset, caption, storeWaId, contactId, agent) {
     const { UPLOADS_DIR } = require('../config');
@@ -249,10 +243,12 @@ async function _sendMediaToChat(message, mediaAsset, caption, storeWaId, contact
     try {
         if (!fs.existsSync(mediaPath)) throw new Error(`File tidak ditemukan: ${mediaAsset.filename}`);
 
+        // Berikan delay kecil untuk stabilitas pengiriman media di headless browser
+        await new Promise(r => setTimeout(r, 1000));
+
         const mediaMsg = MessageMedia.fromFilePath(mediaPath);
         await message.reply(mediaMsg, undefined, { caption: caption || "" });
 
-        // Log media ke chat history, tampilkan Thumbnail di Dashboard Web
         const fileExt = mediaPath.split('.').pop().toLowerCase();
         const tag = ['mp4', 'mov', 'avi'].includes(fileExt) ? '[VIDEO' : '[MEDIA';
         
@@ -266,10 +262,6 @@ async function _sendMediaToChat(message, mediaAsset, caption, storeWaId, contact
     }
 }
 
-/**
- * Helper: Simpan balasan bot ke DB & Dashboard UI.
- * @private
- */
 async function _logBotReply(storeWaId, contactId, body, botName) {
     await dashboard.addToChatHistory(storeWaId, {
         from: contactId,
@@ -281,30 +273,33 @@ async function _logBotReply(storeWaId, contactId, body, botName) {
 }
 
 /**
- * TAHAP 4: Background Summary Updater
- * Menggunakan AI untuk merangkum percakapan agar admin bisa lihat progress per customer.
+ * TAHAP 4: Background Summary Updater dengan Nama Real
  */
-async function _updateConversationSummary(storeWaId, contactId, history) {
+async function _updateConversationSummary(storeWaId, contactId, senderName, history) {
     try {
         const { ChatSummary } = require('../database/index');
         const { generateChatSummary } = require('../ai_service');
         
         const summaryText = await generateChatSummary(history);
-        
-        // SQLite upsert in Sequelize often fails with composite keys.
-        // We use manual find/create or update instead.
+        const name = senderName || formatWaNumber(contactId);
+
         const [summary, created] = await ChatSummary.findOrCreate({
             where: { store_wa_id: storeWaId, contact_id: contactId },
-            defaults: { summary: summaryText, last_updated: new Date() }
+            defaults: { 
+                summary: summaryText, 
+                contact_name: name,
+                last_updated: new Date() 
+            }
         });
 
         if (!created) {
             summary.summary = summaryText;
+            summary.contact_name = name;
             summary.last_updated = new Date();
             await summary.save();
         }
         
-        logger.info(`[${storeWaId}] Rekap Chat Pelanggan [${contactId}] Berhasil Diperbarui.`);
+        logger.info(`[${storeWaId}] Rekap Chat [${name}] Berhasil Diperbarui.`);
     } catch (e) {
         logger.error(`Gagal update summary: ${e.message}`);
     }

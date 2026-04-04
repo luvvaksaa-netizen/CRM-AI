@@ -43,11 +43,11 @@ function runNextInQueue() {
     }
 }
 
-async function getAIResponse(userMessage, history = [], store = null, agent = null, customerMediaContext = "") {
+async function getAIResponse(userMessage, history = [], store = null, agent = null, customerMediaContext = "", conversationSummary = "") {
     return new Promise((resolve) => {
         pendingQueue.push({
             resolve,
-            execute: () => _processAIResponse(userMessage, history, store, agent, customerMediaContext)
+            execute: () => _processAIResponse(userMessage, history, store, agent, customerMediaContext, conversationSummary)
         });
         runNextInQueue();
     });
@@ -56,7 +56,7 @@ async function getAIResponse(userMessage, history = [], store = null, agent = nu
 /**
  * Logika internal pemrosesan AI (Metode asli dipindah ke sini)
  */
-async function _processAIResponse(userMessage, history = [], store = null, agent = null, customerMediaContext = "") {
+async function _processAIResponse(userMessage, history = [], store = null, agent = null, customerMediaContext = "", conversationSummary = "") {
     if (!config.OPENAI_API_KEY || config.OPENAI_API_KEY.includes('your_openai_api_key')) {
         logger.error("OpenAI API Key belum dikonfigurasi!");
         return { type: RESPONSE_TYPE.TEXT, content: ERRORS.AI_FALLBACK };
@@ -94,6 +94,12 @@ async function _processAIResponse(userMessage, history = [], store = null, agent
 ${sysPrompt}
 
 ═══════════════════════════════════════════
+MEMORI / REKAP PERCAKAPAN (The Story So Far):
+═══════════════════════════════════════════
+Gunakan ini untuk mengenali status pelanggan:
+${conversationSummary || 'Belum ada rekapan diskusi sebelumnya.'}
+
+═══════════════════════════════════════════
 INFORMASI PRODUK & INVENTORY:
 ═══════════════════════════════════════════
 ${knowledge}
@@ -117,13 +123,15 @@ Kamu BISA mengirim lebih dari satu media sekaligus jika pelanggan minta (misal: 
 
 ${catalogSection}
 
+═══════════════════════════════════════════
 ATURAN PENTING:
 1. Jawab akurat dan ramah berdasarkan semua informasi di atas.
 2. Gunakan tool "cek_ongkir_jne" jika pelanggan tanya ongkir.
 3. Gunakan tool "kirim_media_katalog" HANYA jika pelanggan minta lihat foto/video. 
-4. Kamu bisa mengirim beberapa ID sekaligus dalam satu kali panggil tool.
-5. Jika pelanggan minta "semua katalog", masukkan semua ID katalog di atas ke dalam array media_ids.
-6. PROTOKOL PEMBAYARAN: Jika pelanggan mengklaim "Sudah Transfer" atau "Sudah Bayar", kamu WAJIB meminta FOTO BUKTI TRANSFER sebagai syarat konfirmasi. Jangan memproses pesanan atau mengucapkan terima kasih atas pembayaran sebelum mereka mengirim foto bukti tersebut.
+4. JANGAN PERNAH menulis teks seperti "[FOTO] Nama" atau "[MEDIA:/uploads/...]" secara manual di pesanmu. Itu adalah format log internal.
+5. Kamu bisa mengirim beberapa ID sekaligus dalam satu kali panggil tool.
+6. Jika pelanggan minta "semua katalog", masukkan semua ID katalog di atas ke dalam array media_ids.
+7. PROTOKOL PEMBAYARAN: Jika pelanggan mengklaim "Sudah Transfer" atau "Sudah Bayar", kamu WAJIB meminta FOTO BUKTI TRANSFER sebagai syarat konfirmasi. Jangan memproses pesanan atau mengucapkan terima kasih atas pembayaran sebelum mereka mengirim foto bukti tersebut.
 
 WAKTU SEKARANG: ${moment().format('dddd, DD MMMM YYYY, HH:mm')}
 `.trim();
@@ -187,7 +195,7 @@ WAKTU SEKARANG: ${moment().format('dddd, DD MMMM YYYY, HH:mm')}
             }),
             { 
                 role: "system", 
-                content: `--- INSTRUKSI PRIORITAS: Gunakan riwayat di atas untuk mengenali PELANGGAN (nama, konteks) dan melanjutkan topik yang sedang dibahas. Jangan mengulangi pertanyaan yang sudah terjawab di atas. Jangan sertakan tag [LOG-WAKTU] dalam jawabanmu. ---` 
+                content: `--- INSTRUKSI PRIORITAS: Gunakan riwayat di atas untuk mengenali PELANGGAN (nama, konteks) dan melanjutkan topik yang sedang dibahas. Jangan mengulangi pertanyaan yang sudah terjawab di atas. Jangan sertakan tag [LOG-WAKTU] atau format log [MEDIA:...] dalam jawabanmu. ---` 
             },
             { role: "user", content: userContent }
         ];
@@ -199,7 +207,7 @@ WAKTU SEKARANG: ${moment().format('dddd, DD MMMM YYYY, HH:mm')}
             tools,
             tool_choice: "auto",
             temperature: 0.7,
-        });
+        }, { timeout: 30000 }); // Timeout 30 detik untuk stabilitas production
 
         let responseMessage = response.choices[0].message;
 

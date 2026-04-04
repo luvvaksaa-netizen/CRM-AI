@@ -83,6 +83,7 @@ const ChatMessage = sequelize.define('ChatMessage', {
 const ChatSummary = sequelize.define('ChatSummary', {
   store_wa_id: { type: DataTypes.STRING, primaryKey: true, allowNull: false },
   contact_id:  { type: DataTypes.STRING, primaryKey: true, allowNull: false },
+  contact_name:{ type: DataTypes.STRING, defaultValue: '' },
   summary:     { type: DataTypes.TEXT,   defaultValue: 'Belum ada rekapan.' },
   last_updated:{ type: DataTypes.DATE,   defaultValue: Sequelize.NOW }
 });
@@ -122,6 +123,31 @@ async function migrateLegacyData() {
   }
 }
 
+/**
+ * Menambal nama kontak yang kosong pada rekap lama (Backfill)
+ * Diambil dari sender_name terbaru di riwayat chat.
+ */
+async function backfillSummaryNames() {
+  try {
+    const list = await ChatSummary.findAll({ where: { contact_name: '' } });
+    if (list.length === 0) return;
+
+    logger.info(`[DB] Menambal ${list.length} nama kontak pada rekap lama...`);
+    for (const record of list) {
+        const latestMsg = await ChatMessage.findOne({
+            where: { store_wa_id: record.store_wa_id, contact_id: record.contact_id },
+            order: [['timestamp', 'DESC']]
+        });
+        if (latestMsg && latestMsg.sender_name) {
+            record.contact_name = latestMsg.sender_name;
+            await record.save();
+        }
+    }
+  } catch (e) {
+    logger.warn(`[DB] Gagal backfill summary names: ${e.message}`);
+  }
+}
+
 async function initDB() {
   const queryInterface = sequelize.getQueryInterface();
   
@@ -146,9 +172,11 @@ async function initDB() {
     // 2. Manual Alter (Untuk SQLite lebih aman daripada sync alter true)
     await safeAddColumn('Stores', 'agent_id', { type: DataTypes.INTEGER, allowNull: true });
     await safeAddColumn('MediaAssets', 'agent_id', { type: DataTypes.INTEGER, allowNull: true });
+    await safeAddColumn('ChatSummaries', 'contact_name', { type: DataTypes.STRING, defaultValue: '' });
 
     // 3. Jalankan Migrasi Data
     await migrateLegacyData(); 
+    await backfillSummaryNames();
     logger.success('✅ Database SQLite (Agent-Based Architecture) Siap!');
   } catch (error) {
     logger.error(`Gagal menghubungkan ke Database: ${error.message}`);

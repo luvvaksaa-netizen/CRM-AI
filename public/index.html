@@ -1161,12 +1161,17 @@
         summaries.forEach(s => {
             const div = document.createElement('div');
             div.className = 'card-glass p-4';
+            
+            // Prioritaskan Nama Real, jika tidak ada pakai nomor yang di-format
+            const displayName = s.contact_name || formatWaNumber(s.contact_id);
+            const initial = displayName.substring(0, 2).toUpperCase();
+
             div.innerHTML = `
                 <div class="d-flex justify-content-between align-items-start mb-3">
                     <div class="d-flex align-items-center">
-                        <div class="conv-avatar me-3" style="background:var(--clr-primary); color:white">${s.contact_id.substring(0, 2)}</div>
+                        <div class="conv-avatar me-3" style="background:var(--clr-primary); color:white">${initial}</div>
                         <div>
-                            <h6 class="fw-bold m-0">${formatWaNumber(s.contact_id)}</h6>
+                            <h6 class="fw-bold m-0">${displayName}</h6>
                             <small class="text-muted"><i class="fas fa-clock me-1"></i> Update: ${moment(s.last_updated).fromNow()}</small>
                         </div>
                     </div>
