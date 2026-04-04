@@ -46,7 +46,9 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
 
     try {
         // === 1. CEK & ANALISIS MEDIA DARI PELANGGAN (AI Mata & Telinga) ===
-        if (message.hasMedia) {
+        const isSticker = message.type === 'sticker';
+        
+        if (message.hasMedia && !isSticker) {
             const media = await message.downloadMedia();
             if (!media) throw new Error("Gagal mengunduh media dari pesan.");
 
@@ -89,6 +91,9 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
                     customerMediaContext = `[AI-TRANSKRIPSI: ${transcription}]`;
                 }
             }
+        } else if (isSticker) {
+            // Abaikan stiker dari analisis AI, tapi catat tipenya
+            customerMediaContext = `(Pelanggan Mengirim Stiker)`;
         }
 
         // 2. Log Pesan Pelanggan ke DB & Dashboard UI (Sertakan tag gambar dari customerMediaContext)

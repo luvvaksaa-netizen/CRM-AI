@@ -394,6 +394,15 @@ function initDashboard(port = 3000) {
       res.download(filePath);
     } catch (e) { res.status(500).send(e.message); }
   });
+
+  // GET: Download Application Log (Production Debugging)
+  app.get('/api/system/logs', (req, res) => {
+    try {
+      const logPath = path.join(process.cwd(), 'logs', 'app.log');
+      if (!fs.existsSync(logPath)) return res.status(404).send('File log tidak ditemukan.');
+      res.download(logPath);
+    } catch (e) { res.status(500).send(e.message); }
+  });
   // ============================================================
   // SETTINGS APIs
   // ============================================================
@@ -432,12 +441,20 @@ function initDashboard(port = 3000) {
   // CHAT APIs
   // ============================================================
 
-  // GET: Chat History (Per Store)
+  // GET: Chat History (Per Store + Filter per Contact)
   app.get('/api/chat/:storeId', async (req, res) => {
     try {
+      const { contactId } = req.query;
+      const where = { store_wa_id: req.params.storeId };
+      
+      // Jika ada contactId, ambil history spesifik dengan limit lebih besar
+      if (contactId) {
+          where.contact_id = contactId;
+      }
+
       let history = await ChatMessage.findAll({
-        where: { store_wa_id: req.params.storeId },
-        limit: 150,
+        where,
+        limit: contactId ? 300 : 150, // Per-contact dapat history lebih panjang
         order: [['timestamp', 'DESC']]
       });
       res.json(history.reverse());

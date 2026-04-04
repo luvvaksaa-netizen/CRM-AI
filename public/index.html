@@ -716,9 +716,14 @@
                     </div>
                 </div>
                 
-                <button class="btn btn-sm btn-outline-danger ms-auto" onclick="document.getElementById('sysLogContainer').innerHTML=''">
-                    <i class="fas fa-trash-alt me-1"></i>Hapus Log
-                </button>
+                <div class="ms-auto d-flex gap-2">
+                    <a href="/api/system/logs" class="btn btn-sm btn-primary" title="Download log lengkap untuk dikirim ke developer untuk dianalisa">
+                        <i class="fas fa-download me-1"></i>Download Debug Logs
+                    </a>
+                    <button class="btn btn-sm btn-outline-danger" onclick="document.getElementById('sysLogContainer').innerHTML=''">
+                        <i class="fas fa-trash-alt me-1"></i>Hapus Monitor
+                    </button>
+                </div>
             </div>
             <div id="sysLogContainer" class="flex-grow-1 bg-dark text-light p-3 rounded mb-4 shadow-inner" 
                  style="font-family:'Courier New', monospace; font-size:0.82rem; height: 350px; overflow-y:auto; line-height:1.6; border: 2px solid #1e293b; background: #0f172a !important;">
@@ -1324,8 +1329,20 @@
             const res = await fetch(`/api/chat/${currentStoreId}`);
             messages = await res.json();
             renderConvList();
-            if (currentContactId) renderMessages();
+            // Jika ada kontak terpilih, muat history spesifiknya
+            if (currentContactId) loadContactMessages(currentContactId);
         } catch (e) {}
+    }
+
+    async function loadContactMessages(contactId) {
+        if (!currentStoreId || !contactId) return;
+        try {
+            const res = await fetch(`/api/chat/${currentStoreId}?contactId=${contactId}`);
+            const contactMsgs = await res.json();
+            // Gabungkan atau replace partisi messages khusus untuk render chat
+            window.activeChatMessages = contactMsgs; 
+            renderMessages();
+        } catch (e) { console.error('Gagal muat history kontak:', e); }
     }
 
     function formatWaNumber(id) {
@@ -1404,21 +1421,26 @@
         });
     }
 
-    function selectContact(c, friendlyName) {
+    async function selectContact(c, friendlyName) {
         currentContactId = c;
-        // Jika nama panggilan ada, pakai. Jika tidak fall back ke format nomer.
+        window.activeChatMessages = null; // Clear previous specific history
+        
+        // Pilih nama panggilan atau format nomer
         const displayName = friendlyName || formatWaNumber(c);
         
         document.getElementById('hdrName').innerText   = displayName;
         document.getElementById('hdrAvatar').innerHTML = `<i class="fas fa-user"></i>`;
         document.getElementById('hdrSub').innerText    = 'Percakapan aktif';
         
-        // TAHAP 3: Tampilkan & Cek status Human Override
+        // Tampilkan & Cek status Human Override
         document.getElementById('chatBotToggleContainer').classList.remove('d-none');
         loadBotToggleState();
 
+        // Show Loading State in message area
+        document.getElementById('chatMessages').innerHTML = '<div class="empty-state m-auto"><i class="fas fa-spinner fa-spin fa-2x mb-3 text-primary"></i><p>Memuat histori percakapan lengkap...</p></div>';
+
         renderConvList();
-        renderMessages();
+        loadContactMessages(c); // Fetch full specific history
     }
 
     // TAHAP 3: HUMAN OVERRIDE LOGIC
@@ -1472,7 +1494,12 @@
         html = html.replace(/\[MEDIA:([^\]]+)\]/g, `<div class="mt-2 mb-3"><img src="$1" style="max-width:280px; max-height:280px; border-radius:14px; border:1px solid #e2e8f0; display:block; box-shadow:0 10px 25px rgba(0,0,0,0.08);" onerror="this.style.display='none'"></div>`);
         html = html.replace(/\[VIDEO:([^\]]+)\]/g, `<div class="mt-2 mb-3"><video src="$1" controls style="max-width:280px; max-height:280px; border-radius:14px; border:1px solid #e2e8f0; display:block; box-shadow:0 10px 25px rgba(0,0,0,0.08);"></video></div>`);
 
-        // 2. Render AI Insights (Professional Styling)
+        // 2. Render AI Insights & Sticker (Professional Styling)
+        // Match (Pelanggan Mengirim Stiker)
+        if (html.includes('(Pelanggan Mengirim Stiker)')) {
+            html = html.replace('(Pelanggan Mengirim Stiker)', `<div class="badge rounded-pill bg-light text-muted border px-2 py-1" style="font-size:0.7rem;"><i class="far fa-note-sticky me-1"></i>Pelanggan Mengirim Stiker</div>`);
+        }
+
         // Match [AI-VISION: ...]
         html = html.replace(/\[AI-VISION:\s*([^\]]+)\]/g, `<div class="ai-insight-box"><b><i class="fas fa-eye"></i>Pengamatan Visual AI</b>$1</div>`);
         
@@ -1485,7 +1512,9 @@
 
     function renderMessages() {
         const container = document.getElementById('chatMessages');
-        const myMsgs = messages.filter(m => m.contact_id === currentContactId);
+        // MOD: Gunakan history spesifik kontak jika sudah dimuat
+        const myMsgs = window.activeChatMessages || messages.filter(m => m.contact_id === currentContactId);
+        
         if (myMsgs.length === 0) {
             container.innerHTML = `<div class="empty-state m-auto"><i class="fas fa-comment-dots"></i><p>Belum ada pesan.</p></div>`;
             return;
