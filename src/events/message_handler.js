@@ -188,7 +188,9 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
         await chat.sendStateTyping();
 
         // 6. === PHASE 4: PROSES AI (Text + Smart Media + Visual Perception + Agent Awareness + Long-Term Memory Summary) ===
-        const aiResult = await getAIResponse(body, history, store, agent, customerMediaContext, summary);
+        // Hitung jumlah interaksi (Turn Counter) untuk mematuhi Rule Utama 1 & 2
+        const interactionCount = history.filter(h => !h.is_from_me).length + 1; // +1 untuk pesan baru ini
+        const aiResult = await getAIResponse(body, history, store, agent, customerMediaContext, summary, interactionCount);
 
         // 7. Jeda Mengetik (Natural Feel)
         const typingDelay = calculateTypingDelay(aiResult.content);

@@ -43,6 +43,8 @@ async function startBot() {
         }
 
         // Jalankan semua Client
+        const { initHealthCheck } = require('./src/whatsapp_service');
+        
         for (const store of stores) {
             const client = createWhatsAppClient(store.wa_id);
             setupEventListeners(client, store.wa_id);
@@ -51,6 +53,9 @@ async function startBot() {
             client.initialize().catch(err => {
                 logger.error(`Gagal menghubungkan [${store.wa_id}]: ${err.message}`);
             });
+
+            // Start Monitoring Health
+            initHealthCheck(store.wa_id);
         }
 
     } catch (err) {

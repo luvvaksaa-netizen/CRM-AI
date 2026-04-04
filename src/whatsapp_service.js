@@ -8,6 +8,7 @@ const fs = require('fs');
 
 // MULTI-CLIENT STORAGE
 const clients = new Map();
+const initializedClients = new Set(); // Mencegah double listener (Fixed Triple Reply Bug)
 
 /**
  * Mendapatkan semua Client yang aktif.
@@ -21,12 +22,7 @@ function getClients() {
  * Mencegah error "profile already in use" saat container restart di Railway.
  */
 function cleanupSessionLocks(clientId) {
-    // Gunakan DATA_DIR config agar selaras
     const { DATA_DIR } = require('./config');
-    
-    // WA-Web.js by default menyimpan di .wwebjs_auth relatif terhadap CURRENT DIR,
-    // yang mana sudah diset sebagai DATA_DIR di production lewat Dockerfile ENV.
-    // Tapi untuk memastikan, kita gunakan path absolut ke DATA_DIR
     const baseWwebjsDir = path.join(process.cwd(), '.wwebjs_auth');
     const sessionDir = path.join(baseWwebjsDir, `session-${clientId}`);
     
@@ -36,12 +32,8 @@ function cleanupSessionLocks(clientId) {
     lockFiles.forEach(lockName => {
         const lockFile = path.join(sessionDir, lockName);
         try {
-            // PENTING: Gunakan rmSync force karena SingletonLock adalah dangling symlink
-            // fs.existsSync() akan me-return FALSE pada dangling symlink!
             fs.rmSync(lockFile, { force: true });
-        } catch (e) {
-            // Abaikan error (fail silently if not exists)
-        }
+        } catch (e) { /* ignore */ }
     });
 }
 
@@ -63,14 +55,14 @@ function createWhatsAppClient(storeWaId) {
 
     const client = new Client({
         authStrategy: new LocalAuth({
-            clientId: storeWaId // SETIAP TOKO PUNYA SESSION TERPISAH! 🎉
+            clientId: storeWaId 
         }),
         puppeteer: {
             args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
             headless: true,
             handleSIGINT: false,
-            timeout: 60000,           // 60 detik timeout launch
-            protocolTimeout: 600000   // 10 menit timeout pengiriman data base64 CDP
+            timeout: 90000,           // 90 detik timeout launch (Lebih longgar untuk production)
+            protocolTimeout: 600000   // 10 menit
         }
     });
 
@@ -80,8 +72,15 @@ function createWhatsAppClient(storeWaId) {
 
 /**
  * Menyiapkan Event Listeners untuk Client tertentu.
+ * Mencegah duplikasi listener yang menyebabkan bot membalas berkali-kali.
  */
 function setupEventListeners(client, storeWaId) {
+    // PROTEKSI: Jika client sudah pernah disetup (event on), jangan diulang!
+    if (initializedClients.has(storeWaId)) {
+        logger.warn(`[${storeWaId}] Event listeners sudah terpasang. Skip setup.`);
+        return;
+    }
+
     client.on('qr', (qr) => {
         logger.bot(`[${storeWaId}] Scan QR Code di Dashboard UI`);
         dashboard.emitQRSpec(storeWaId, qr);
@@ -97,7 +96,6 @@ function setupEventListeners(client, storeWaId) {
         logger.success(`[${storeWaId}] WhatsApp SIAP DIGUNAKAN! ✅`);
         dashboard.updateWAStatus(storeWaId, "Dihubungkan (Online)");
         
-        // FITUR PREMANEN: Sinkronisasi pesan yang masuk saat Bot sedang Offline (Update/Restart)
         try {
             logger.info(`[${storeWaId}] Memulai sinkronisasi pesan tertunda...`);
             const chats = await client.getChats();
@@ -106,10 +104,9 @@ function setupEventListeners(client, storeWaId) {
             for (const chat of unreadChats) {
                 const messages = await chat.fetchMessages({ limit: chat.unreadCount });
                 for (const msg of messages) {
-                    // CUKUP CATAT KE DB (TAHAP 1): Jangan membalas otomatis untuk pesan lama
                     await handleMessage(msg, storeWaId, false);
                 }
-                await chat.sendSeen(); // Tandai sudah dibaca agar tidak double sync
+                await chat.sendSeen();
             }
             if (unreadChats.length > 0) logger.success(`[${storeWaId}] Berhasil menarik ${unreadChats.length} chat tertunda.`);
         } catch (e) {
@@ -119,8 +116,6 @@ function setupEventListeners(client, storeWaId) {
 
     client.on('message', async (message) => {
         if (message.isStatus || message.from.includes('@g.us')) return;
-
-        // Message Handler sekarang menerima Store ID (Context Aware)
         await handleMessage(message, storeWaId);
     });
 
@@ -128,7 +123,11 @@ function setupEventListeners(client, storeWaId) {
         logger.error(`[${storeWaId}] WhatsApp Terputus: ${reason}`);
         dashboard.updateWAStatus(storeWaId, "Terputus");
         clients.delete(storeWaId);
+        initializedClients.delete(storeWaId);
     });
+
+    // Tandai sebagai sudah diinisialisasi
+    initializedClients.add(storeWaId);
 }
 
 /**
@@ -241,11 +240,48 @@ async function logoutClient(storeWaId) {
     dashboard.updateWAStatus(storeWaId, "Terputus (Sesi Bersih)");
 }
 
+/**
+ * HEALTH CHECK & AUTO-RECOVERY (Production Grade)
+ * Memastikan koneksi tidak 'Gantung' secara diam-diam.
+ * Jika client tidak merespon/terdeteksi macet, bot akan restart otomatis.
+ */
+function initHealthCheck(storeWaId) {
+    const CHECK_INTERVAL = 5 * 60 * 1000; // Cek tiap 5 menit
+    
+    const intervalId = setInterval(async () => {
+        const client = clients.get(storeWaId);
+        if (!client) {
+            clearInterval(intervalId);
+            return;
+        }
+
+        try {
+            // Heartbeat check: Mintalah info baterai/status browser sederhana
+            // Jika ini hang > 30 detik, berarti Puppeteer macet.
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Timeout')), 30000)
+            );
+            
+            await Promise.race([client.getState(), timeoutPromise]);
+            // logger.info(`[${storeWaId}] Health Check: OK ✅`);
+        } catch (e) {
+            logger.error(`[${storeWaId}] Health Check GAGAL (Browser Hang/Macet). Restarting...`);
+            await logoutClient(storeWaId);
+            const newClient = createWhatsAppClient(storeWaId);
+            setupEventListeners(newClient, storeWaId);
+            newClient.initialize().catch(() => {});
+        }
+    }, CHECK_INTERVAL);
+
+    return intervalId;
+}
+
 module.exports = {
     createWhatsAppClient,
     setupEventListeners,
     getClients,
     sendManualMessage,
     sendManualMedia,
-    logoutClient
+    logoutClient,
+    initHealthCheck
 };

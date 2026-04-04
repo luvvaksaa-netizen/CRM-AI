@@ -43,11 +43,11 @@ function runNextInQueue() {
     }
 }
 
-async function getAIResponse(userMessage, history = [], store = null, agent = null, customerMediaContext = "", conversationSummary = "") {
+async function getAIResponse(userMessage, history = [], store = null, agent = null, customerMediaContext = "", conversationSummary = "", interactionCount = 1) {
     return new Promise((resolve) => {
         pendingQueue.push({
             resolve,
-            execute: () => _processAIResponse(userMessage, history, store, agent, customerMediaContext, conversationSummary)
+            execute: () => _processAIResponse(userMessage, history, store, agent, customerMediaContext, conversationSummary, interactionCount)
         });
         runNextInQueue();
     });
@@ -56,7 +56,7 @@ async function getAIResponse(userMessage, history = [], store = null, agent = nu
 /**
  * Logika internal pemrosesan AI (Metode asli dipindah ke sini)
  */
-async function _processAIResponse(userMessage, history = [], store = null, agent = null, customerMediaContext = "", conversationSummary = "") {
+async function _processAIResponse(userMessage, history = [], store = null, agent = null, customerMediaContext = "", conversationSummary = "", interactionCount = 1) {
     if (!config.OPENAI_API_KEY || config.OPENAI_API_KEY.includes('your_openai_api_key')) {
         logger.error("OpenAI API Key belum dikonfigurasi!");
         return { type: RESPONSE_TYPE.TEXT, content: ERRORS.AI_FALLBACK };
@@ -69,7 +69,6 @@ async function _processAIResponse(userMessage, history = [], store = null, agent
         const agentId   = agent?.id || null;
 
         // ── KNOWLEDGE MEDIA: Media yang jadi pengetahuan AI ──────────────────
-        // Jika tidak ada agen, knowledge media kosong (fallback aman)
         const knowledgeMedia = agentId ? await getKnowledgeMedia(agentId) : [];
         const knowledgeSection = knowledgeMedia.length > 0
             ? knowledgeMedia.map(m => {
@@ -94,13 +93,31 @@ async function _processAIResponse(userMessage, history = [], store = null, agent
 ${sysPrompt}
 
 ═══════════════════════════════════════════
+INFORMASI SESI (STATISTIK):
+═══════════════════════════════════════════
+- Jumlah Interaksi: ${interactionCount}
+- Pesan ini adalah interaksi ke-${interactionCount}.
+
+═══════════════════════════════════════════
+ATURAN UTAMA & LIMITASI HARGA (DRACONIAN):
+═══════════════════════════════════════════
+1. DILARANG menyebutkan/membahas harga (seperti 149k) jika interaksi < 3 (yaitu interaksi ke-1 dan ke-2). Gali kebutuhan desain dulu!
+2. Mulai sebutkan harga HANYA pada interaksi ke-3 atau lebih, DAN WAJIB kirim 1-3 media katalog saat itu.
+3. OPENING (Interaksi ke-1): WAJIB kirim 1 media katalog contoh awal.
+4. JANGAN PERNAH menulis teks seperti "[FOTO] Nama" atau "[MEDIA:/uploads/...]" secara manual. Gunakan tool.
+5. Kirimkan pertanyaan HANYA di gelembung (bubble) terakhir jika kamu membalas dengan beberapa baris.
+6. JANGAN PERNAH berhalusinasi menyertakan link Markdown seperti "![Gambar](https://example.com/...)". Gunakan tool "kirim_media_katalog" jika ingin mengirim gambar.
+7. Semua jawaban harus berupa teks biasa yang ramah, santai, dan komunikatif sesuai kepribadian Dini.
+8. Dilarang keras menyebutkan link atau website fiktif (example.com).
+
+═══════════════════════════════════════════
 MEMORI / REKAP PERCAKAPAN (The Story So Far):
 ═══════════════════════════════════════════
 Gunakan ini untuk mengenali status pelanggan:
 ${conversationSummary || 'Belum ada rekapan diskusi sebelumnya.'}
 
 ═══════════════════════════════════════════
-INFORMASI PRODUK & INVENTORY:
+INFORMASI PRODUK & KEUNGGULAN (KNOWLEDGE):
 ═══════════════════════════════════════════
 ${knowledge}
 
@@ -111,27 +128,22 @@ KETERSEDIAAN MEDIA:
 ═══════════════════════════════════════════
 PENGETAHUAN DARI MEDIA (Foto & Video):
 ═══════════════════════════════════════════
-Gunakan bagian ini untuk menjawab pertanyaan detail tentang produk.
-Kamu bisa menjawab dari pengetahuan ini TANPA harus mengirim file.
 ${knowledgeSection}
 
 ═══════════════════════════════════════════
 KATALOG YANG BISA DIKIRIM KE PELANGGAN:
 ═══════════════════════════════════════════
 Gunakan tool "kirim_media_katalog" dan masukkan ID media di bawah ini ke dalam ARRAY. 
-Kamu BISA mengirim lebih dari satu media sekaligus jika pelanggan minta (misal: "minta semua katalog").
-
 ${catalogSection}
 
 ═══════════════════════════════════════════
-ATURAN PENTING:
-1. Jawab akurat dan ramah berdasarkan semua informasi di atas.
+ATURAN STANDAR:
+1. Jawab akurat dan ramah.
 2. Gunakan tool "cek_ongkir_jne" jika pelanggan tanya ongkir.
 3. Gunakan tool "kirim_media_katalog" HANYA jika pelanggan minta lihat foto/video. 
-4. JANGAN PERNAH menulis teks seperti "[FOTO] Nama" atau "[MEDIA:/uploads/...]" secara manual di pesanmu. Itu adalah format log internal.
-5. Kamu bisa mengirim beberapa ID sekaligus dalam satu kali panggil tool.
-6. Jika pelanggan minta "semua katalog", masukkan semua ID katalog di atas ke dalam array media_ids.
-7. PROTOKOL PEMBAYARAN: Jika pelanggan mengklaim "Sudah Transfer" atau "Sudah Bayar", kamu WAJIB meminta FOTO BUKTI TRANSFER sebagai syarat konfirmasi. Jangan memproses pesanan atau mengucapkan terima kasih atas pembayaran sebelum mereka mengirim foto bukti tersebut.
+4. Kamu bisa mengirim beberapa ID sekaligus.
+5. Jika pelanggan minta "semua katalog", masukkan semua ID katalog ke array media_ids.
+6. PROTOKOL PEMBAYARAN: Jika mengklaim "Sudah Transfer", WAJIB minta FOTO BUKTI.
 
 WAKTU SEKARANG: ${moment().format('dddd, DD MMMM YYYY, HH:mm')}
 `.trim();
