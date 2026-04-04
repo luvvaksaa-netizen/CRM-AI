@@ -1337,6 +1337,13 @@
         return `+${num}`;
     }
 
+    function formatChatDate(ts) {
+        const m = moment(ts);
+        if (m.isSame(moment(), 'day')) return 'HARI INI';
+        if (m.isSame(moment().subtract(1, 'day'), 'day')) return 'KEMARIN';
+        return m.format('DD MMM');
+    }
+
     function filterConv(q) { renderConvList(q); }
 
     function renderConvList(filter = '') {
@@ -1373,6 +1380,13 @@
             // Prioritaskan nama customer yang diekstrak dari nameMap, fall back ke nomor
             const friendlyName = nameMap[c] || formatWaNumber(c);
             
+            // Format waktu untuk daftar chat: Jika hari ini hanya jam, jika kemarin tulis KEMARIN, dst.
+            const lastMsgDate = moment(last.timestamp);
+            let timeStr = lastMsgDate.format('HH:mm');
+            if (!lastMsgDate.isSame(moment(), 'day')) {
+                timeStr = formatChatDate(last.timestamp);
+            }
+
             div.className = `conv-item ${currentContactId === c ? 'active' : ''}`;
             div.onclick = () => selectContact(c, friendlyName);
             div.innerHTML = `
@@ -1380,7 +1394,7 @@
                 <div style="flex:1;min-width:0;">
                     <div class="d-flex justify-content-between mb-1">
                         <span style="font-weight:700;font-size:0.88rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${friendlyName}</span>
-                        <span style="font-size:0.68rem;color:#94a3b8;flex-shrink:0;margin-left:8px;">${moment(last.timestamp).format('HH:mm')}</span>
+                        <span style="font-size:0.68rem;color:#94a3b8;flex-shrink:0;margin-left:8px;">${timeStr}</span>
                     </div>
                     <div style="font-size:0.8rem;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
                         ${last.body.replace(/\[MEDIA:[^\]]+\]/g, '📷 Foto').replace(/\[VIDEO:[^\]]+\]/g, '🎥 Video')}
@@ -1477,7 +1491,22 @@
             return;
         }
         container.innerHTML = '';
+        
+        // Track the day to insert dividers
+        let lastDay = null;
+
         myMsgs.forEach(m => {
+            const currentDay = moment(m.timestamp).format('YYYY-MM-DD');
+            
+            // Insert Date Divider if day changed
+            if (currentDay !== lastDay) {
+                const divider = document.createElement('div');
+                divider.className = 'w-100 text-center my-3';
+                divider.innerHTML = `<span class="badge rounded-pill bg-light text-secondary border px-3 py-1" style="font-size:0.7rem; font-weight:700; letter-spacing:0.5px; opacity:0.8;">${formatChatDate(m.timestamp)}</span>`;
+                container.appendChild(divider);
+                lastDay = currentDay;
+            }
+
             const div = document.createElement('div');
             div.className = `msg ${m.is_from_me ? 'msg-out' : 'msg-in'}`;
             // Use logical payload rendering instead of raw text
