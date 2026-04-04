@@ -73,7 +73,7 @@ async function _processAIResponse(userMessage, history = [], store = null, agent
         const knowledgeSection = knowledgeMedia.length > 0
             ? knowledgeMedia.map(m => {
                 const icon = m.type === 'video' ? '🎬 VIDEO' : '📸 FOTO';
-                const parts = [`[${icon}] "${m.label}"`];
+                const parts = [`[${icon}]` + (m.label ? ` (Topik: ${m.label})` : '')];
                 if (m.description)      parts.push(`  Deskripsi: ${m.description}`);
                 if (m.ai_analysis)      parts.push(`  Analisis Visual: ${m.ai_analysis}`);
                 if (m.video_transcript) parts.push(`  Isi Narasi dalam video: "${m.video_transcript}"`);
@@ -82,10 +82,11 @@ async function _processAIResponse(userMessage, history = [], store = null, agent
             : '(Belum ada media knowledge)';
 
         // ── SENDABLE CATALOG: Media yang bisa dikirim ke customer ────────────
+        // SECURITY UPDATE: Sembunyikan Label asli agar AI tidak berhalusinasi membuat link teks ke nama file.
         const sendableMedia = agentId ? await getSendableMedia(agentId) : [];
         const catalogSection = sendableMedia.length > 0
             ? sendableMedia.map(m =>
-                `- ID: ${m.id} | Label: "${m.label}" | Tipe: ${m.type}`
+                `- ID: ${m.id} | Tipe: ${m.type}`
               ).join('\n')
             : '(Tidak ada media yang bisa dikirim)';
 
@@ -93,59 +94,24 @@ async function _processAIResponse(userMessage, history = [], store = null, agent
 ${sysPrompt}
 
 ═══════════════════════════════════════════
-INFORMASI SESI (STATISTIK):
-═══════════════════════════════════════════
-- Jumlah Interaksi: ${interactionCount}
-- Pesan ini adalah interaksi ke-${interactionCount}.
-
-═══════════════════════════════════════════
-ATURAN UTAMA & LIMITASI HARGA (DRACONIAN):
-═══════════════════════════════════════════
-1. DILARANG menyebutkan/membahas harga (seperti 149k) jika interaksi < 3 (yaitu interaksi ke-1 dan ke-2). Gali kebutuhan desain dulu!
-2. Mulai sebutkan harga HANYA pada interaksi ke-3 atau lebih, DAN WAJIB kirim 1-3 media katalog saat itu.
-3. OPENING (Interaksi ke-1): WAJIB kirim 1 media katalog contoh awal.
-4. JANGAN PERNAH menulis teks seperti "[FOTO] Nama" atau "[MEDIA:/uploads/...]" secara manual. Gunakan tool.
-5. Kirimkan pertanyaan HANYA di gelembung (bubble) terakhir jika kamu membalas dengan beberapa baris.
-6. JANGAN PERNAH berhalusinasi menyertakan link Markdown seperti "![Gambar](https://example.com/...)". Gunakan tool "kirim_media_katalog" jika ingin mengirim gambar.
-7. Semua jawaban harus berupa teks biasa yang ramah, santai, dan komunikatif sesuai kepribadian Dini.
-8. Dilarang keras menyebutkan link atau website fiktif (example.com).
-
-═══════════════════════════════════════════
-MEMORI / REKAP PERCAKAPAN (The Story So Far):
-═══════════════════════════════════════════
-Gunakan ini untuk mengenali status pelanggan:
-${conversationSummary || 'Belum ada rekapan diskusi sebelumnya.'}
-
-═══════════════════════════════════════════
 INFORMASI PRODUK & KEUNGGULAN (KNOWLEDGE):
 ═══════════════════════════════════════════
 ${knowledge}
-
-KETERSEDIAAN MEDIA:
-- Kamu memiliki ${sendableMedia.length} item di katalog yang bisa dikirim.
-- Kamu memiliki ${knowledgeMedia.length} item pengetahuan video/foto.
 
 ═══════════════════════════════════════════
 PENGETAHUAN DARI MEDIA (Foto & Video):
 ═══════════════════════════════════════════
 ${knowledgeSection}
 
+KETERSEDIAAN MEDIA:
+- Kamu memiliki ${sendableMedia.length} item di katalog yang bisa dikirim via tool.
+- Kamu memiliki ${knowledgeMedia.length} item pengetahuan video/foto.
+
 ═══════════════════════════════════════════
-KATALOG YANG BISA DIKIRIM KE PELANGGAN:
+KATALOG MEDIA YANG BISA KAMU KIRIM:
 ═══════════════════════════════════════════
-Gunakan tool "kirim_media_katalog" dan masukkan ID media di bawah ini ke dalam ARRAY. 
+PENTING: Gunakan tool "kirim_media_katalog" untuk mengirim media. Kamu HANYA tahu ID-nya. 
 ${catalogSection}
-
-═══════════════════════════════════════════
-ATURAN STANDAR:
-1. Jawab akurat dan ramah.
-2. Gunakan tool "cek_ongkir_jne" jika pelanggan tanya ongkir.
-3. Gunakan tool "kirim_media_katalog" HANYA jika pelanggan minta lihat foto/video. 
-4. Kamu bisa mengirim beberapa ID sekaligus.
-5. Jika pelanggan minta "semua katalog", masukkan semua ID katalog ke array media_ids.
-6. PROTOKOL PEMBAYARAN: Jika mengklaim "Sudah Transfer", WAJIB minta FOTO BUKTI.
-
-WAKTU SEKARANG: ${moment().format('dddd, DD MMMM YYYY, HH:mm')}
 `.trim();
 
         // === TOOL DEFINITIONS ===
@@ -196,18 +162,33 @@ WAKTU SEKARANG: ${moment().format('dddd, DD MMMM YYYY, HH:mm')}
             ? history.slice(0, history.length - 1) 
             : [];
 
+        // ══════════════════════════════════════════════════════════════════════════════
+        // TAHAP AKHIR: STRATEGI PRIORITAS TERBALIK (BOTTOM-WEIGHTED)
+        // Aturan Draconian diletakkan di instruksi sistem terakhir agar tidak dilupakan.
+        // ══════════════════════════════════════════════════════════════════════════════
+        const draconianRules = `
+--- [ATURAN MUTLAK & TEKNIS - WAJIB PATUH] ---
+1. STATUS: Ini adalah interaksi ke-${interactionCount}.
+2. HARGA: DILARANG sebut harga (149rb/rekening) jika interaksi < 3. Tahan diri!
+3. MEDIA: Jika interaksi ke-1 (opening) atau saat sebut harga, GUNAKAN tool "kirim_media_katalog".
+4. DILARANG KERAS: Menulis karakter ![...](...) atau link http/example.com apapun di teks balasan. 
+5. DILARANG KERAS: Menulis ID Media di dalam teks balasan. Pelanggan tidak boleh tahu sistem ID kita.
+6. Jawablah dengan teks murni yang ramah sebagai Dini. Gambar akan dikirim sistem secara otomatis jika kamu panggil tool. 
+7. Jangan ulangi pertanyaan yang sudah dijawab user di riwayat atas.
+---`.trim();
+
         let messages = [
             { role: "system", content: fullSystemInstruction },
             ...filteredHistory.map(h => {
                 const dayStr = h.timestamp ? moment(h.timestamp).format('DD MMM HH:mm') : "";
                 return {
                     role: h.is_from_me ? 'assistant' : 'user',
-                    content: `[LOG-WAKTU: ${dayStr}]\n${h.body || h.content || ""}`
+                    content: `[WAKTU: ${dayStr}]\n${h.body || h.content || ""}`
                 };
             }),
             { 
                 role: "system", 
-                content: `--- INSTRUKSI PRIORITAS: Gunakan riwayat di atas untuk mengenali PELANGGAN (nama, konteks) dan melanjutkan topik yang sedang dibahas. Jangan mengulangi pertanyaan yang sudah terjawab di atas. Jangan sertakan tag [LOG-WAKTU] atau format log [MEDIA:...] dalam jawabanmu. ---` 
+                content: draconianRules
             },
             { role: "user", content: userContent }
         ];
@@ -219,81 +200,95 @@ WAKTU SEKARANG: ${moment().format('dddd, DD MMMM YYYY, HH:mm')}
             tools,
             tool_choice: "auto",
             temperature: 0.7,
-        }, { timeout: 30000 }); // Timeout 30 detik untuk stabilitas production
+        }, { timeout: 30000 });
 
         let responseMessage = response.choices[0].message;
 
         // === TOOL CALLING HANDLER ===
         if (responseMessage.tool_calls) {
             messages.push(responseMessage);
-
-            let mediaResults = []; // Berubah jadi array untuk multiple media
+            let mediaResults = [];
 
             for (const toolCall of responseMessage.tool_calls) {
-
-                // TOOL 1: Cek ongkir
                 if (toolCall.function.name === 'cek_ongkir_jne') {
                     const args = JSON.parse(toolCall.function.arguments);
-                    logger.info(`[Tool] AI mengecek ongkir ke: ${args.destinationCity}`);
                     const ongkirResult = await rajaOngkir.getJneOngkir(args.destinationCity, args.weightGrams || 1000);
                     messages.push({ tool_call_id: toolCall.id, role: "tool", name: "cek_ongkir_jne", content: ongkirResult });
                 }
 
-                // TOOL 2: Kirim Media (MULTIPLE SUPPORT)
                 if (toolCall.function.name === 'kirim_media_katalog') {
                     const args = JSON.parse(toolCall.function.arguments);
                     const ids = args.media_ids || [];
-                    logger.info(`[Tool] AI memilih mengirim media IDs: ${ids.join(', ')}`);
-
                     if (!agentId) {
-                         messages.push({ tool_call_id: toolCall.id, role: "tool", name: "kirim_media_katalog", content: "Gagal: Perangkat ini belum terikat ke agen manapun." });
+                         messages.push({ tool_call_id: toolCall.id, role: "tool", name: "kirim_media_katalog", content: "Gagal: Agent ID tidak ditemukan." });
                          continue;
                     }
-
-                    const foundMedia = await MediaAsset.findAll({
-                        where: { id: ids, agent_id: agentId }
-                    });
-
-                    // Filter hanya yang boleh dikirim (purpose !== knowledge_only)
+                    const foundMedia = await MediaAsset.findAll({ where: { id: ids, agent_id: agentId } });
                     const allowedMedia = foundMedia.filter(m => m.purpose !== 'knowledge_only');
 
                     if (allowedMedia.length > 0) {
                         mediaResults = allowedMedia.map(m => ({ media: m, caption: args.caption || "" }));
-                        messages.push({
-                            tool_call_id: toolCall.id, role: "tool", name: "kirim_media_katalog",
-                            content: `${allowedMedia.length} media berhasil dipilih untuk dikirim.`
-                        });
+                        messages.push({ tool_call_id: toolCall.id, role: "tool", name: "kirim_media_katalog", content: `${allowedMedia.length} media berhasil dikirim.` });
                     } else {
-                        messages.push({
-                            tool_call_id: toolCall.id, role: "tool", name: "kirim_media_katalog",
-                            content: "Maaf, ID media yang Anda minta tidak ditemukan atau tidak tersedia untuk dikirim."
-                        });
+                        messages.push({ tool_call_id: toolCall.id, role: "tool", name: "kirim_media_katalog", content: "Media tidak ditemukan." });
                     }
                 }
             }
 
-            // === SECOND AI CALL ===
-            const secondResponse = await openai.chat.completions.create({ model: modelName, messages });
+            const secondResponse = await openai.chat.completions.create({ 
+                model: modelName, 
+                messages: [
+                    ...messages,
+                    { role: "system", content: "PENGINGAT TEKNIS: Jangan tulis link/tag media/ID apapun di teks jawaban akhir. Cukup balas teks ramah saja." }
+                ]
+            });
             responseMessage = secondResponse.choices[0].message;
 
             if (mediaResults.length > 0) {
                 return {
                     type: RESPONSE_TYPE.MEDIA,
-                    content: responseMessage.content?.trim() || "",
-                    mediaList: mediaResults // Kembalikan list of media
+                    content: sanitizeTextOutput(responseMessage.content),
+                    mediaList: mediaResults
                 };
             }
         }
 
         return {
             type: RESPONSE_TYPE.TEXT,
-            content: responseMessage.content?.trim() || "Ada yang bisa saya bantu?"
+            content: sanitizeTextOutput(responseMessage.content) || "Ada yang bisa saya bantu?"
         };
 
     } catch (error) {
         logger.error(`Kesalahan AI: ${error.message}`);
         return { type: RESPONSE_TYPE.TEXT, content: ERRORS.AI_FALLBACK };
     }
+}
+
+/**
+ * MASTER SANITIZER (Guard Level Production)
+ * Menghapus segala bentuk link fiktif, format markdown gambar, atau tag media manual
+ * sebelum pesan benar-benar sampai ke WhatsApp pelanggan.
+ */
+function sanitizeTextOutput(text) {
+    if (!text) return "";
+    
+    let clean = text;
+    // 1. Hapus format Markdown Image: ![...](...)
+    clean = clean.replace(/!\[.*?\]\(.*?\)/g, '');
+    
+    // 2. Hapus format link fiktif: example.com, atau http:// fiktif
+    clean = clean.replace(/https?:\/\/\S+/gi, '');
+    clean = clean.replace(/[a-zA-Z0-9-]+\.com\S*/gi, '');
+    
+    // 3. Hapus tag internal jika bocor: [MEDIA:...] atau [VIDEO:...]
+    clean = clean.replace(/\[MEDIA:.*?\]/g, '');
+    clean = clean.replace(/\[VIDEO:.*?\]/g, '');
+    
+    // 4. Hapus ID sistem jika bocor (misal: ID: 2)
+    clean = clean.replace(/ID:\s*\d+/gi, '');
+
+    // 5. Normalisasi spasi dan baris kosong berlebih
+    return clean.trim().replace(/\n{3,}/g, '\n\n');
 }
 
 /**
