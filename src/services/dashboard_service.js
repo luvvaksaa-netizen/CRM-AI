@@ -874,6 +874,16 @@ function updateWAStatus(storeId, status) {
   if (io) io.emit('statusUpdate', { storeId, status });
 }
 
+async function updateStorePhone(storeId, phone) {
+  try {
+    const cleanPhone = phone.replace(/[^0-9]/g, '');
+    await Store.update({ bot_phone: cleanPhone }, { where: { wa_id: storeId } });
+    if (io) io.emit('storeUpdated', { storeId });
+  } catch (e) {
+    logger.error(`[Settings] Gagal update phone ${storeId}: ${e.message}`);
+  }
+}
+
 async function addToChatHistory(storeId, msg) {
   try {
     const identity = msg.contactIdentity || buildContactIdentity(msg.from, msg.isMe ? {} : {
@@ -961,6 +971,7 @@ function emitQRSpec(storeId, qr) {
 module.exports = {
   initDashboard,
   updateWAStatus,
+  updateStorePhone,
   emitQRSpec,
   addToChatHistory,
   emitTypingStatus,

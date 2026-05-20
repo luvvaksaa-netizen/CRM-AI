@@ -32,6 +32,7 @@ const Store = sequelize.define('Store', {
   agent_id:         { type: DataTypes.INTEGER, allowNull: true },
   is_bot_active:    { type: DataTypes.BOOLEAN, defaultValue: true },
   last_active:      { type: DataTypes.DATE,    defaultValue: Sequelize.NOW },
+  bot_phone:        { type: DataTypes.STRING,  allowNull: true },
 
   // Legacy columns (masih ada di DB tapi tidak aktif dipakai)
   connection_mode:     { type: DataTypes.STRING,  defaultValue: 'wwebjs' },
@@ -250,6 +251,7 @@ async function initDB() {
     // 2. Manual Alter (Untuk SQLite lebih aman daripada sync alter true)
     await safeAddColumn('Stores', 'agent_id', { type: DataTypes.INTEGER, allowNull: true });
     await safeAddColumn('Stores', 'is_bot_active', { type: DataTypes.BOOLEAN, defaultValue: true });
+    await safeAddColumn('Stores', 'bot_phone', { type: DataTypes.STRING, allowNull: true });
     await safeAddColumn('MediaAssets', 'agent_id', { type: DataTypes.INTEGER, allowNull: true });
     await safeAddColumn('ChatSummaries', 'contact_name', { type: DataTypes.STRING, defaultValue: '' });
     await safeAddColumn('ChatMessages', 'wa_message_id', { type: DataTypes.STRING, allowNull: true });

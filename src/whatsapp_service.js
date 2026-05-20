@@ -152,6 +152,12 @@ function setupEventListeners(client, storeWaId) {
     client.on('ready', async () => {
         logger.success(`[${storeWaId}] WhatsApp SIAP DIGUNAKAN! ✅`);
         dashboard.updateWAStatus(storeWaId, "Dihubungkan (Online)");
+        
+        // Simpan nomor bot secara persisten agar muncul di UI
+        if (client.info && client.info.wid && client.info.wid.user) {
+            dashboard.updateStorePhone(storeWaId, client.info.wid.user).catch(()=>{});
+        }
+
         await wajsBridge.injectWajs(client, storeWaId);
         
         try {
