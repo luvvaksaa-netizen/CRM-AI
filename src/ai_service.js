@@ -114,7 +114,7 @@ async function _processAIResponse(userMessage, history = [], store = null, agent
         const sendableMedia = agentId ? await getSendableMedia(agentId) : [];
         const catalogSection = sendableMedia.length > 0
             ? sendableMedia.map(m =>
-                `- ID: ${m.id} | Tipe: ${m.type}`
+                `- ID: ${m.id} | Label: "${m.label || 'Tanpa Label'}" | Tipe: ${m.type} ${m.description ? '| Desc: ' + m.description : ''}`
               ).join('\n')
             : '(Tidak ada media yang bisa dikirim)';
 
