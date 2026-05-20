@@ -110,3 +110,5 @@ Jika `addToChatHistory()` gagal (DB error), pesan masuk tetap tidak tercatat tan
 | — | Bug AI Silent Failure (Kosong) | ✅ | **FIXED** — Fallback text & Try-catch |
 | — | Bug Centang Biru | ✅ | **FIXED** — `safeMarkIsRead` sebelum AI |
 | — | Akses Publik (crm.datasdm.com) | ✅ | **SOLVED** — Cloudflare Tunnel Docs |
+| — | AI Contextual Amnesia (Lupa Detail) | ✅ | **FIXED** — Draconian rules untuk Rekap, Tool Ongkir & Limit History 30 |
+| — | Marketing Autopilot Salah Pemicu | ✅ | **FIXED** — Regex `\bkw\b` + Integrasi kontekstual ke AI |

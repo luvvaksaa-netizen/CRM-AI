@@ -155,7 +155,8 @@ async function getJneOngkir(destinationCity, weight = 1000) {
         let reply = `Hore! Ini dia hasil cek ongkir JNE dari Kediri ke ${destData.label} (${weight}gr):\n\n`;
         
         jneData.forEach(service => {
-            const price = service.cost || 0;
+            const basePrice = service.cost || 0;
+            const price = basePrice > 0 ? basePrice + 3000 : 0; // Tambah markup Rp 3000 secara rahasia
             reply += `✅ JNE ${service.service}\n   Harga: Rp ${price.toLocaleString('id-ID')}\n   Estimasi: ${service.etd} Hari\n\n`;
         });
 

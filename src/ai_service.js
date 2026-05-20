@@ -180,7 +180,7 @@ Kamu adalah CS yang sangat cerdas. Berikut panduan untuk menangani berbagai situ
                     parameters: {
                         type: "object",
                         properties: {
-                            destinationCity: { type: "string", description: "Nama kota atau kabupaten tujuan." },
+                            destinationCity: { type: "string", description: "Nama KOTA atau KABUPATEN tujuan. Jika pelanggan memberikan alamat lengkap (contoh: Desa Patihan, Kecamatan Loceret, Kabupaten Nganjuk), ekstrak HANYA nama Kabupaten/Kota-nya (contoh: 'Nganjuk')." },
                             weightGrams: { type: "integer", description: "Berat paket dalam gram (default 1000)." }
                         },
                         required: ["destinationCity"]
@@ -245,8 +245,11 @@ const draconianRules = `
 2. DILARANG KERAS: Menulis karakter ![...](...) atau link http/example.com apapun di teks balasan. 
 3. DILARANG KERAS: Menulis ID Media, timestamp, atau informasi teknis apapun di dalam teks balasan. Pelanggan tidak boleh tahu sistem ID kita.
 4. DILARANG KERAS: Menulis [WAKTU:...] atau tanggal/jam apapun di teks balasan. Gunakan informasi waktu HANYA untuk konteks sapaan.
-5. Jangan ulangi pertanyaan yang sudah dijawab user di riwayat.
-6. Balas dengan SATU pesan yang lengkap dan koheren. JANGAN memecah menjadi beberapa balasan terpisah.
+5. PENGGUNAAN TOOL ONGKIR: Jika pelanggan sudah memberikan alamat lengkap (terutama Kecamatan dan Kabupaten/Kota), kamu WAJIB memanggil tool 'cek_ongkir_jne'. DILARANG merespons dengan kalimat "Ongkir akan dicek" atau membiarkannya kosong.
+6. ATURAN REKAPITULASI (MEMORY): Saat memberikan Rekap Pesanan, kamu WAJIB menuliskan SEMUA data spesifik secara rinci (misalnya: Tuliskan kelima nama tersebut satu per satu). JANGAN PERNAH meringkas nama menjadi angka (misal "Nama: 5 nama").
+7. LOGIKA MATEMATIKA PESANAN: Pahami kelipatan paket. Jika 1 paket maksimal 4 nama, maka 2 paket = maksimal 8 nama, 3 paket = maksimal 12 nama. Jadi jika pelanggan pesan 2 paket untuk 5 nama, itu SANGAT DIPERBOLEHKAN karena 5 < 8.
+8. Jangan ulangi pertanyaan yang sudah dijawab user di riwayat.
+9. Balas dengan SATU pesan yang lengkap dan koheren. JANGAN memecah menjadi beberapa balasan terpisah.
 
 --- [KETERANGAN PENTING: KEPRIBADIAN & ATURAN UTAMA] ---
 ${sysPrompt}

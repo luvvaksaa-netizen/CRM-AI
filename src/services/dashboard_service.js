@@ -962,5 +962,6 @@ module.exports = {
   updateWAStatus,
   emitQRSpec,
   addToChatHistory,
-  emitTypingStatus
+  emitTypingStatus,
+  updateContactPhoneIdentity
 };

@@ -30,6 +30,8 @@ Terdapat perubahan signifikan yang mencakup **penghapusan integrasi RocketChat**
 | Revert UI on Failure | `index.html` | `reloadCurrentStoreSettings()` helper sinkronkan UI dengan server saat save gagal |
 | AI Silent Failure Fix | `message_handler.js` | Try-Catch pada reply & Fallback Empty Content |
 | Centang Biru (Read) | `wajs_bridge.js` | Implementasi `safeMarkIsRead` ke API internal WPPConnect |
+| AI Contextual Memory | `ai_service.js`, `message_handler.js` | Draconian rules Rekap/Ongkir, Auto-extract kota, History limit ke 30 |
+| Autopilot Keyword Fix | `message_handler.js` | Exact Word Boundary Regex (`\bkw\b`) & Lanjut ke AI pasca-kirim |
 
 ---
 

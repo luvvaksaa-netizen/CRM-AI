@@ -208,14 +208,34 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
             try {
                 let resolved = await resolvePhoneForChatId(message.client, contactId, storeWaId);
                 if (!resolved?.phone) {
-                    // Auto-resolve jika belum ada di cache WPP
-                    const { requestPhoneNumber } = require('../services/wajs_bridge');
-                    await requestPhoneNumber(message.client, contactId, storeWaId);
-                    await new Promise(r => setTimeout(r, 1500)); // Tunggu sync WhatsApp
-                    resolved = await resolvePhoneForChatId(message.client, contactId, storeWaId);
+                    // Coba fallback menggunakan native contact info dari klien
+                    let nativeContact = await message.client.getContactById(contactId);
+                    if (nativeContact && nativeContact.number) {
+                        resolvedPhone = nativeContact.number;
+                    }
+                } else {
+                    resolvedPhone = resolved.phone;
                 }
-                resolvedPhone = resolved?.phone || '';
             } catch (_) {}
+            
+            // BACKGROUND TASK: Jika nomor HP belum dapat (karena LID lambat sinkron),
+            // lakukan pencarian lagi di background setelah 5 detik dan update Dashboard.
+            if (!resolvedPhone) {
+                setTimeout(async () => {
+                    try {
+                        let finalResolved = await resolvePhoneForChatId(message.client, contactId, storeWaId);
+                        if (!finalResolved?.phone) {
+                            let finalContact = await message.client.getContactById(contactId);
+                            if (finalContact && finalContact.number) {
+                                finalResolved = { phone: finalContact.number, contact: finalContact };
+                            }
+                        }
+                        if (finalResolved && finalResolved.phone) {
+                            dashboard.updateContactPhoneIdentity(storeWaId, contactId, finalResolved);
+                        }
+                    } catch (e) {}
+                }, 5000);
+            }
         }
         const identity = buildContactIdentity(contactId, {
             name: contact.name,
@@ -363,7 +383,7 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
     // 2. Ambil Riwayat Chat & Rekapan Sebelumnya
     const recentHistory = await ChatMessage.findAll({
         where: { contact_id: contactId, store_wa_id: storeWaId },
-        limit: 15,
+        limit: 30,
         order: [['timestamp', 'DESC']]
     });
     const history = recentHistory.map(h => h.get({ plain: true })).reverse();
@@ -372,7 +392,10 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
     const summaryRecord = await ChatSummary.findOne({ where: { store_wa_id: storeWaId, contact_id: contactId } });
     const summary = summaryRecord?.summary || "Percakapan baru saja dimulai.";
 
-    // 3. MARKETING AUTOPILOT (Trigger Keyword Check)
+    // 3. Status Terbaca (Centang Biru)
+    await safeMarkIsRead(lastMessage.client, contactId, storeWaId);
+
+    // 4. MARKETING AUTOPILOT (Trigger Keyword Check)
     const { MediaAsset } = require('../database/index');
     const agentAssets = await MediaAsset.findAll({ where: { agent_id: agent.id } });
     let triggeredAsset = null;
@@ -382,12 +405,19 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
         const keywords = asset.trigger_words.split(',').map(k => k.trim().toLowerCase()).filter(k => k.length > 0);
         const bodyLower = combinedBody.toLowerCase();
         
-        if (keywords.some(kw => bodyLower.includes(kw))) {
+        // Menggunakan exact word boundary untuk menghindari salah deteksi (misal "namanya" terdeteksi "nama")
+        if (keywords.some(kw => {
+            // Escape regex khusus agar aman
+            const safeKw = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(`\\b${safeKw}\\b`, 'i');
+            return regex.test(bodyLower);
+        })) {
             triggeredAsset = asset;
             break;
         }
     }
 
+    let autopilotContext = "";
     if (triggeredAsset) {
         logger.success(`[${storeWaId}] Keyword trigger [${agent.name}] aktif. Mengirim Katalog via Autopilot!`);
         await _markTyping(chat, storeWaId, contactId, lastMessage.client);
@@ -395,12 +425,13 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
         
         const caption = triggeredAsset.description || triggeredAsset.label;
         await _sendMediaToChat(lastMessage, triggeredAsset, caption, storeWaId, contactId, agent);
-        stopTyping();
-        return; 
+        
+        // Beri tahu AI bahwa sistem baru saja mengirim gambar ini agar tidak dikirim ulang
+        autopilotContext = `\n\n[SISTEM: Sistem baru saja otomatis mengirimkan gambar/katalog '${triggeredAsset.label}' ke pelanggan berdasarkan kata kuncinya. Lanjutkan obrolan secara natural dan JANGAN kirim gambar yang sama.]`;
     }
 
-    // 3. Status Terbaca (Centang Biru)
-    await safeMarkIsRead(lastMessage.client, contactId, storeWaId);
+    // Gabungkan konteks autopilot ke body pesan agar AI tahu
+    const finalBodyForAI = combinedBody + autopilotContext;
 
     // 4. Jeda Berpikir (Natural Feel)
     await new Promise(r => setTimeout(r, Math.floor(Math.random() * 700) + 500));
@@ -410,7 +441,7 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
 
     // 6. PROSES AI (dengan pesan yang sudah digabung)
     const interactionCount = history.filter(h => !h.is_from_me).length + 1;
-    const aiResult = await getAIResponse(combinedBody, history, store, agent, combinedMedia, summary, interactionCount);
+    const aiResult = await getAIResponse(finalBodyForAI, history, store, agent, combinedMedia, summary, interactionCount);
     
     // SAFETY NET: Pastikan selalu ada konten untuk membalas, mencegah error WWebJS "Message cannot be empty"
     const fallbackContent = aiResult.content || "Mohon maaf, saya sedang kesulitan memproses pesan Anda. Bisa diulangi pertanyaannya Kak?";
