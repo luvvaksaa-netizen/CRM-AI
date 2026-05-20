@@ -35,6 +35,7 @@ const ADMIN_USERS = parseAdminUsers();
 let io;
 const storeStatuses = {};
 const app = express();
+app.set('trust proxy', 1); // Wajib untuk Cloudflare / Nginx proxy
 const server = http.createServer(app);
 
 function parseAdminUsers() {
@@ -181,7 +182,7 @@ app.use('/uploads', authenticate, express.static(UPLOADS_DIR));
 // MULTER: File Upload Configuration
 // ============================================================
 const ALLOWED_TYPES = /jpeg|jpg|png|gif|webp|mp4|mov|avi|mkv|3gp/;
-const MAX_FILE_SIZE = 16 * 1024 * 1024; // 16MB hard ceiling
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB hard ceiling
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -736,10 +737,10 @@ function initDashboard(port = 3000) {
       const agentId   = req.params.agentId;
 
       // Validasi ukuran
-      const maxSizeKb = fileType === 'image' ? 5120 : 16384;
+      const maxSizeKb = fileType === 'image' ? 10240 : 102400; // Image 10MB, Video 100MB
       if (fileSizeKb > maxSizeKb) {
         fs.unlinkSync(tempPath);
-        return res.status(400).json({ success: false, message: `File terlalu besar. Maks ${fileType === 'image' ? '5MB' : '16MB'}.` });
+        return res.status(400).json({ success: false, message: `File terlalu besar. Maks ${fileType === 'image' ? '10MB' : '100MB'}.` });
       }
 
       // Validasi agen
