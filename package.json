@@ -16,6 +16,7 @@
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@ffprobe-installer/ffprobe": "^2.1.2",
+    "@wppconnect/wa-js": "^4.2.0",
     "axios": "^1.14.0",
     "connect-session-sequelize": "^8.0.6",
     "dotenv": "^17.3.1",

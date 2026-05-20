@@ -29,9 +29,10 @@ const DATA_DIR = process.env.DATA_DIR
     : path.join(process.cwd(), 'data'); // Local default: ./data/
 
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
+const TMP_DIR = path.join(DATA_DIR, 'tmp');
 
 // Auto-create folders saat startup (aman dan idempotent)
-[DATA_DIR, UPLOADS_DIR].forEach(dir => {
+[DATA_DIR, UPLOADS_DIR, TMP_DIR].forEach(dir => {
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }
@@ -49,6 +50,7 @@ const config = {
     // Paths (Terpusat)
     DATA_DIR,
     UPLOADS_DIR,
+    TMP_DIR,
 
     // Admin Credentials
     ADMIN_USER: process.env.ADMIN_USER || 'admin',

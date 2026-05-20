@@ -12,7 +12,6 @@ const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const ffprobeInstaller = require('@ffprobe-installer/ffprobe');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 const logger = require('../utils/logger');
 const config = require('../config');
 
@@ -209,7 +208,7 @@ Fokus pada produk apa yang ditampilkan dan fitur pentingnya sesuai pengetahuan t
  * @returns {Promise<{transcript: string, visualAnalysis: string, combined: string}>}
  */
 async function analyzeVideo(videoPath, label = 'Video Produk', storeContext = "") {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-frames-'));
+  const tmpDir = fs.mkdtempSync(path.join(config.TMP_DIR, 'wa-frames-'));
   let transcript = '';
   let visualAnalysis = '';
 
@@ -254,12 +253,6 @@ async function analyzeVideo(videoPath, label = 'Video Produk', storeContext = ""
     } catch (_) { /* ignore cleanup errors */ }
   }
 }
-
-module.exports = {
-  analyzeVideo,
-  transcribeAudio,
-  analyzeFrames
-};
 
 module.exports = {
   analyzeVideo,

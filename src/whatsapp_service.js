@@ -3,6 +3,9 @@ const qrcode = require('qrcode-terminal');
 const logger = require('./utils/logger');
 const dashboard = require('./services/dashboard_service');
 const { handleMessage } = require('./events/message_handler');
+const { assertWaChatId } = require('./utils/wa_id');
+const { shouldIgnoreIncomingChat } = require('./utils/contact_identity');
+const wajsBridge = require('./services/wajs_bridge');
 const path = require('path');
 const fs = require('fs');
 
@@ -15,6 +18,31 @@ const initializedClients = new Set(); // Mencegah double listener (Fixed Triple 
  */
 function getClients() {
     return clients;
+}
+
+function getActiveClient(storeWaId) {
+    const client = clients.get(storeWaId);
+    if (!client) throw new Error(`Client [${storeWaId}] tidak aktif!`);
+    return client;
+}
+
+function cleanErrorMessage(error) {
+    return String(error?.message || error || 'Unknown error').split('\n')[0];
+}
+
+async function getChatsWithRetry(client, attempts = 3, delayMs = 5000) {
+    let lastError;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+        try {
+            return await client.getChats();
+        } catch (error) {
+            lastError = error;
+            if (attempt < attempts) {
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+            }
+        }
+    }
+    throw lastError;
 }
 
 /**
@@ -33,6 +61,19 @@ function cleanupSessionLocks(clientId) {
         const lockFile = path.join(sessionDir, lockName);
         try {
             fs.rmSync(lockFile, { force: true });
+        } catch (e) { /* ignore */ }
+    });
+
+    // TAHAP 1 UPGRADE (Anti Memory-Thrashing): Hapus Cache Chromium yang membengkak
+    const cacheDirs = [
+        path.join(sessionDir, 'Default', 'Cache'),
+        path.join(sessionDir, 'Default', 'Code Cache'),
+        path.join(sessionDir, 'Default', 'Service Worker', 'CacheStorage')
+    ];
+
+    cacheDirs.forEach(dir => {
+        try {
+            if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
         } catch (e) { /* ignore */ }
     });
 }
@@ -58,10 +99,26 @@ function createWhatsAppClient(storeWaId) {
             clientId: storeWaId 
         }),
         puppeteer: {
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                // === MEMORY OPTIMIZATION (Production Grade) ===
+                '--disable-extensions',
+                '--disable-translate',
+                '--disable-background-networking',
+                '--disable-sync',
+                '--disable-default-apps',
+                '--disable-features=TranslateUI',
+                '--no-first-run',
+                '--disable-renderer-backgrounding',  // Hemat CPU saat tab tidak aktif
+                '--disable-backgrounding-occluded-windows',
+                '--js-flags=--max-old-space-size=256'  // Batasi JS heap per browser
+            ],
             headless: true,
             handleSIGINT: false,
-            timeout: 90000,           // 90 detik timeout launch (Lebih longgar untuk production)
+            timeout: 90000,           // 90 detik timeout launch
             protocolTimeout: 600000   // 10 menit
         }
     });
@@ -95,10 +152,11 @@ function setupEventListeners(client, storeWaId) {
     client.on('ready', async () => {
         logger.success(`[${storeWaId}] WhatsApp SIAP DIGUNAKAN! ✅`);
         dashboard.updateWAStatus(storeWaId, "Dihubungkan (Online)");
+        await wajsBridge.injectWajs(client, storeWaId);
         
         try {
             logger.info(`[${storeWaId}] Memulai sinkronisasi pesan tertunda...`);
-            const chats = await client.getChats();
+            const chats = await getChatsWithRetry(client);
             const unreadChats = chats.filter(chat => chat.unreadCount > 0);
             
             for (const chat of unreadChats) {
@@ -110,12 +168,12 @@ function setupEventListeners(client, storeWaId) {
             }
             if (unreadChats.length > 0) logger.success(`[${storeWaId}] Berhasil menarik ${unreadChats.length} chat tertunda.`);
         } catch (e) {
-            logger.warn(`[${storeWaId}] Gagal sinkronisasi chat: ${e.message}`);
+            logger.warn(`[${storeWaId}] Sinkronisasi pesan tertunda dilewati: ${cleanErrorMessage(e)}`);
         }
     });
 
     client.on('message', async (message) => {
-        if (message.isStatus || message.from.includes('@g.us')) return;
+        if (message.isStatus || shouldIgnoreIncomingChat(message.from)) return;
         await handleMessage(message, storeWaId);
     });
 
@@ -135,16 +193,16 @@ function setupEventListeners(client, storeWaId) {
  * @param {string} storeWaId - Nomor toko yang mengirim.
  */
 async function sendManualMessage(storeWaId, to, body) {
-    const client = clients.get(storeWaId);
-    if (!client) throw new Error(`Client [${storeWaId}] tidak aktif!`);
+    const client = getActiveClient(storeWaId);
+    const targetChatId = assertWaChatId(to);
     
     try {
-        const msg = await client.sendMessage(to, body);
+        const msg = await client.sendMessage(targetChatId, body);
         
         // Log ke Dashboard UI & DB dengan Store ID yang benar
         await dashboard.addToChatHistory(storeWaId, {
-            id: msg.id.id,
-            from: to,
+            id: msg.id?._serialized || msg.id?.id,
+            from: targetChatId,
             body: body,
             isMe: true,
             sender_name: 'CS Manual'
@@ -152,9 +210,9 @@ async function sendManualMessage(storeWaId, to, body) {
 
         // TAHAP 3: Auto-Pause AI
         const { pauseBotForContact } = require('./events/message_handler');
-        pauseBotForContact(storeWaId, to);
+        pauseBotForContact(storeWaId, targetChatId);
 
-        logger.info(`[${storeWaId}] Pesan Manual dikirim ke [${to}]. AI otomatis ditidurkan untuk kontak ini.`);
+        logger.info(`[${storeWaId}] Pesan Manual dikirim ke [${targetChatId}]. AI otomatis ditidurkan untuk kontak ini.`);
         return true;
     } catch (error) {
         logger.error(`[${storeWaId}] Gagal kirim manual: ${error.message}`);
@@ -166,8 +224,8 @@ async function sendManualMessage(storeWaId, to, body) {
  * Mengirim gambar/video (katalog) secara manual dari Dashboard.
  */
 async function sendManualMedia(storeWaId, to, mediaAsset) {
-    const client = clients.get(storeWaId);
-    if (!client) throw new Error(`Client [${storeWaId}] tidak aktif!`);
+    const client = getActiveClient(storeWaId);
+    const targetChatId = assertWaChatId(to);
 
     try {
         const { MessageMedia } = require('whatsapp-web.js');
@@ -180,7 +238,7 @@ async function sendManualMedia(storeWaId, to, mediaAsset) {
 
         const mediaMsg = MessageMedia.fromFilePath(mediaPath);
         const caption = mediaAsset.description || mediaAsset.label || '';
-        const msg = await client.sendMessage(to, mediaMsg, { caption });
+        const msg = await client.sendMessage(targetChatId, mediaMsg, { caption });
 
         // Tampilkan sebagai HTML thumbnail di Dashboard
         const fileExt = mediaPath.split('.').pop().toLowerCase();
@@ -188,8 +246,8 @@ async function sendManualMedia(storeWaId, to, mediaAsset) {
         const logBody = `${tag}:/uploads/${mediaAsset.filename}] ${caption}`;
 
         await dashboard.addToChatHistory(storeWaId, {
-            id: msg.id.id,
-            from: to,
+            id: msg.id?._serialized || msg.id?.id,
+            from: targetChatId,
             body: logBody,
             isMe: true,
             sender_name: 'CS Manual'
@@ -197,14 +255,44 @@ async function sendManualMedia(storeWaId, to, mediaAsset) {
 
         // TAHAP 3: Auto-Pause AI jika kirim media
         const { pauseBotForContact } = require('./events/message_handler');
-        pauseBotForContact(storeWaId, to);
+        pauseBotForContact(storeWaId, targetChatId);
 
-        logger.info(`[${storeWaId}] Media Manual [${mediaAsset.label}] dikirim ke [${to}]. AI dipause.`);
+        logger.info(`[${storeWaId}] Media Manual [${mediaAsset.label}] dikirim ke [${targetChatId}]. AI dipause.`);
         return true;
     } catch (error) {
         logger.error(`[${storeWaId}] Gagal kirim media manual: ${error.message}`);
         throw error;
     }
+}
+
+async function requestPhoneNumber(storeWaId, contactId) {
+    return wajsBridge.requestPhoneNumber(getActiveClient(storeWaId), contactId, storeWaId);
+}
+
+async function resolveContactPhone(storeWaId, contactId) {
+    const client = getActiveClient(storeWaId);
+    return wajsBridge.resolvePhoneForChatId(client, contactId, storeWaId);
+}
+
+async function getLabels(storeWaId) {
+    return wajsBridge.getLabels(getActiveClient(storeWaId), storeWaId);
+}
+
+async function createLabel(storeWaId, name, color) {
+    return wajsBridge.createLabel(getActiveClient(storeWaId), name, color, storeWaId);
+}
+
+async function addOrRemoveLabels(storeWaId, contactIds, labelOps) {
+    return wajsBridge.addOrRemoveLabels(getActiveClient(storeWaId), contactIds, labelOps, storeWaId);
+}
+
+async function sendReaction(storeWaId, messageId, emoji) {
+    return wajsBridge.sendReactionById(getActiveClient(storeWaId), messageId, emoji, storeWaId);
+}
+
+async function forwardMessages(storeWaId, to, messageIds, options = {}) {
+    const targetChatId = assertWaChatId(to);
+    return wajsBridge.forwardMessages(getActiveClient(storeWaId), targetChatId, messageIds, options, storeWaId);
 }
 
 /**
@@ -226,6 +314,7 @@ async function logoutClient(storeWaId) {
         } catch (e) {}
         clients.delete(storeWaId);
     }
+    initializedClients.delete(storeWaId);
     
     // 2. Hapus total folder sesi fisik (Clean Slate)
     const baseWwebjsDir = path.join(process.cwd(), '.wwebjs_auth');
@@ -276,12 +365,30 @@ function initHealthCheck(storeWaId) {
     return intervalId;
 }
 
+/**
+ * Membersihkan state internal saat launch gagal.
+ * Dipanggil dari index.js saat client.initialize() crash/timeout.
+ */
+function cleanupFailedClient(storeWaId) {
+    clients.delete(storeWaId);
+    initializedClients.delete(storeWaId);
+}
+
 module.exports = {
     createWhatsAppClient,
     setupEventListeners,
     getClients,
     sendManualMessage,
     sendManualMedia,
+    requestPhoneNumber,
+    resolveContactPhone,
+    getLabels,
+    createLabel,
+    addOrRemoveLabels,
+    sendReaction,
+    forwardMessages,
     logoutClient,
-    initHealthCheck
+    cleanupFailedClient,
+    initHealthCheck,
+    getClientWajsStatus: wajsBridge.getClientWajsStatus
 };

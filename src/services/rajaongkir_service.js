@@ -4,19 +4,35 @@ const path = require('path');
 const config = require('../config');
 const logger = require('../utils/logger');
 
-const CACHE_FILE = path.join(process.cwd(), 'komerce_cache.json');
+const CACHE_FILE = path.join(config.DATA_DIR, 'komerce_cache.json');
+const LEGACY_CACHE_FILE = path.join(process.cwd(), 'komerce_cache.json');
+const CACHE_TTL_MS = Number(process.env.RAJAONGKIR_CACHE_TTL_MS || 7 * 24 * 60 * 60 * 1000);
+
+function loadCache() {
+    const filePath = fs.existsSync(CACHE_FILE) ? CACHE_FILE : LEGACY_CACHE_FILE;
+    if (!fs.existsSync(filePath)) return {};
+    try {
+        return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    } catch (_) {
+        return {};
+    }
+}
+
+function persistCache(cache) {
+    fs.writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2));
+}
 
 /**
  * Helper: Menyimpan data ke cache.
  */
 function saveCache(key, value) {
-    let cache = {};
     try {
-        if (fs.existsSync(CACHE_FILE)) {
-            cache = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
-        }
-        cache[key] = value;
-        fs.writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2));
+        const cache = loadCache();
+        cache[key] = {
+            value,
+            expiresAt: Date.now() + CACHE_TTL_MS
+        };
+        persistCache(cache);
     } catch (e) {
         logger.error("Gagal menyimpan cache Komerce.");
     }
@@ -26,10 +42,22 @@ function saveCache(key, value) {
  * Helper: Mengambil data dari cache.
  */
 function getCache(key) {
-    if (!fs.existsSync(CACHE_FILE)) return null;
     try {
-        const cache = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
-        return cache[key] || null;
+        const cache = loadCache();
+        const entry = cache[key];
+        if (!entry) return null;
+
+        if (typeof entry === 'object' && entry.value !== undefined) {
+            if (entry.expiresAt && Date.now() > entry.expiresAt) {
+                delete cache[key];
+                persistCache(cache);
+                return null;
+            }
+            return entry.value;
+        }
+
+        saveCache(key, entry);
+        return entry;
     } catch (e) {
         return null;
     }

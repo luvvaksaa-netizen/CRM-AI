@@ -19,7 +19,8 @@ const BotAgent = sequelize.define('BotAgent', {
   name:             { type: DataTypes.STRING,  allowNull: true }, // Lenient for sync
   bot_name:         { type: DataTypes.STRING,  defaultValue: 'CS Bot' },
   system_prompt:    { type: DataTypes.TEXT,    defaultValue: '' },
-  product_knowledge:{ type: DataTypes.TEXT,    defaultValue: '' }
+  product_knowledge:{ type: DataTypes.TEXT,    defaultValue: '' },
+  auto_labels:      { type: DataTypes.TEXT,    defaultValue: '' } // JSON string of available labels
 });
 
 /**
@@ -31,8 +32,12 @@ const Store = sequelize.define('Store', {
   agent_id:         { type: DataTypes.INTEGER, allowNull: true },
   is_bot_active:    { type: DataTypes.BOOLEAN, defaultValue: true },
   last_active:      { type: DataTypes.DATE,    defaultValue: Sequelize.NOW },
-  
-  // Legacy columns 
+
+  // Legacy columns (masih ada di DB tapi tidak aktif dipakai)
+  connection_mode:     { type: DataTypes.STRING,  defaultValue: 'wwebjs' },
+  roketchat_token:     { type: DataTypes.STRING,  allowNull: true },
+  roketchat_device_id: { type: DataTypes.STRING,  allowNull: true },
+  roketchat_phone:     { type: DataTypes.STRING,  allowNull: true },
   bot_name:         { type: DataTypes.STRING },
   system_prompt:    { type: DataTypes.TEXT },
   product_knowledge:{ type: DataTypes.TEXT }
@@ -70,10 +75,17 @@ MediaAsset.belongsTo(BotAgent, { foreignKey: 'agent_id' });
 const ChatMessage = sequelize.define('ChatMessage', {
   store_wa_id: { type: DataTypes.STRING, allowNull: false },
   contact_id:  { type: DataTypes.STRING, allowNull: false },
+  wa_message_id:{ type: DataTypes.STRING, allowNull: true },
   sender_name: { type: DataTypes.STRING },
+  contact_display_name: { type: DataTypes.STRING, allowNull: true },
+  contact_phone:        { type: DataTypes.STRING, allowNull: true },
+  contact_lid:          { type: DataTypes.STRING, allowNull: true },
+  contact_type:         { type: DataTypes.STRING, allowNull: true },
+  contact_source:       { type: DataTypes.STRING, allowNull: true },
   body:        { type: DataTypes.TEXT },
   type:        { type: DataTypes.STRING,  defaultValue: 'chat' },
   is_from_me:  { type: DataTypes.BOOLEAN, defaultValue: false },
+  is_read:     { type: DataTypes.BOOLEAN, defaultValue: false }, // Status read UI
   timestamp:   { type: DataTypes.DATE,    defaultValue: Sequelize.NOW }
 });
 
@@ -86,6 +98,17 @@ const ChatSummary = sequelize.define('ChatSummary', {
   contact_name:{ type: DataTypes.STRING, defaultValue: '' },
   summary:     { type: DataTypes.TEXT,   defaultValue: 'Belum ada rekapan.' },
   last_updated:{ type: DataTypes.DATE,   defaultValue: Sequelize.NOW }
+});
+
+/**
+ * Model: Paused Contact (Persistent Human Override)
+ * Menyimpan status pause per kontak agar tetap bertahan saat server restart.
+ */
+const PausedContact = sequelize.define('PausedContact', {
+  store_wa_id: { type: DataTypes.STRING, primaryKey: true, allowNull: false },
+  contact_id:  { type: DataTypes.STRING, primaryKey: true, allowNull: false },
+  paused_at:   { type: DataTypes.DATE,   defaultValue: Sequelize.NOW },
+  paused_by:   { type: DataTypes.STRING, defaultValue: 'manual' } // 'manual' | 'auto'
 });
 
 
@@ -148,6 +171,58 @@ async function backfillSummaryNames() {
   }
 }
 
+async function backfillContactIdentity() {
+  try {
+    const { buildContactIdentity, isGeneratedNameForId } = require('../utils/contact_identity');
+    const rows = await ChatMessage.findAll();
+    let changedMessages = 0;
+    for (const msg of rows) {
+      const identity = buildContactIdentity(msg.contact_id, {
+        name: msg.is_from_me ? '' : msg.sender_name
+      });
+      const generatedName = isGeneratedNameForId(msg.sender_name, msg.contact_id)
+        || isGeneratedNameForId(msg.contact_display_name, msg.contact_id);
+      const needsUpdate = !msg.contact_display_name
+        || !msg.contact_type
+        || generatedName
+        || (identity.type === 'lid' && /^\+?\d/.test(String(msg.contact_display_name || msg.sender_name || '')));
+
+      if (!needsUpdate) continue;
+
+      msg.contact_display_name = identity.displayName;
+      msg.contact_phone = identity.phone || null;
+      msg.contact_lid = identity.lid || null;
+      msg.contact_type = identity.type;
+      msg.contact_source = identity.source;
+      if (!msg.is_from_me) msg.sender_name = identity.displayName;
+      await msg.save();
+      changedMessages++;
+    }
+
+    const summaries = await ChatSummary.findAll();
+    let changedSummaries = 0;
+    for (const record of summaries) {
+      const identity = buildContactIdentity(record.contact_id, { name: record.contact_name });
+      const generatedName = isGeneratedNameForId(record.contact_name, record.contact_id);
+      const needsUpdate = !record.contact_name
+        || generatedName
+        || (identity.type === 'lid' && /^\+?\d/.test(String(record.contact_name || '')));
+
+      if (!needsUpdate) continue;
+
+      record.contact_name = identity.displayName;
+      await record.save();
+      changedSummaries++;
+    }
+
+    if (changedMessages || changedSummaries) {
+      logger.info(`[DB] Contact identity backfill: ${changedMessages} pesan, ${changedSummaries} rekap diperbarui.`);
+    }
+  } catch (e) {
+    logger.warn(`[DB] Gagal backfill contact identity: ${e.message}`);
+  }
+}
+
 async function initDB() {
   const queryInterface = sequelize.getQueryInterface();
   
@@ -166,17 +241,36 @@ async function initDB() {
   try {
     await sequelize.authenticate();
     
+    // TAHAP 1 UPGRADE (Anti-Lock Database): Aktifkan WAL Mode untuk performa konkurensi tingkat tinggi
+    await sequelize.query('PRAGMA journal_mode=WAL;');
+    
     // 1. Sync Standard (Hanya buat tabel jika belum ada)
     await sequelize.sync(); 
 
     // 2. Manual Alter (Untuk SQLite lebih aman daripada sync alter true)
     await safeAddColumn('Stores', 'agent_id', { type: DataTypes.INTEGER, allowNull: true });
+    await safeAddColumn('Stores', 'is_bot_active', { type: DataTypes.BOOLEAN, defaultValue: true });
     await safeAddColumn('MediaAssets', 'agent_id', { type: DataTypes.INTEGER, allowNull: true });
     await safeAddColumn('ChatSummaries', 'contact_name', { type: DataTypes.STRING, defaultValue: '' });
+    await safeAddColumn('ChatMessages', 'wa_message_id', { type: DataTypes.STRING, allowNull: true });
+    await safeAddColumn('ChatMessages', 'contact_display_name', { type: DataTypes.STRING, allowNull: true });
+    await safeAddColumn('ChatMessages', 'contact_phone', { type: DataTypes.STRING, allowNull: true });
+    await safeAddColumn('ChatMessages', 'contact_lid', { type: DataTypes.STRING, allowNull: true });
+    await safeAddColumn('ChatMessages', 'contact_type', { type: DataTypes.STRING, allowNull: true });
+    await safeAddColumn('ChatMessages', 'contact_source', { type: DataTypes.STRING, allowNull: true });
+    await safeAddColumn('ChatMessages', 'is_read', { type: DataTypes.BOOLEAN, defaultValue: false });
+    await safeAddColumn('BotAgents', 'auto_labels', { type: DataTypes.TEXT, defaultValue: '' });
+
+    // RocketChat Hybrid Mode Columns
+    await safeAddColumn('Stores', 'connection_mode', { type: DataTypes.STRING, defaultValue: 'wwebjs' });
+    await safeAddColumn('Stores', 'roketchat_token', { type: DataTypes.STRING, allowNull: true });
+    await safeAddColumn('Stores', 'roketchat_device_id', { type: DataTypes.STRING, allowNull: true });
+    await safeAddColumn('Stores', 'roketchat_phone', { type: DataTypes.STRING, allowNull: true });
 
     // 3. Jalankan Migrasi Data
     await migrateLegacyData(); 
     await backfillSummaryNames();
+    await backfillContactIdentity();
     logger.success('✅ Database SQLite (Agent-Based Architecture) Siap!');
   } catch (error) {
     logger.error(`Gagal menghubungkan ke Database: ${error.message}`);
@@ -191,5 +285,6 @@ module.exports = {
   MediaAsset,
   ChatMessage,
   ChatSummary,
+  PausedContact,
   initDB
 };

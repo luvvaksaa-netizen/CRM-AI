@@ -183,13 +183,14 @@
         .panel-top h5 { font-weight: 700; font-size: 1.05rem; color: #0f172a; margin: 0 0 2px; }
         .panel-top p { font-size: 0.78rem; color: #94a3b8; margin: 0; }
 
-        #convSearch { margin: 12px 15px; }
-        #convSearch input {
+        #convSearch { margin: 12px 15px; display: flex; flex-direction: column; gap: 8px; }
+        #convSearch input[type="text"] {
             width: 100%; background: #f8fafc; border: 2px solid #f1f5f9;
             border-radius: var(--radius-sm); padding: 10px 16px;
             font-size: 0.85rem; outline: none; transition: var(--transition);
         }
-        #convSearch input:focus { border-color: var(--clr-primary); background: white; }
+        #convSearch input[type="text"]:focus { border-color: var(--clr-primary); background: white; }
+        .filter-unread { font-size: 0.78rem; color: #64748b; cursor: pointer; display: flex; align-items: center; gap: 6px; padding: 0 4px; }
 
         #convList { flex: 1; overflow-y: auto; padding: 8px; }
         .conv-item {
@@ -500,6 +501,9 @@
                     </div>
                 </div>
                 <div class="d-flex align-items-center gap-3">
+                    <button id="btnRequestPhone" class="btn btn-light border d-none" style="width:38px;height:38px;border-radius:10px;color:var(--slate-600);" onclick="requestCustomerPhone()" title="Minta nomor asli customer dari kontak privat WhatsApp">
+                        <i class="fas fa-phone"></i>
+                    </button>
                     <!-- TAHAP 3: GUI Human Override (Toggle per Chat) -->
                     <div class="form-check form-switch m-0 d-none" id="chatBotToggleContainer" title="Matikan untuk membalas manual tanpa diganggu bot AI">
                         <input class="form-check-input" type="checkbox" id="chatBotToggle" onchange="toggleBotForChat()" style="cursor:pointer; width: 2em; height: 1.1em;" checked>
@@ -595,6 +599,11 @@
                         <div class="mb-4">
                             <label class="form-label fw-bold"><i class="fas fa-quote-left me-2 text-primary"></i>Kepribadian (System Prompt)</label>
                             <textarea class="form-ctrl" id="inpPrompt" rows="3" placeholder="Gaya bahasa, cara menjawab..."></textarea>
+                        </div>
+                        <div class="mb-4">
+                            <label class="form-label fw-bold"><i class="fas fa-tags me-2 text-primary"></i>Label Otomatis (Opsional)</label>
+                            <input type="text" class="form-ctrl" id="inpAutoLabels" placeholder="Contoh: Hot Lead, Tanya Harga, Komplain">
+                            <small class="text-muted mt-1 d-block">Pisahkan dengan koma. AI akan otomatis melabeli chat pelanggan dengan label ini jika relevan.</small>
                         </div>
                         <div class="mb-0">
                             <label class="form-label fw-bold"><i class="fas fa-book me-2 text-primary"></i>Ilmu Pengetahuan & FAQ</label>
@@ -780,7 +789,7 @@
                     <option value="">-- Buat Agen Dulu --</option>
                 </select>
 
-                <button class="btn-primary-custom w-100" onclick="addStore()">
+                <button class="btn-primary-custom w-100" id="btnAddStoreBtn" onclick="addStore()">
                     <i class="fas fa-plus-circle me-2"></i>Tambahkan & Scan QR
                 </button>
             </div>
@@ -941,6 +950,7 @@
     let currentContactId = null;
     let currentAgentId = null; // The agent controlling current store
     let messages = []; // Full chat history for current store
+    let chatPagination = { hasMore: false, nextBefore: null, loading: false };
     const qrCache = {}; // Cache QR code per store_wa_id
     const statusCache = {}; // Cache status per store_wa_id
     let selectedFile = null;
@@ -952,6 +962,12 @@
     async function init() {
         await loadAgents();
         await loadStores();
+        const chatBox = document.getElementById('chatMessages');
+        chatBox.addEventListener('scroll', () => {
+            if (chatBox.scrollTop < 80 && chatPagination.hasMore && !chatPagination.loading) {
+                loadOlderContactMessages();
+            }
+        });
     }
 
     // ============================================================
@@ -997,6 +1013,7 @@
     async function addStore() {
         const name    = document.getElementById('newStoreName').value.trim();
         const agentId = document.getElementById('selNewStoreAgent').value;
+
         if (!name)     { toast('Nama perangkat tidak boleh kosong!', 'error'); return; }
         if (!agentId)  { toast('Silakan pilih Agen Penggerak terlebih dahulu!', 'error'); return; }
 
@@ -1010,7 +1027,7 @@
             if (data.success) {
                 bootstrap.Modal.getInstance(document.getElementById('modalAddStore')).hide();
                 document.getElementById('newStoreName').value = '';
-                toast(`Toko "${name}" terdaftar & terikat ke Agen! Scan QR di tab Koneksi.`, 'success');
+                toast(`Toko "${name}" terdaftar! Silakan Scan QR di tab Koneksi.`, 'success');
                 await loadStores();
                 switchStore(data.store.wa_id);
                 switchView('connect');
@@ -1038,13 +1055,17 @@
         
         const status = store.status || 'Offline';
         document.getElementById('hdrStatusDot').innerText = status;
+        document.getElementById('hdrName').innerText = 'Pilih Pelanggan';
+        document.getElementById('hdrSub').innerText = 'Pilih kontak dari daftar kiri';
+        document.getElementById('btnRequestPhone').classList.add('d-none');
+        document.getElementById('chatBotToggleContainer').classList.add('d-none');
         
         // Sync the connection card (QR/Spinner/Success View)
         updateConnectView(status);
         
-        // Update connection dropdown & toggle
+        // Update connection dropdown & toggle (safe fallback: undefined/null → true)
         document.getElementById('selConnectAgent').value = store.agent_id || '';
-        document.getElementById('botToggle').checked = store.is_bot_active;
+        document.getElementById('botToggle').checked = store.is_bot_active !== false;
 
         // Load data
         await loadChatHistory();
@@ -1065,17 +1086,49 @@
                     is_bot_active: isBotActive 
                 })
             });
-            if (res.ok) {
+            const data = await res.json();
+            if (res.ok && data.success) {
                 toast('Konfigurasi perangkat berhasil disimpan!', 'success');
+                // Sinkronkan state lokal dari data server yang sudah ter-commit
+                const serverStore = data.store;
                 const s = stores.find(str => str.wa_id === currentStoreId);
-                if (s) {
-                    s.agent_id = agentId ? parseInt(agentId) : null;
-                    s.is_bot_active = isBotActive;
+                if (s && serverStore) {
+                    s.agent_id = serverStore.agent_id;
+                    s.is_bot_active = serverStore.is_bot_active;
                 }
-                currentAgentId = s.agent_id;
+                currentAgentId = serverStore?.agent_id || (s?.agent_id ?? null);
+                document.getElementById('selConnectAgent').value = currentAgentId || '';
+                document.getElementById('botToggle').checked = (serverStore?.is_bot_active ?? s?.is_bot_active) !== false;
                 loadMedia(); // Refresh media if agent changed
+            } else {
+                toast(data.message || 'Gagal menyimpan konfigurasi.', 'error');
+                await reloadCurrentStoreSettings(); // Revert UI ke data server
             }
-        } catch (e) { toast('Koneksi gagal.', 'error'); }
+        } catch (e) {
+            toast('Koneksi gagal. Periksa jaringan Anda.', 'error');
+            await reloadCurrentStoreSettings(); // Revert UI ke data server
+        }
+    }
+
+    /**
+     * Reload konfigurasi store aktif dari server.
+     * Digunakan untuk revert UI saat save gagal agar konsisten dengan DB.
+     */
+    async function reloadCurrentStoreSettings() {
+        if (!currentStoreId) return;
+        try {
+            const res = await fetch(`/api/settings/${currentStoreId}`);
+            if (!res.ok) return;
+            const store = await res.json();
+            document.getElementById('selConnectAgent').value = store.agent_id || '';
+            document.getElementById('botToggle').checked = store.is_bot_active !== false;
+            const s = stores.find(str => str.wa_id === currentStoreId);
+            if (s) {
+                s.agent_id = store.agent_id;
+                s.is_bot_active = store.is_bot_active;
+            }
+            currentAgentId = store.agent_id;
+        } catch (e) { /* silent — server unreachable */ }
     }
 
     async function logoutStore() {
@@ -1104,7 +1157,7 @@
     }
 
     // ============================================================
-    // AGENTS (The Brains)
+    // AGENTS (The Brains — Otak AI)
     // ============================================================
     async function loadAgents() {
         try {
@@ -1167,22 +1220,21 @@
             const div = document.createElement('div');
             div.className = 'card-glass p-4';
             
-            // Prioritaskan Nama Real, jika tidak ada pakai nomor yang di-format
-            const displayName = s.contact_name || formatWaNumber(s.contact_id);
-            const initial = displayName.substring(0, 2).toUpperCase();
+            const displayName = getContactDisplayName(s.contact_id, s.contact_name, s);
+            const initial = (displayName.replace(/[^a-z0-9]/gi, '').substring(0, 2) || 'WA').toUpperCase();
 
             div.innerHTML = `
                 <div class="d-flex justify-content-between align-items-start mb-3">
                     <div class="d-flex align-items-center">
-                        <div class="conv-avatar me-3" style="background:var(--clr-primary); color:white">${initial}</div>
+                        <div class="conv-avatar me-3" style="background:var(--clr-primary); color:white">${escapeHtml(initial)}</div>
                         <div>
-                            <h6 class="fw-bold m-0">${displayName}</h6>
+                            <h6 class="fw-bold m-0">${escapeHtml(displayName)}</h6>
                             <small class="text-muted"><i class="fas fa-clock me-1"></i> Update: ${moment(s.last_updated).fromNow()}</small>
                         </div>
                     </div>
                 </div>
                 <div class="bg-light p-3 rounded-3 border" style="font-size:0.9rem; color:#334155; line-height:1.6; white-space:pre-wrap; border-left:4px solid var(--clr-primary) !important;">
-                    ${s.summary}
+                    ${escapeHtml(s.summary)}
                 </div>
             `;
             grid.appendChild(div);
@@ -1235,6 +1287,7 @@
         document.getElementById('inpBotName').value = agent.bot_name;
         document.getElementById('inpPrompt').value = agent.system_prompt;
         document.getElementById('inpKnowledge').value = agent.product_knowledge;
+        document.getElementById('inpAutoLabels').value = agent.auto_labels || '';
         
         // Load media specific to THIS agent inside the editor
         loadAgentMedia(id);
@@ -1286,7 +1339,8 @@
             name: document.getElementById('inpAgentInternalName').value,
             bot_name: document.getElementById('inpBotName').value,
             system_prompt: document.getElementById('inpPrompt').value,
-            product_knowledge: document.getElementById('inpKnowledge').value
+            product_knowledge: document.getElementById('inpKnowledge').value,
+            auto_labels: document.getElementById('inpAutoLabels').value
         };
         try {
             const res = await fetch(`/api/agents/${activeEditingAgentId}`, {
@@ -1301,24 +1355,7 @@
         } catch (e) { toast('Gagal menyimpan.', 'error'); }
     }
 
-    async function updateStoreAgentBinding() {
-        if (!currentStoreId) return;
-        const agentId = document.getElementById('selConnectAgent').value;
-        try {
-            const res = await fetch(`/api/settings/${currentStoreId}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ agent_id: agentId })
-            });
-            if (res.ok) {
-                toast('Agent berhasil di-binding ke nomor ini!', 'success');
-                const s = stores.find(str => str.wa_id === currentStoreId);
-                if (s) s.agent_id = agentId ? parseInt(agentId) : null;
-                currentAgentId = s.agent_id;
-                loadMedia(); // Refresh media if agent changed
-            }
-        } catch (e) { toast('Koneksi gagal.', 'error'); }
-    }
+    // NOTE: updateStoreAgentBinding() sudah didefinisikan di atas (satu fungsi saja)
 
     // ============================================================
     // CHAT
@@ -1337,21 +1374,180 @@
     async function loadContactMessages(contactId) {
         if (!currentStoreId || !contactId) return;
         try {
-            const res = await fetch(`/api/chat/${currentStoreId}?contactId=${contactId}`);
-            const contactMsgs = await res.json();
+            chatPagination = { hasMore: false, nextBefore: null, loading: true };
+            const params = new URLSearchParams({ contactId, limit: '50', paginated: 'true' });
+            const res = await fetch(`/api/chat/${currentStoreId}?${params.toString()}`);
+            const data = await res.json();
+            const contactMsgs = data.messages || data;
             // Gabungkan atau replace partisi messages khusus untuk render chat
-            window.activeChatMessages = contactMsgs; 
+            window.activeChatMessages = contactMsgs;
+            chatPagination = {
+                hasMore: Boolean(data.pagination?.hasMore),
+                nextBefore: data.pagination?.nextBefore || null,
+                loading: false
+            };
+            if (contactId === currentContactId) {
+                const meta = getLatestContactMeta(contactId);
+                document.getElementById('hdrName').innerText = getContactDisplayName(contactId, '', meta);
+                document.getElementById('hdrSub').innerText = getContactSubtitle(contactId, meta);
+                document.getElementById('btnRequestPhone').classList.toggle('d-none', !isLidContact(contactId));
+            }
             renderMessages();
-        } catch (e) { console.error('Gagal muat history kontak:', e); }
+        } catch (e) {
+            chatPagination.loading = false;
+            console.error('Gagal muat history kontak:', e);
+        }
     }
 
-    function formatWaNumber(id) {
-        if (!id) return '';
-        let num = id.split('@')[0];
+    async function loadOlderContactMessages() {
+        if (!currentStoreId || !currentContactId || !chatPagination.nextBefore || chatPagination.loading) return;
+        const container = document.getElementById('chatMessages');
+        const previousHeight = container.scrollHeight;
+        chatPagination.loading = true;
+
+        try {
+            const params = new URLSearchParams({
+                contactId: currentContactId,
+                limit: '50',
+                paginated: 'true',
+                before: chatPagination.nextBefore
+            });
+            const res = await fetch(`/api/chat/${currentStoreId}?${params.toString()}`);
+            const data = await res.json();
+            const olderMsgs = data.messages || [];
+            window.activeChatMessages = [...olderMsgs, ...(window.activeChatMessages || [])];
+            chatPagination = {
+                hasMore: Boolean(data.pagination?.hasMore),
+                nextBefore: data.pagination?.nextBefore || null,
+                loading: false
+            };
+            renderMessages({ preserveScroll: true, previousHeight });
+        } catch (e) {
+            chatPagination.loading = false;
+            toast('Gagal memuat histori lama.', 'error');
+        }
+    }
+
+    function escapeHtml(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function parseChatId(id) {
+        const raw = String(id || '').trim();
+        const [left, domain = ''] = raw.split('@');
+        const local = String(left || '').split(':')[0].replace(/[^\d]/g, '');
+        return { raw, local, domain };
+    }
+
+    function isGeneratedDisplayName(name, id) {
+        const parsed = parseChatId(id);
+        const digits = String(name || '').replace(/[^\d]/g, '');
+        return Boolean(parsed.local && digits && digits === parsed.local);
+    }
+
+    function formatPhoneDigits(digits) {
+        const num = String(digits || '').replace(/[^\d]/g, '');
+        if (!num) return '';
         if (num.startsWith('62') && num.length >= 10) {
             return `+62 ${num.slice(2, 5)}-${num.slice(5, 9)}-${num.slice(9)}`;
         }
         return `+${num}`;
+    }
+
+    function formatWaNumber(id) {
+        const parsed = parseChatId(id);
+        if (!parsed.local) return 'Kontak WhatsApp';
+        if (parsed.domain === 'lid') return `Kontak WA #${parsed.local.slice(-6)}`;
+        if (parsed.domain === 'broadcast') return 'Siaran WhatsApp';
+        if (parsed.domain === 'newsletter') return 'Channel WhatsApp';
+        if (parsed.domain === 'g.us') return 'Grup WhatsApp';
+        return formatPhoneDigits(parsed.local);
+    }
+
+    function isPlaceholderContactName(name) {
+        return /^Kontak WA #\d+$/.test(String(name || '').trim()) || String(name || '').trim() === 'Kontak WA Privat';
+    }
+
+    function getContactDisplayName(id, fallback = '', meta = {}) {
+        const parsed = parseChatId(id);
+        const candidates = [
+            meta.contact_display_name,
+            meta.contact_name,
+            !meta.is_from_me ? meta.sender_name : '',
+            fallback
+        ];
+        for (const candidate of candidates) {
+            const name = String(candidate || '').trim();
+            if (!name || name.includes('@')) continue;
+            if (isGeneratedDisplayName(name, id)) continue;
+            if (parsed.domain === 'lid' && /^\+?\d[\d\s-]+$/.test(name)) continue;
+            if (meta.contact_phone && isPlaceholderContactName(name)) continue;
+            return name;
+        }
+        if (meta.contact_phone) return formatPhoneDigits(meta.contact_phone);
+        return formatWaNumber(id);
+    }
+
+    function getContactSubtitle(id, meta = {}) {
+        const parsed = parseChatId(id);
+        if (meta.contact_phone) return `Nomor WA: ${formatPhoneDigits(meta.contact_phone)}`;
+        if (parsed.domain === 'lid') return 'ID privat WhatsApp, nomor asli belum diketahui';
+        if (parsed.domain === 'c.us' || parsed.domain === 's.whatsapp.net') return 'Percakapan aktif';
+        return 'Percakapan aktif';
+    }
+
+    function isLidContact(id) {
+        return parseChatId(id).domain === 'lid';
+    }
+
+    function getPreviewText(text) {
+        return String(text || '')
+            .replace(/\[MEDIA:[^\]]+\]/g, 'Foto')
+            .replace(/\[VIDEO:[^\]]+\]/g, 'Video')
+            .replace(/\[AI-VISION:\s*([^\]]+)\]/g, 'Pengamatan visual AI')
+            .replace(/\[AI-TRANSKRIPSI:\s*([^\]]+)\]/g, 'Transkripsi suara')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    function getLatestContactMeta(contactId) {
+        const all = [
+            ...(messages || []),
+            ...(window.activeChatMessages || [])
+        ].filter(m => m.contact_id === contactId);
+        return all.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0] || {};
+    }
+
+    function updateLocalContactIdentity(contactId, identity = {}) {
+        const patch = {
+            contact_display_name: identity.contact_display_name || identity.displayName,
+            contact_phone: identity.contact_phone || identity.phone,
+            contact_lid: identity.contact_lid || identity.lid,
+            contact_type: identity.contact_type || identity.type,
+            contact_source: identity.contact_source || identity.source
+        };
+
+        [messages, window.activeChatMessages].forEach(list => {
+            if (!Array.isArray(list)) return;
+            list.forEach(m => {
+                if (m.contact_id !== contactId) return;
+                Object.entries(patch).forEach(([key, value]) => {
+                    if (value !== undefined && value !== null && value !== '') m[key] = value;
+                });
+            });
+        });
+
+        if (contactId === currentContactId) {
+            const meta = getLatestContactMeta(contactId);
+            document.getElementById('hdrName').innerText = getContactDisplayName(contactId, '', meta);
+            document.getElementById('hdrSub').innerText = getContactSubtitle(contactId, meta);
+        }
+        renderConvList();
     }
 
     function formatChatDate(ts) {
@@ -1366,23 +1562,36 @@
     function renderConvList(filter = '') {
         const list = document.getElementById('convList');
         const map  = {};
-        const nameMap = {}; // Cache nama asli customer (berdasarkan pesan MASUK)
+        const nameMap = {};
+        const unreadCounts = {};
         
         messages.forEach(m => {
             const c = m.contact_id;
-            // Simpan pesan paling update untuk sorting & preview body
             if (!map[c] || new Date(m.timestamp) > new Date(map[c].timestamp)) map[c] = m;
-            
-            // Khusus pesan dari customer (isMe false), simpan namanya untuk label baris
-            if (!m.is_from_me && m.sender_name && m.sender_name !== c) {
-                nameMap[c] = m.sender_name;
+
+            const display = getContactDisplayName(c, nameMap[c], m);
+            if (display) nameMap[c] = display;
+
+            if (!m.is_from_me && !m.is_read) {
+                unreadCounts[c] = (unreadCounts[c] || 0) + 1;
             }
         });
 
+        const showUnreadOnly = document.getElementById('checkUnreadOnly')?.checked;
+
         const contacts = Object.keys(map)
             .filter(c => {
-                const name = nameMap[c] || formatWaNumber(c);
-                return !filter || c.toLowerCase().includes(filter.toLowerCase()) || name.toLowerCase().includes(filter.toLowerCase());
+                if (showUnreadOnly && !unreadCounts[c]) return false;
+                const last = map[c];
+                const name = getContactDisplayName(c, nameMap[c], last);
+                const searchText = [
+                    c,
+                    name,
+                    last.contact_phone,
+                    last.contact_lid,
+                    last.sender_name
+                ].filter(Boolean).join(' ').toLowerCase();
+                return !filter || searchText.includes(filter.toLowerCase());
             })
             .sort((a,b) => new Date(map[b].timestamp) - new Date(map[a].timestamp));
 
@@ -1394,8 +1603,10 @@
         contacts.forEach(c => {
             const last = map[c];
             const div  = document.createElement('div');
-            // Prioritaskan nama customer yang diekstrak dari nameMap, fall back ke nomor
-            const friendlyName = nameMap[c] || formatWaNumber(c);
+            const friendlyName = getContactDisplayName(c, nameMap[c], last);
+            const preview = getPreviewText(last.body) || getContactSubtitle(c, last);
+            const originalBody = last.body;
+            last.body = '';
             
             // Format waktu untuk daftar chat: Jika hari ini hanya jam, jika kemarin tulis KEMARIN, dst.
             const lastMsgDate = moment(last.timestamp);
@@ -1404,19 +1615,27 @@
                 timeStr = formatChatDate(last.timestamp);
             }
 
+            const unreadBadge = unreadCounts[c] ? `<span class="badge bg-danger rounded-pill shadow-sm" style="font-size: 0.65rem;">${unreadCounts[c]}</span>` : '';
+
             div.className = `conv-item ${currentContactId === c ? 'active' : ''}`;
             div.onclick = () => selectContact(c, friendlyName);
             div.innerHTML = `
                 <div class="conv-avatar"><i class="fas fa-user text-white opacity-75"></i></div>
                 <div style="flex:1;min-width:0;">
                     <div class="d-flex justify-content-between mb-1">
-                        <span style="font-weight:700;font-size:0.88rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${friendlyName}</span>
+                        <div class="d-flex align-items-center gap-2" style="min-width:0;">
+                            <span style="font-weight:700;font-size:0.88rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(friendlyName)}</span>
+                            ${unreadBadge}
+                        </div>
                         <span style="font-size:0.68rem;color:#94a3b8;flex-shrink:0;margin-left:8px;">${timeStr}</span>
                     </div>
                     <div style="font-size:0.8rem;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
                         ${last.body.replace(/\[MEDIA:[^\]]+\]/g, '📷 Foto').replace(/\[VIDEO:[^\]]+\]/g, '🎥 Video')}
                     </div>
                 </div>`;
+            last.body = originalBody;
+            const previewEl = div.querySelector('div[style*="font-size:0.8rem"]');
+            if (previewEl) previewEl.textContent = preview;
             list.appendChild(div);
         });
     }
@@ -1424,17 +1643,31 @@
     async function selectContact(c, friendlyName) {
         currentContactId = c;
         window.activeChatMessages = null; // Clear previous specific history
+        chatPagination = { hasMore: false, nextBefore: null, loading: false };
         
-        // Pilih nama panggilan atau format nomer
-        const displayName = friendlyName || formatWaNumber(c);
+        const meta = getLatestContactMeta(c);
+        const displayName = getContactDisplayName(c, friendlyName, meta);
         
         document.getElementById('hdrName').innerText   = displayName;
         document.getElementById('hdrAvatar').innerHTML = `<i class="fas fa-user"></i>`;
-        document.getElementById('hdrSub').innerText    = 'Percakapan aktif';
+        document.getElementById('hdrSub').innerText    = getContactSubtitle(c, meta);
+        document.getElementById('btnRequestPhone').classList.toggle('d-none', !isLidContact(c));
         
         // Tampilkan & Cek status Human Override
         document.getElementById('chatBotToggleContainer').classList.remove('d-none');
         loadBotToggleState();
+
+        // Mark as Read in DB
+        try {
+            fetch(`/api/chat/${currentStoreId}/${currentContactId}/read`, { method: 'POST' })
+            .then(() => {
+                // Optimistic UI update
+                messages.forEach(m => {
+                    if (m.contact_id === c && !m.is_from_me) m.is_read = true;
+                });
+                renderConvList();
+            });
+        } catch(e) {}
 
         // Show Loading State in message area
         document.getElementById('chatMessages').innerHTML = '<div class="empty-state m-auto"><i class="fas fa-spinner fa-spin fa-2x mb-3 text-primary"></i><p>Memuat histori percakapan lengkap...</p></div>';
@@ -1447,7 +1680,8 @@
     async function loadBotToggleState() {
         if (!currentStoreId || !currentContactId) return;
         try {
-            const res = await fetch(`/api/stores/${currentStoreId}/contacts/${currentContactId}/pause`);
+            const contactPath = encodeURIComponent(currentContactId);
+            const res = await fetch(`/api/stores/${currentStoreId}/contacts/${contactPath}/pause`);
             const { isPaused } = await res.json();
             const toggle = document.getElementById('chatBotToggle');
             const label  = document.getElementById('chatBotToggleLabel');
@@ -1471,7 +1705,8 @@
         const isPaused = !isAIActive; // Toggle checked = AI On = Pause False
         
         try {
-            const res = await fetch(`/api/stores/${currentStoreId}/contacts/${currentContactId}/pause`, {
+            const contactPath = encodeURIComponent(currentContactId);
+            const res = await fetch(`/api/stores/${currentStoreId}/contacts/${contactPath}/pause`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ isPaused })
@@ -1483,6 +1718,34 @@
         } catch (e) {
             toast('Gagal mengatur status AI.', 'error');
             document.getElementById('chatBotToggle').checked = !isAIActive; // Revert
+        }
+    }
+
+    async function requestCustomerPhone() {
+        if (!currentStoreId || !currentContactId) return;
+        if (!isLidContact(currentContactId)) {
+            toast('Kontak ini sudah memakai format nomor WA biasa.', 'info');
+            return;
+        }
+
+        try {
+            const contactPath = encodeURIComponent(currentContactId);
+            const res = await fetch(`/api/stores/${currentStoreId}/contacts/${contactPath}/request-phone`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.success) {
+                throw new Error(data.message || 'WA-JS belum siap atau sesi WA belum online.');
+            }
+            if (data.phone || data.identity?.phone) {
+                updateLocalContactIdentity(currentContactId, data.identity || { phone: data.phone });
+                toast(`Nomor asli ditemukan: ${formatPhoneDigits(data.phone || data.identity.phone)}`, 'success');
+            } else {
+                toast(data.message || 'Permintaan nomor asli sudah dikirim ke customer via WhatsApp.', 'success');
+            }
+        } catch (e) {
+            toast(e.message || 'Gagal meminta nomor customer.', 'error');
         }
     }
 
@@ -1510,7 +1773,7 @@
         return html.replace(/\n/g, '<br>');
     }
 
-    function renderMessages() {
+    function renderMessages(options = {}) {
         const container = document.getElementById('chatMessages');
         // MOD: Gunakan history spesifik kontak jika sudah dimuat
         const myMsgs = window.activeChatMessages || messages.filter(m => m.contact_id === currentContactId);
@@ -1520,6 +1783,18 @@
             return;
         }
         container.innerHTML = '';
+
+        if (chatPagination.hasMore) {
+            const loadMore = document.createElement('button');
+            loadMore.type = 'button';
+            loadMore.className = 'btn btn-sm btn-light border align-self-center my-3';
+            loadMore.innerHTML = chatPagination.loading
+                ? '<i class="fas fa-spinner fa-spin me-1"></i>Memuat...'
+                : '<i class="fas fa-clock-rotate-left me-1"></i>Muat histori lama';
+            loadMore.disabled = chatPagination.loading;
+            loadMore.onclick = loadOlderContactMessages;
+            container.appendChild(loadMore);
+        }
         
         // Track the day to insert dividers
         let lastDay = null;
@@ -1542,7 +1817,11 @@
             div.innerHTML  = `<div>${parseMediaMsg(m.body)}</div><small>${moment(m.timestamp).format('HH:mm')}</small>`;
             container.appendChild(div);
         });
-        container.scrollTop = container.scrollHeight;
+        if (options.preserveScroll) {
+            container.scrollTop = container.scrollHeight - (options.previousHeight || 0);
+        } else {
+            container.scrollTop = container.scrollHeight;
+        }
     }
 
     async function sendManual() {
@@ -1888,8 +2167,52 @@
     socket.on('newMessage', ({ storeId, msg }) => {
         if (storeId !== currentStoreId) return;
         messages.push(msg);
-        renderConvList();
-        if (currentContactId === msg.contact_id) renderMessages();
+        
+        // Fix Real-Time Sync: Push to activeChatMessages if it's the current active contact
+        if (window.activeChatMessages && msg.contact_id === currentContactId) {
+            window.activeChatMessages.push(msg);
+            const displayName = getContactDisplayName(currentContactId, '', msg);
+            document.getElementById('hdrName').innerText = displayName;
+            document.getElementById('hdrSub').innerText = getContactSubtitle(currentContactId, msg);
+            document.getElementById('btnRequestPhone').classList.toggle('d-none', !isLidContact(currentContactId));
+            renderMessages(); // Mem-render ulang pesan spesifik kontak
+            
+            // Auto-scroll ke bawah saat pesan masuk
+            const container = document.getElementById('chatMessages');
+            if (container) container.scrollTop = container.scrollHeight;
+        } else {
+            renderConvList(); // Mem-render ulang daftar kontak (di kiri)
+        }
+    });
+
+    socket.on('contactIdentityUpdated', ({ storeId, contactId, identity }) => {
+        if (storeId !== currentStoreId) return;
+        updateLocalContactIdentity(contactId, identity);
+    });
+
+    socket.on('typingStatus', ({ storeId, contactId, isTyping }) => {
+        if (storeId !== currentStoreId || contactId !== currentContactId) return;
+        
+        let typingIndicator = document.getElementById('typingIndicator');
+        if (!typingIndicator) {
+            typingIndicator = document.createElement('div');
+            typingIndicator.id = 'typingIndicator';
+            typingIndicator.className = 'w-100 px-4 py-2 text-muted';
+            typingIndicator.style.fontSize = '0.8rem';
+            typingIndicator.style.fontStyle = 'italic';
+            typingIndicator.innerHTML = '<i class="fas fa-pen fa-sm me-2 text-primary"></i>🤖 AI sedang menyusun balasan...';
+            
+            const chatPanel = document.getElementById('chatPanel');
+            const replyBar = document.getElementById('replyBar');
+            chatPanel.insertBefore(typingIndicator, replyBar);
+        }
+        
+        typingIndicator.style.display = isTyping ? 'block' : 'none';
+        
+        if (isTyping) {
+            const container = document.getElementById('chatMessages');
+            if (container) container.scrollTop = container.scrollHeight;
+        }
     });
 
     socket.on('statusUpdate', ({ storeId, status }) => {
@@ -1906,16 +2229,6 @@
         qrCache[storeId] = qr;
         if (storeId !== currentStoreId) return;
         updateConnectView('Menunggu Scan QR...');
-    });
-
-    socket.on('statusUpdate', ({ storeId, status }) => {
-        // Update local store cache
-        const s = stores.find(str => str.wa_id === storeId);
-        if (s) s.status = status;
-        
-        if (storeId !== currentStoreId) return;
-        updateConnectView(status);
-        document.getElementById('hdrStatusDot').innerText = status;
     });
 
     socket.on('mediaUpdated', ({ agentId }) => {
@@ -1962,9 +2275,28 @@
         if (container.children.length > 200) container.removeChild(container.firstChild);
     });
 
+    socket.on('storeUpdated', async ({ storeId }) => {
+        // Sinkronkan daftar store dari server saat ada perubahan konfigurasi
+        try {
+            const res = await fetch('/api/stores');
+            stores = await res.json();
+            renderStoreSidebar();
+            // Jika store yang diupdate adalah store aktif, refresh UI konfigurasi
+            if (storeId === currentStoreId) {
+                const store = stores.find(s => s.wa_id === storeId);
+                if (store) {
+                    document.getElementById('selConnectAgent').value = store.agent_id || '';
+                    document.getElementById('botToggle').checked = store.is_bot_active !== false;
+                    currentAgentId = store.agent_id;
+                }
+            }
+        } catch (e) { /* silent */ }
+    });
+
     // ============================================================
     // NAVIGATION
     // ============================================================
+    let _skipPushState = false; // Flag untuk popstate agar tidak double-push
     function switchView(id) {
         document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
         document.querySelectorAll('.nav-btn').forEach(v => v.classList.remove('active'));
@@ -1974,6 +2306,14 @@
         
         if (targetView) targetView.classList.add('active');
         if (targetNav)  targetNav.classList.add('active');
+
+        // URL Hash Routing — update address bar tanpa reload halaman
+        if (!_skipPushState) {
+            const hash = `#/${id}`;
+            if (location.hash !== hash) {
+                history.pushState({ view: id }, '', hash);
+            }
+        }
 
         // Context-aware loading
         if (id === 'agents') loadAgents();
@@ -1985,6 +2325,14 @@
             loadBackups();
         }
     }
+
+    // Browser Back/Forward — navigasi antar view tanpa reload
+    window.addEventListener('popstate', (e) => {
+        const view = e.state?.view || location.hash.replace('#/', '') || 'chat';
+        _skipPushState = true;
+        switchView(view);
+        _skipPushState = false;
+    });
 
     async function loadBackups() {
         try {
@@ -2031,6 +2379,16 @@
     // ============================================================
     // KICKOFF
     // ============================================================
+    // Restore view dari URL hash saat pertama kali load (deep link support)
+    const _initHash = location.hash.replace('#/', '').trim();
+    const _validViews = ['chat', 'agents', 'bot', 'media', 'summaries', 'connect', 'system'];
+    if (_initHash && _validViews.includes(_initHash) && _initHash !== 'chat') {
+        // Tunda agar init() selesai load data terlebih dahulu
+        setTimeout(() => switchView(_initHash), 300);
+    } else if (!location.hash || location.hash === '#/') {
+        history.replaceState({ view: 'chat' }, '', '#/chat');
+    }
+
     init();
 </script>
 </body>

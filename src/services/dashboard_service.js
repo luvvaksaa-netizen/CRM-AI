@@ -1,10 +1,12 @@
 /**
  * @file dashboard_service.js
  * @description Web Dashboard & API Server (Express + Socket.io)
- * Security Phase:
+ * 
+ * KEY FEATURES:
  *  - Session-based authentication (persistent via Sequelize / SQLite)
- *  - Route protection middleware
+ *  - Route protection middleware with rate limiting
  *  - Production-ready session store (no MemoryStore warnings)
+ *  - Real-time CRM dashboard via Socket.io
  */
 
 const express = require('express');
@@ -16,26 +18,65 @@ const multer = require('multer');
 const session = require('express-session');
 const SequelizeStore = require('connect-session-sequelize')(session.Store);
 const rateLimit = require('express-rate-limit');
+const { Op } = require('sequelize');
 const logger = require('../utils/logger');
 const config = require('../config');
 const { UPLOADS_DIR } = config;
 const { Store, ChatMessage, sequelize } = require('../database/index');
 const mediaService = require('./media_service');
+const { normalizeWaChatId } = require('../utils/wa_id');
+const { buildContactIdentity } = require('../utils/contact_identity');
 
 // Kredensial Login (Selalu dari env di production)
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'admin123';
+const ADMIN_USERS = parseAdminUsers();
 
 let io;
 const storeStatuses = {};
 const app = express();
 const server = http.createServer(app);
 
+function parseAdminUsers() {
+  if (!process.env.ADMIN_USERS_JSON) {
+    return [{ user: ADMIN_USER, pass: ADMIN_PASS, role: 'admin' }];
+  }
+
+  try {
+    const users = JSON.parse(process.env.ADMIN_USERS_JSON);
+    if (!Array.isArray(users) || users.length === 0) throw new Error('must be a non-empty array');
+    return users
+      .filter(u => u?.user && u?.pass)
+      .map(u => ({ user: String(u.user), pass: String(u.pass), role: u.role || 'operator' }));
+  } catch (error) {
+    logger.warn(`[Auth] ADMIN_USERS_JSON tidak valid (${error.message}). Fallback ke ADMIN_USER/ADMIN_PASS.`);
+    return [{ user: ADMIN_USER, pass: ADMIN_PASS, role: 'admin' }];
+  }
+}
+
+// ============================================================
+// REQUEST LOGGING (Debug Only — bisa dimatikan di production)
+// ============================================================
+app.use((req, res, next) => {
+  if (!req.url.includes('/assets') && !req.url.includes('.js') && !req.url.includes('.css') && !req.url.includes('/socket.io')) {
+    logger.info(`[HTTP] ${req.method} ${req.url}`);
+  }
+  next();
+});
+
 // 1. SECURITY: Rate Limiter (Prevent Brute Force)
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 Menit
   max: 12, // Maks 12 kali coba per 15 menit
   message: 'Terlalu banyak percobaan login. Silakan coba lagi nanti (15 menit).',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const manualSendLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  message: { success: false, message: 'Terlalu banyak request kirim pesan. Tunggu sebentar lalu coba lagi.' },
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -66,6 +107,7 @@ const sessionStore = new SequelizeStore({ db: sequelize });
 sessionStore.sync(); // Buat tabel session jika belum ada
 
 app.use(express.json());
+
 app.use(session({
   secret: process.env.SESSION_SECRET || 'rekapoin-crm-xyz-secret-2025',
   store: sessionStore,         // ← Simpan di SQLite, bukan RAM
@@ -74,12 +116,12 @@ app.use(session({
   cookie: {
     maxAge: 24 * 60 * 60 * 1000,  // 24 Jam
     httpOnly: true,                // Lindungi dari XSS
-    secure: false                  // Set true jika full HTTPS
+    secure: process.env.NODE_ENV === 'production' // Auto-secure di production HTTPS
   }
 }));
 
 // ============================================================
-// STATIC FILES (Publik — login.html bisa diakses tanpa auth)
+// STATIC FILES (Publik)
 // ============================================================
 app.use('/login.html', express.static(path.join(process.cwd(), 'public', 'login.html')));
 app.use('/assets', express.static(path.join(process.cwd(), 'public', 'assets')));
@@ -88,6 +130,7 @@ app.use('/assets', express.static(path.join(process.cwd(), 'public', 'assets')))
 // AUTH MIDDLEWARE
 // ============================================================
 const authenticate = (req, res, next) => {
+
   if (req.session && req.session.authenticated) return next();
 
   const isApiRequest = req.originalUrl.startsWith('/api');
@@ -97,14 +140,22 @@ const authenticate = (req, res, next) => {
   return res.redirect('/login.html');
 };
 
+const authorize = (...roles) => (req, res, next) => {
+  const role = req.session?.role || 'viewer';
+  if (role === 'admin' || roles.includes(role)) return next();
+  return res.status(403).json({ success: false, message: 'Akses ditolak untuk role ini.' });
+};
+
 // ============================================================
 // AUTH ROUTES (Login & Logout — tidak perlu autentikasi)
 // ============================================================
-app.post('/api/login', (req, res) => {
+app.post('/api/login', loginLimiter, (req, res) => {
   const { user, pass } = req.body;
-  if (user === ADMIN_USER && pass === ADMIN_PASS) {
+  const account = ADMIN_USERS.find(u => u.user === user && u.pass === pass);
+  if (account) {
     req.session.authenticated = true;
-    req.session.user = user;
+    req.session.user = account.user;
+    req.session.role = account.role || 'operator';
     return res.json({ success: true, message: 'Login berhasil!' });
   }
   return res.status(401).json({ success: false, message: 'Username atau password salah.' });
@@ -155,21 +206,6 @@ const upload = multer({
 });
 
 // ============================================================
-// AUTH ROUTES & PROTECTION
-// ============================================================
-
-// API LOGIN (Security: Rate Limited)
-app.post('/api/login', loginLimiter, (req, res) => {
-  const { user, pass } = req.body;
-  if (user === ADMIN_USER && pass === ADMIN_PASS) {
-    req.session.authenticated = true;
-    return res.json({ success: true, message: 'Login berhasil!' });
-  }
-  res.status(401).json({ success: false, message: 'Username atau password salah.' });
-});
-
-// GET LOGOUT
-// ============================================================
 // INIT DASHBOARD
 // ============================================================
 function initDashboard(port = 3000) {
@@ -196,8 +232,14 @@ function initDashboard(port = 3000) {
     } catch (e) {}
   }, 10000); // 10 Detik sekali
 
+
+
   // Proteksi semua /api/* (kecuali /api/login & /api/logout yang sudah di atas)
   app.use('/api', authenticate);
+
+  app.get('/api/session', (req, res) => {
+    res.json({ user: req.session.user, role: req.session.role || 'viewer' });
+  });
 
   // ============================================================
   // AGENT APIs (Multi-Tenant AI Brains)
@@ -215,15 +257,16 @@ function initDashboard(port = 3000) {
   });
 
   // Buat Agent Baru
-  app.post('/api/agents', async (req, res) => {
+  app.post('/api/agents', authorize('admin'), async (req, res) => {
     try {
-      const { name, bot_name, system_prompt, product_knowledge } = req.body;
+      const { name, bot_name, system_prompt, product_knowledge, auto_labels } = req.body;
       const { BotAgent } = require('../database/index');
       const newAgent = await BotAgent.create({
         name: name || 'Agen Baru',
         bot_name: bot_name || 'CS Bot',
         system_prompt: system_prompt || 'Kamu adalah CS yang ramah.',
-        product_knowledge: product_knowledge || ''
+        product_knowledge: product_knowledge || '',
+        auto_labels: auto_labels || ''
       });
       res.json({ success: true, agent: newAgent });
     } catch (e) {
@@ -232,14 +275,42 @@ function initDashboard(port = 3000) {
   });
 
   // Update Agent
-  app.put('/api/agents/:id', async (req, res) => {
+  app.put('/api/agents/:id', authorize('admin'), async (req, res) => {
     try {
-      const { name, bot_name, system_prompt, product_knowledge } = req.body;
+      const { name, bot_name, system_prompt, product_knowledge, auto_labels } = req.body;
       const { BotAgent } = require('../database/index');
       const agent = await BotAgent.findByPk(req.params.id);
       if (!agent) return res.status(404).json({ success: false, message: 'Agent tidak ditemukan' });
-      await agent.update({ name, bot_name, system_prompt, product_knowledge });
+      await agent.update({ name, bot_name, system_prompt, product_knowledge, auto_labels });
       res.json({ success: true, agent });
+    } catch (e) {
+      res.status(500).json({ success: false, message: e.message });
+    }
+  });
+
+  // DELETE: Hapus Agent & Cascade bersihkan Store dan Media (Hardening Phase 1)
+  app.delete('/api/agents/:id', authorize('admin'), async (req, res) => {
+    try {
+      const agentId = req.params.id;
+      const { BotAgent, MediaAsset } = require('../database/index');
+      
+      const agent = await BotAgent.findByPk(agentId);
+      if (!agent) return res.status(404).json({ success: false, message: 'Agent tidak ditemukan' });
+
+      // 1. Unbind semua Store yang menggunakan agen ini
+      await Store.update({ agent_id: null }, { where: { agent_id: agentId } });
+
+      // 2. Hapus semua media (DB + File Fisik)
+      const mediaAssets = await MediaAsset.findAll({ where: { agent_id: agentId } });
+      for (const asset of mediaAssets) {
+        await mediaService.deleteMedia(asset.id, agentId); // Ini juga akan menghapus file fisiknya
+      }
+
+      // 3. Hapus Agen
+      await agent.destroy();
+      
+      logger.success(`[Agent-${agentId}] Agen dan semua datanya berhasil dimusnahkan.`);
+      res.json({ success: true, message: 'Agen berhasil dihapus.' });
     } catch (e) {
       res.status(500).json({ success: false, message: e.message });
     }
@@ -260,7 +331,7 @@ function initDashboard(port = 3000) {
   });
 
   // POST: Tambah Store Baru
-  app.post('/api/stores', async (req, res) => {
+  app.post('/api/stores', authorize('admin'), async (req, res) => {
     try {
       const { name, agent_id } = req.body;
       if (!name?.trim()) return res.status(400).json({ success: false, message: 'Nama toko wajib diisi!' });
@@ -272,47 +343,15 @@ function initDashboard(port = 3000) {
         is_bot_active: true
       });
 
-      // Langsung jalankan mesin WA baru
+      // Launch WWebJS browser instance untuk nomor WA baru
       const whatsappService = require('../whatsapp_service');
       const client = whatsappService.createWhatsAppClient(wa_id);
       whatsappService.setupEventListeners(client, wa_id);
-      client.initialize(); 
+      client.initialize();
 
       res.json({ success: true, store: newStore });
     } catch (e) {
       res.status(500).json({ success: false, message: e.message });
-    }
-  });
-
-  // ============================================================
-  // TAHAP 3: HUMAN OVERRIDE APIs (Bot Pause Control)
-  // ============================================================
-
-  // Cek Status Pause
-  app.get('/api/stores/:id/contacts/:contactId/pause', (req, res) => {
-    try {
-      const { pausedContacts } = require('../events/message_handler');
-      const isPaused = pausedContacts.has(`${req.params.id}_${req.params.contactId}`);
-      res.json({ isPaused });
-    } catch (e) {
-      res.status(500).json({ error: e.message });
-    }
-  });
-
-  // Merubah Status Pause (Toggle)
-  app.post('/api/stores/:id/contacts/:contactId/pause', (req, res) => {
-    try {
-      const { isPaused } = req.body;
-      const { pauseBotForContact, resumeBotForContact } = require('../events/message_handler');
-      
-      if (isPaused) {
-        pauseBotForContact(req.params.id, req.params.contactId);
-      } else {
-        resumeBotForContact(req.params.id, req.params.contactId);
-      }
-      res.json({ success: true, isPaused });
-    } catch (e) {
-      res.status(500).json({ error: e.message });
     }
   });
 
@@ -331,17 +370,18 @@ function initDashboard(port = 3000) {
   });
 
   // DELETE: Hapus Store & Bersihkan Semua Data (Clean Slate)
-  app.delete('/api/stores/:id', async (req, res) => {
+  app.delete('/api/stores/:id', authorize('admin'), async (req, res) => {
     try {
       const wa_id = req.params.id;
       const whatsappService = require('../whatsapp_service');
-      const { ChatMessage } = require('../database/index');
+      const { ChatMessage, ChatSummary } = require('../database/index');
 
       // 1. Matikan dan putuskan sesi fisik WA secara tuntas
       await whatsappService.logoutClient(wa_id);
 
       // 2. Hapus seluruh riwayat chat agen ini agar tidak mencampur data dengan nomor baru
       await ChatMessage.destroy({ where: { store_wa_id: wa_id } });
+      await ChatSummary.destroy({ where: { store_wa_id: wa_id } }); // Phase 1: Clean summary too
 
       // 3. Hapus profil Toko dari Database
       await Store.destroy({ where: { wa_id } });
@@ -354,7 +394,7 @@ function initDashboard(port = 3000) {
   });
 
   // POST: Logout Sesi (Putuskan WA tanpa hapus data)
-  app.post('/api/stores/:id/logout', async (req, res) => {
+  app.post('/api/stores/:id/logout', authorize('admin'), async (req, res) => {
     try {
       const wa_id = req.params.id;
       const whatsappService = require('../whatsapp_service');
@@ -387,7 +427,7 @@ function initDashboard(port = 3000) {
   });
 
   // GET: Download Backup
-  app.get('/api/system/backups/:name', (req, res) => {
+  app.get('/api/system/backups/:name', authorize('admin'), (req, res) => {
     try {
       const filePath = path.join(process.cwd(), 'backups', req.params.name);
       if (!fs.existsSync(filePath)) return res.status(404).send('Not Found');
@@ -396,12 +436,34 @@ function initDashboard(port = 3000) {
   });
 
   // GET: Download Application Log (Production Debugging)
-  app.get('/api/system/logs', (req, res) => {
+  app.get('/api/system/logs', authorize('admin'), (req, res) => {
     try {
       const logPath = path.join(process.cwd(), 'logs', 'app.log');
       if (!fs.existsSync(logPath)) return res.status(404).send('File log tidak ditemukan.');
       res.download(logPath);
     } catch (e) { res.status(500).send(e.message); }
+  });
+
+  app.get('/api/system/wa-js', async (req, res) => {
+    try {
+      const whatsappService = require('../whatsapp_service');
+      const clients = whatsappService.getClients();
+      const stores = [];
+      for (const [storeId, client] of clients) {
+        stores.push({ storeId, ...(await whatsappService.getClientWajsStatus(client)) });
+      }
+      let packageInstalled = false;
+      try {
+        require.resolve('@wppconnect/wa-js');
+        packageInstalled = true;
+      } catch (_) {}
+      res.json({
+        packageInstalled,
+        stores
+      });
+    } catch (e) {
+      res.json({ packageInstalled: false, stores: [], message: e.message });
+    }
   });
   // ============================================================
   // SETTINGS APIs
@@ -419,20 +481,25 @@ function initDashboard(port = 3000) {
   });
 
   // POST: Update Settings Store (Device Binding)
-  app.post('/api/settings/:storeId', async (req, res) => {
+  app.post('/api/settings/:storeId', authorize('admin'), async (req, res) => {
     try {
       const { name, is_bot_active, agent_id } = req.body;
       const store = await Store.findOne({ where: { wa_id: req.params.storeId } });
       if (!store) return res.status(404).json({ success: false, message: 'Store tidak ditemukan.' });
       
-      await store.update({ 
-          name, 
-          is_bot_active: is_bot_active ?? true,
-          agent_id: agent_id ? parseInt(agent_id) : null
-      });
-      res.json({ success: true });
+      const updateData = {};
+      if (name !== undefined) updateData.name = name;
+      if (is_bot_active !== undefined) updateData.is_bot_active = is_bot_active;
+      if (agent_id !== undefined) updateData.agent_id = agent_id ? parseInt(agent_id) : null;
+
+      await store.update(updateData);
+      await store.reload(); // Pastikan data terbaru dari DB
+
+      logger.info(`[Settings] ${req.params.storeId} updated: ${JSON.stringify(updateData)}`);
+      res.json({ success: true, store: store.dataValues });
       if (io) io.emit('storeUpdated', { storeId: req.params.storeId });
     } catch (error) {
+      logger.error(`[Settings] Gagal update ${req.params.storeId}: ${error.message}`);
       res.status(500).json({ success: false, message: error.message });
     }
   });
@@ -444,32 +511,79 @@ function initDashboard(port = 3000) {
   // GET: Chat History (Per Store + Filter per Contact)
   app.get('/api/chat/:storeId', async (req, res) => {
     try {
-      const { contactId } = req.query;
+      const { contactId, before, paginated } = req.query;
+      const limit = Math.min(Math.max(parseInt(req.query.limit || (contactId ? 50 : 100), 10) || 50, 1), 200);
       const where = { store_wa_id: req.params.storeId };
       
       // Jika ada contactId, ambil history spesifik dengan limit lebih besar
       if (contactId) {
           where.contact_id = contactId;
       }
+      if (before) {
+        const beforeDate = new Date(before);
+        if (!Number.isNaN(beforeDate.getTime())) {
+          where.timestamp = { [Op.lt]: beforeDate };
+        }
+      }
 
       let history = await ChatMessage.findAll({
         where,
-        limit: contactId ? 300 : 150, // Per-contact dapat history lebih panjang
+        limit: limit + 1,
         order: [['timestamp', 'DESC']]
       });
-      res.json(history.reverse());
+      const hasMore = history.length > limit;
+      if (hasMore) history = history.slice(0, limit);
+      const items = history.reverse();
+
+      if (paginated === 'true') {
+        return res.json({
+          messages: items,
+          pagination: {
+            limit,
+            hasMore,
+            nextBefore: items[0]?.timestamp || null
+          }
+        });
+      }
+
+      res.json(items);
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
   });
 
+  // POST: Mark Chat as Read
+  app.post('/api/chat/:storeId/:contactId/read', async (req, res) => {
+    try {
+      const { storeId, contactId } = req.params;
+      
+      const [updated] = await ChatMessage.update(
+        { is_read: true },
+        { where: { store_wa_id: storeId, contact_id: contactId, is_read: false, is_from_me: false } }
+      );
+
+      if (updated > 0 && io) {
+        io.emit('chatRead', { storeId, contactId });
+      }
+
+      res.json({ success: true, updated });
+    } catch (e) {
+      logger.error(`[Read] Gagal mark as read ${req.params.contactId}: ${e.message}`);
+      res.status(500).json({ success: false, message: e.message });
+    }
+  });
+
   // POST: Kirim Pesan Manual
-  app.post('/api/send', async (req, res) => {
+  app.post('/api/send', manualSendLimiter, authorize('operator'), async (req, res) => {
     try {
       const { storeId, to, body } = req.body;
       if (!storeId || !to || !body) return res.status(400).json({ success: false, message: 'storeId, to, body wajib diisi.' });
+      const target = normalizeWaChatId(to);
+      if (!target.ok) return res.status(400).json({ success: false, message: target.error });
+      if (String(body).trim().length > 4000) return res.status(400).json({ success: false, message: 'Pesan terlalu panjang (maks 4000 karakter).' });
+
       const whatsappService = require('../whatsapp_service');
-      await whatsappService.sendManualMessage(storeId, to, body);
+      await whatsappService.sendManualMessage(storeId, target.value, String(body).trim());
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -477,10 +591,12 @@ function initDashboard(port = 3000) {
   });
 
   // POST: Kirim Media Manual
-  app.post('/api/send-media', async (req, res) => {
+  app.post('/api/send-media', manualSendLimiter, authorize('operator'), async (req, res) => {
     try {
       const { storeId, to, mediaId } = req.body;
       if (!storeId || !to || !mediaId) return res.status(400).json({ success: false, message: 'Data tidak lengkap.' });
+      const target = normalizeWaChatId(to);
+      if (!target.ok) return res.status(400).json({ success: false, message: target.error });
       
       const { MediaAsset, Store } = require('../database/index');
       const store = await Store.findOne({ where: { wa_id: storeId } });
@@ -490,7 +606,7 @@ function initDashboard(port = 3000) {
       if (!asset) return res.status(404).json({ success: false, message: 'Media tidak ditemukan untuk agen ini.' });
 
       const whatsappService = require('../whatsapp_service');
-      await whatsappService.sendManualMedia(storeId, to, asset);
+      await whatsappService.sendManualMedia(storeId, target.value, asset);
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -500,6 +616,102 @@ function initDashboard(port = 3000) {
   // ============================================================
   // MEDIA APIs — Per-Store + Vision AI + Whisper + Purpose Control
   // ============================================================
+
+  // WA-JS: Minta nomor asli untuk kontak LID (WhatsApp private ID)
+  app.post('/api/stores/:storeId/contacts/:contactId/request-phone', manualSendLimiter, authorize('operator', 'viewer'), async (req, res) => {
+    try {
+      const whatsappService = require('../whatsapp_service');
+      const { storeId, contactId } = req.params;
+      let resolved = null;
+      let resolveError = null;
+
+      try {
+        resolved = await whatsappService.resolveContactPhone(storeId, contactId);
+      } catch (error) {
+        resolveError = error;
+      }
+
+      if (resolved?.phone) {
+        const identity = await updateContactPhoneIdentity(storeId, contactId, resolved);
+        return res.json({ success: true, resolved: true, requested: false, phone: resolved.phone, identity });
+      }
+
+      const result = await whatsappService.requestPhoneNumber(storeId, contactId);
+      res.json({
+        success: true,
+        resolved: false,
+        requested: true,
+        result,
+        message: resolveError ? `Nomor belum ada di cache lokal (${resolveError.message}). Permintaan nomor asli sudah dikirim.` : 'Permintaan nomor asli sudah dikirim.'
+      });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  // WA-JS: Label bisnis WhatsApp (WA Business)
+  app.get('/api/stores/:storeId/labels', authorize('operator'), async (req, res) => {
+    try {
+      const whatsappService = require('../whatsapp_service');
+      const labels = await whatsappService.getLabels(req.params.storeId);
+      res.json({ success: true, labels });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  app.post('/api/stores/:storeId/labels', authorize('operator'), async (req, res) => {
+    try {
+      const { name, color } = req.body;
+      const whatsappService = require('../whatsapp_service');
+      const label = await whatsappService.createLabel(req.params.storeId, name, color);
+      res.json({ success: true, label });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  app.post('/api/stores/:storeId/contacts/:contactId/labels', manualSendLimiter, authorize('operator'), async (req, res) => {
+    try {
+      const { labelId, labelIds, type, operations } = req.body;
+      const labelOps = operations || (Array.isArray(labelIds)
+        ? labelIds.map(id => ({ labelId: id, type: type || 'add' }))
+        : [{ labelId: labelId || labelIds, type: type || 'add' }]);
+
+      const whatsappService = require('../whatsapp_service');
+      const result = await whatsappService.addOrRemoveLabels(req.params.storeId, req.params.contactId, labelOps);
+      res.json({ success: true, result });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  // WA-JS: Reaksi dan forward pesan tersimpan
+  app.post('/api/stores/:storeId/messages/reaction', manualSendLimiter, authorize('operator'), async (req, res) => {
+    try {
+      const { messageId, emoji } = req.body;
+      const whatsappService = require('../whatsapp_service');
+      const result = await whatsappService.sendReaction(req.params.storeId, messageId, emoji);
+      res.json({ success: true, result });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  app.post('/api/stores/:storeId/messages/forward', manualSendLimiter, authorize('operator'), async (req, res) => {
+    try {
+      const { to, messageId, messageIds, displayCaptionText, multicast } = req.body;
+      const ids = messageIds || messageId;
+      const whatsappService = require('../whatsapp_service');
+      const result = await whatsappService.forwardMessages(req.params.storeId, to, ids, {
+        displayCaptionText: Boolean(displayCaptionText),
+        multicast: Boolean(multicast)
+      });
+      res.json({ success: true, result });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
 
   // GET: Semua media milik agen tertentu
   app.get('/api/media/:agentId', async (req, res) => {
@@ -512,7 +724,7 @@ function initDashboard(port = 3000) {
   });
 
   // POST: Upload media baru (semua tipe) + analisis AI otomatis di background
-  app.post('/api/media/:agentId', upload.single('file'), async (req, res) => {
+  app.post('/api/media/:agentId', authorize('operator'), upload.single('file'), async (req, res) => {
     if (!req.file) return res.status(400).json({ success: false, message: 'File tidak ditemukan.' });
 
     const tempPath = req.file.path;
@@ -579,7 +791,7 @@ function initDashboard(port = 3000) {
   });
 
   // PUT: Update seluruh detail informasi media (Label, Description, Purpose, Tags, AI Override) tanpa re-upload
-  app.put('/api/media/:agentId/:id', async (req, res) => {
+  app.put('/api/media/:agentId/:id', authorize('operator'), async (req, res) => {
     try {
       const { purpose, label, description, ai_analysis, trigger_words } = req.body;
       const validPurposes = ['both', 'knowledge_only', 'send_only'];
@@ -596,7 +808,7 @@ function initDashboard(port = 3000) {
   });
 
   // DELETE: Hapus media dengan verifikasi kepemilikan agen
-  app.delete('/api/media/:agentId/:id', async (req, res) => {
+  app.delete('/api/media/:agentId/:id', authorize('operator'), async (req, res) => {
     try {
       await mediaService.deleteMedia(parseInt(req.params.id), req.params.agentId);
       if (io) io.emit('mediaUpdated', { agentId: req.params.agentId });
@@ -604,6 +816,39 @@ function initDashboard(port = 3000) {
     } catch (error) {
       logger.error(`Delete media error: ${error.message}`);
       res.status(400).json({ success: false, message: error.message });
+    }
+  });
+
+  // ============================================================
+  // HUMAN OVERRIDE (Pause/Resume AI per Contact)
+  // ============================================================
+  app.get('/api/stores/:storeId/contacts/:contactId/pause', async (req, res) => {
+    try {
+      const { PausedContact } = require('../database/index');
+      const record = await PausedContact.findOne({
+        where: { store_wa_id: req.params.storeId, contact_id: req.params.contactId }
+      });
+      res.json({ isPaused: !!record });
+    } catch (e) {
+      res.json({ isPaused: false });
+    }
+  });
+
+  app.post('/api/stores/:storeId/contacts/:contactId/pause', authorize('operator'), async (req, res) => {
+    try {
+      const { isPaused } = req.body;
+      const { storeId, contactId } = req.params;
+      const { pauseBotForContact, resumeBotForContact } = require('../events/message_handler');
+
+      if (isPaused) {
+        await pauseBotForContact(storeId, contactId);
+      } else {
+        await resumeBotForContact(storeId, contactId);
+      }
+      res.json({ success: true, isPaused });
+    } catch (e) {
+      logger.error(`[Pause API] ${e.message}`);
+      res.status(500).json({ success: false, message: e.message });
     }
   });
 
@@ -630,10 +875,20 @@ function updateWAStatus(storeId, status) {
 
 async function addToChatHistory(storeId, msg) {
   try {
+    const identity = msg.contactIdentity || buildContactIdentity(msg.from, msg.isMe ? {} : {
+      name: msg.sender_name,
+      number: msg.contact_phone
+    });
     const chatMsg = await ChatMessage.create({
       store_wa_id: storeId,
       contact_id:  msg.from,
-      sender_name: msg.sender_name || msg.from,
+      wa_message_id: msg.wa_message_id || msg.id || null,
+      sender_name: msg.sender_name || (msg.isMe ? 'CS Manual' : identity.displayName),
+      contact_display_name: msg.contact_display_name || identity.displayName,
+      contact_phone: msg.contact_phone || identity.phone || null,
+      contact_lid: msg.contact_lid || identity.lid || null,
+      contact_type: msg.contact_type || identity.type,
+      contact_source: msg.contact_source || identity.source,
       body:        msg.body,
       is_from_me:  msg.isMe || false,
       type:        msg.type || 'chat',
@@ -645,6 +900,59 @@ async function addToChatHistory(storeId, msg) {
   }
 }
 
+async function updateContactPhoneIdentity(storeId, contactId, resolved = {}) {
+  const latestMsg = await ChatMessage.findOne({
+    where: { store_wa_id: storeId, contact_id: contactId },
+    order: [['timestamp', 'DESC']]
+  });
+  const identity = buildContactIdentity(contactId, {
+    name: resolved.contact?.name || resolved.contact?.verifiedName || latestMsg?.contact_display_name || latestMsg?.sender_name,
+    pushname: resolved.contact?.pushname,
+    shortName: resolved.contact?.shortName,
+    phone: resolved.phone
+  });
+
+  await ChatMessage.update({
+    contact_display_name: identity.displayName,
+    contact_phone: resolved.phone,
+    contact_lid: identity.lid || null,
+    contact_type: identity.type,
+    contact_source: resolved.source || identity.source
+  }, {
+    where: { store_wa_id: storeId, contact_id: contactId }
+  });
+  try {
+    const { ChatSummary } = require('../database/index');
+    await ChatSummary.update({ contact_name: identity.displayName }, {
+      where: { store_wa_id: storeId, contact_id: contactId }
+    });
+  } catch (_) {}
+
+  if (io) {
+    io.emit('contactIdentityUpdated', {
+      storeId,
+      contactId,
+      identity: {
+        contact_display_name: identity.displayName,
+        contact_phone: resolved.phone,
+        contact_lid: identity.lid || null,
+        contact_type: identity.type,
+        contact_source: resolved.source || identity.source
+      }
+    });
+  }
+
+  return {
+    ...identity,
+    phone: resolved.phone,
+    phoneWid: resolved.phoneWid || ''
+  };
+}
+
+function emitTypingStatus(storeId, contactId, isTyping) {
+  if (io) io.emit('typingStatus', { storeId, contactId, isTyping });
+}
+
 function emitQRSpec(storeId, qr) {
   if (io) io.emit('qrUpdate', { storeId, qr });
 }
@@ -653,5 +961,6 @@ module.exports = {
   initDashboard,
   updateWAStatus,
   emitQRSpec,
-  addToChatHistory
+  addToChatHistory,
+  emitTypingStatus
 };
