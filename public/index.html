@@ -1831,6 +1831,15 @@
         await loadWhatsAppLabels();
     }
 
+    function handleLabelError(error, defaultMsg) {
+        const errMsg = error.message || '';
+        if (errMsg.toLowerCase().includes('not a business') || errMsg.toLowerCase().includes('business version')) {
+            toast('Fitur Label hanya didukung untuk akun WhatsApp Business. Hubungkan akun WA Business Anda.', 'error');
+        } else {
+            toast(errMsg || defaultMsg, 'error');
+        }
+    }
+
     async function loadWhatsAppLabels() {
         const list = document.getElementById('waLabelList');
         list.innerHTML = '<div class="text-muted p-3">Memuat label...</div>';
@@ -1841,7 +1850,20 @@
             waLabels = data.labels || [];
             renderWhatsAppLabels();
         } catch (e) {
-            list.innerHTML = `<div class="text-danger p-3" style="grid-column:1/-1;">${escapeHtml(e.message || 'Gagal memuat label.')}</div>`;
+            const errMsg = e.message || '';
+            if (errMsg.toLowerCase().includes('not a business') || errMsg.toLowerCase().includes('business version')) {
+                list.innerHTML = `
+                    <div class="text-center p-4 w-100" style="grid-column: 1 / -1;">
+                        <i class="fas fa-exclamation-triangle text-warning mb-3" style="font-size:2.5rem;"></i>
+                        <h6 class="fw-bold text-dark">Akun Personal Terdeteksi</h6>
+                        <p class="text-muted small mx-auto" style="max-width:380px;">
+                            Fitur Label WhatsApp bawaan resmi hanya didukung untuk akun <strong>WhatsApp Business</strong>. Perangkat Anda saat ini terhubung sebagai akun Personal biasa.
+                        </p>
+                    </div>
+                `;
+            } else {
+                list.innerHTML = `<div class="text-danger p-3" style="grid-column:1/-1;">${escapeHtml(errMsg || 'Gagal memuat label.')}</div>`;
+            }
         }
     }
 
@@ -1917,7 +1939,7 @@
             toast(`Label "${name}" dibuat.`, 'success');
             await loadWhatsAppLabels();
         } catch (e) {
-            toast(e.message || 'Gagal membuat label.', 'error');
+            handleLabelError(e, 'Gagal membuat label.');
         }
     }
 
@@ -1935,7 +1957,7 @@
             toast(type === 'remove' ? 'Label dilepas dari chat.' : 'Label ditempel ke chat.', 'success');
             await loadWhatsAppLabels();
         } catch (e) {
-            toast(e.message || 'Gagal mengubah label chat.', 'error');
+            handleLabelError(e, 'Gagal mengubah label chat.');
         }
     }
 
@@ -1954,7 +1976,7 @@
             toast('Label diperbarui.', 'success');
             await loadWhatsAppLabels();
         } catch (e) {
-            toast(e.message || 'Gagal mengedit label.', 'error');
+            handleLabelError(e, 'Gagal mengedit label.');
         }
     }
 
@@ -1967,7 +1989,7 @@
             toast('Label dihapus.', 'success');
             await loadWhatsAppLabels();
         } catch (e) {
-            toast(e.message || 'Gagal menghapus label.', 'error');
+            handleLabelError(e, 'Gagal menghapus label.');
         }
     }
 

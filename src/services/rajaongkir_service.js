@@ -93,16 +93,17 @@ async function getDestinationId(searchKeyword) {
     }
 }
 
-/**
- * Mendapatkan ID asal (Origin) untuk Kediri.
- */
 async function getOriginId() {
-    const cachedId = getCache('origin_id_kediri_v2'); // V2 untuk endpoint baru
+    const originName = config.ORIGIN_NAME || 'Kediri';
+    const cacheKey = `origin_id_${originName.toLowerCase().replace(/\s+/g, '_')}_v3`;
+    const cachedId = getCache(cacheKey);
     if (cachedId) return cachedId;
 
-    const data = await getDestinationId('Kediri');
+    // Jika default Kediri, cari 'Kediri Jawa Timur' agar tidak salah dapat Lombok Barat/Bali
+    const searchKeyword = originName.toLowerCase() === 'kediri' ? 'Kediri Jawa Timur' : originName;
+    const data = await getDestinationId(searchKeyword);
     if (data) {
-        saveCache('origin_id_kediri_v2', data.id);
+        saveCache(cacheKey, data.id);
         return data.id;
     }
     return null;

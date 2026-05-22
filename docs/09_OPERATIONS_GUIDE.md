@@ -141,6 +141,31 @@ pm2 restart wa-ai-cs --cron "0 3 * * 0"  # Restart setiap Minggu jam 3 pagi
 
 ---
 
+### ❌ Bot masih menjawab padahal server dimatikan / dinonaktifkan
+
+**Penyebab 1: Zombie Puppeteer/Chromium di Background**
+Saat server Node.js dihentikan secara paksa (Ctrl+C atau close terminal), proses headless Chromium/Puppeteer yang di-spawn oleh WWebJS tidak selalu mati secara otomatis. Proses ini tetap berjalan di background sistem (Task Manager) dan terus terhubung ke WhatsApp Web melalui WebSocket, sehingga tetap menerima pesan masuk dan membalasnya.
+
+**Penyebab 2: Bot Berjalan Ganda (Development vs Production Server)**
+Jika Anda menggunakan satu akun WhatsApp yang sama di laptop development dan server lokal/production secara bersamaan:
+- Menghidupkan server di laptop dev akan ikut membalas pesan.
+- Jika database SQLite di laptop dev memiliki toggle `is_bot_active` yang masih `true` (ON), ia tetap membalas, walaupun dashboard server lokal sudah dimatikan/dinonaktifkan (karena databasenya berbeda).
+
+**Solusi:**
+1. Matikan semua zombie Chrome/Chromium di laptop/server menggunakan command prompt:
+   - **Windows PowerShell:**
+     ```powershell
+     taskkill /F /IM chrome.exe
+     taskkill /F /IM node.exe
+     ```
+   - **Linux:**
+     ```bash
+     killall chrome chromium-browser node
+     ```
+2. Pastikan hanya ada **satu** server bot yang berjalan untuk satu akun WA. Jangan jalankan `npm start` di laptop dev jika server lokal sedang aktif memproses chat.
+
+---
+
 ### ❌ AI balasan lambat / timeout
 
 **Cek:**

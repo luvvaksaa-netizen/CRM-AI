@@ -250,7 +250,7 @@ Kamu adalah CS yang sangat cerdas. Berikut panduan untuk menangani berbagai situ
                     parameters: {
                         type: "object",
                         properties: {
-                            destinationCity: { type: "string", description: "Nama KOTA atau KABUPATEN tujuan. Jika pelanggan memberikan alamat lengkap (contoh: Desa Patihan, Kecamatan Loceret, Kabupaten Nganjuk), ekstrak HANYA nama Kabupaten/Kota-nya (contoh: 'Nganjuk')." },
+                            destinationCity: { type: "string", description: "Nama KECAMATAN dan KOTA/KABUPATEN tujuan. Jika pelanggan memberikan alamat lengkap (contoh: Desa Patihan, Kecamatan Loceret, Kabupaten Nganjuk), ekstrak format 'Kecamatan, Kabupaten/Kota' (contoh: 'Loceret, Nganjuk') untuk hasil yang presisi." },
                             weightGrams: { type: "integer", description: "Berat paket dalam gram (default 1000)." }
                         },
                         required: ["destinationCity"]
