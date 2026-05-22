@@ -504,11 +504,8 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
         logger.error(`[${storeWaId}] Gagal mengirim balasan AI ke [${contactId}]: ${sendErr.message}`);
     }
 
-    // TAHAP 4: Update Rekap Chat (Summary) secara background (Non-blocking)
+    // TAHAP 4: Update Rekap Chat (Summary) & Jadwalkan Follow-Up secara background (Non-blocking)
     _updateConversationSummary(storeWaId, contactId, senderName);
-
-    // TAHAP 5: Jadwalkan Follow-Up jika belum closing (Non-blocking)
-    _scheduleFollowUpIfNeeded(storeWaId, contactId, senderName, summary);
 
     stopTyping();
 }
@@ -689,6 +686,9 @@ async function _updateConversationSummary(storeWaId, contactId, senderName) {
         }
         
         logger.info(`[${storeWaId}] Rekap Chat [${name}] Berhasil Diperbarui.`);
+
+        // TAHAP 5: Jadwalkan Follow-Up jika belum closing (setelah rekap terupdate)
+        await _scheduleFollowUpIfNeeded(storeWaId, contactId, name, summaryText);
     } catch (e) {
         logger.error(`Gagal update summary: ${e.message}`);
     }
@@ -696,18 +696,20 @@ async function _updateConversationSummary(storeWaId, contactId, senderName) {
 
 /**
  * TAHAP 5: Jadwalkan Follow-Up Otomatis jika customer belum closing.
- * Deteksi status dari ChatSummary. Non-blocking.
+ * Deteksi status dari ChatSummary terbaru.
  */
 async function _scheduleFollowUpIfNeeded(storeWaId, contactId, contactName, currentSummary) {
     try {
         const { scheduleFollowUp } = require('../services/followup_service');
 
         // Jangan jadwalkan follow-up jika summary menunjukkan sudah closing/selesai
+        // Catatan: status 'menunggu transfer' TETAP di-follow-up agar pelanggan segera membayar.
         const summaryLower = (currentSummary || '').toLowerCase();
-        const isClosedConversation = /(status:\s*(closing|selesai|menunggu transfer))/.test(summaryLower);
+        const isClosedConversation = /\bstatus:\s*(closing|selesai)\b/.test(summaryLower);
 
         if (isClosedConversation) {
-            return; // Customer sudah closing, tidak perlu follow-up
+            logger.info(`[FollowUp] Batal menjadwalkan untuk [${contactId}] karena status percakapan sudah closing/selesai.`);
+            return;
         }
 
         await scheduleFollowUp(storeWaId, contactId, contactName, currentSummary);

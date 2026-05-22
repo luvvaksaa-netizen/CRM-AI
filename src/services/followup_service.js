@@ -202,11 +202,28 @@ async function executeFollowUp(followUp) {
     const customerName = followUp.contact_name || 'kak';
     const personalizedCopy = rawCopy.replace(/{name}/g, customerName);
 
-    // 5. Cari media yang sesuai dari katalog Agent
+    // 5. Cari media yang sesuai dari katalog Agent (Cerdas & Multi-Produk Aware)
     const agentId = store.agent_id;
     let mediaToSend = null;
 
     if (agentId && template.media_label_hints.length > 0) {
+        // Ambil summary chat pelanggan untuk mendeteksi preferensi produk (DTF vs UV)
+        let productKeyword = '';
+        try {
+            const summaryRecord = await ChatSummary.findOne({
+                where: { store_wa_id: followUp.store_wa_id, contact_id: followUp.contact_id }
+            });
+            const summaryText = (summaryRecord?.summary || '').toLowerCase();
+
+            if (summaryText.includes('dtf uv') || summaryText.includes('label dtf uv') || summaryText.includes('uv dtf') || summaryText.includes('stiker keras')) {
+                productKeyword = 'uv';
+            } else if (summaryText.includes('dtf') || summaryText.includes('label dtf') || summaryText.includes('bahan setrika')) {
+                productKeyword = 'dtf';
+            }
+        } catch (summaryErr) {
+            logger.warn(`[FollowUp] Gagal membaca preferensi produk untuk [${followUp.contact_id}]: ${summaryErr.message}`);
+        }
+
         const allMedia = await MediaAsset.findAll({
             where: {
                 agent_id: agentId,
@@ -214,19 +231,38 @@ async function executeFollowUp(followUp) {
             }
         });
 
-        // Cari media yang label-nya cocok dengan hints
-        for (const hint of template.media_label_hints) {
-            const match = allMedia.find(m =>
-                m.label && m.label.toLowerCase().includes(hint.toLowerCase()) &&
-                (template.media_type === 'mixed' || m.type === template.media_type)
-            );
-            if (match) {
-                mediaToSend = match;
-                break;
+        // Taktik 1: Cari media yang cocok dengan keyword produk (dtf/uv) DAN hint label-nya
+        if (productKeyword) {
+            for (const hint of template.media_label_hints) {
+                const match = allMedia.find(m => {
+                    const labelLower = (m.label || '').toLowerCase();
+                    return labelLower.includes(hint.toLowerCase()) &&
+                           labelLower.includes(productKeyword) &&
+                           (template.media_type === 'mixed' || m.type === template.media_type);
+                });
+                if (match) {
+                    mediaToSend = match;
+                    break;
+                }
             }
         }
 
-        // Fallback: ambil media pertama yang sesuai tipe
+        // Taktik 2: Fallback ke hint label umum (jika tidak terdeteksi preferensi produk atau file khusus tidak ada)
+        if (!mediaToSend) {
+            for (const hint of template.media_label_hints) {
+                const match = allMedia.find(m => {
+                    const labelLower = (m.label || '').toLowerCase();
+                    return labelLower.includes(hint.toLowerCase()) &&
+                           (template.media_type === 'mixed' || m.type === template.media_type);
+                });
+                if (match) {
+                    mediaToSend = match;
+                    break;
+                }
+            }
+        }
+
+        // Taktik 3: Fallback terakhir ke media pertama sesuai tipe (image/video)
         if (!mediaToSend && template.media_type !== 'mixed') {
             mediaToSend = allMedia.find(m => m.type === template.media_type);
         }
