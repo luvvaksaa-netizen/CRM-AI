@@ -112,6 +112,23 @@ const PausedContact = sequelize.define('PausedContact', {
   paused_by:   { type: DataTypes.STRING, defaultValue: 'manual' } // 'manual' | 'auto'
 });
 
+/**
+ * Model: FollowUp (Sistem Follow-Up Otomatis per Customer)
+ * Menyimpan jadwal dan status follow-up bertahap untuk customer yang belum closing.
+ */
+const FollowUp = sequelize.define('FollowUp', {
+  id:               { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  store_wa_id:      { type: DataTypes.STRING,  allowNull: false },
+  contact_id:       { type: DataTypes.STRING,  allowNull: false },
+  contact_name:     { type: DataTypes.STRING,  defaultValue: '' },
+  stage:            { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 }, // 1-4
+  scheduled_at:     { type: DataTypes.DATE,    allowNull: false },
+  status:           { type: DataTypes.STRING,  defaultValue: 'pending' }, // pending | sent | cancelled | replied
+  last_chat_context:{ type: DataTypes.TEXT,    defaultValue: '' },
+  sent_at:          { type: DataTypes.DATE,    allowNull: true },
+  cancel_reason:    { type: DataTypes.STRING,  allowNull: true }
+});
+
 
 /**
  * Initialize & Sync Database (alter: true = auto-migrate safely)
@@ -263,6 +280,10 @@ async function initDB() {
     await safeAddColumn('ChatMessages', 'is_read', { type: DataTypes.BOOLEAN, defaultValue: false });
     await safeAddColumn('BotAgents', 'auto_labels', { type: DataTypes.TEXT, defaultValue: '' });
 
+    // Follow-Up System
+    await safeAddColumn('FollowUps', 'sent_at', { type: DataTypes.DATE, allowNull: true });
+    await safeAddColumn('FollowUps', 'cancel_reason', { type: DataTypes.STRING, allowNull: true });
+
     // RocketChat Hybrid Mode Columns
     await safeAddColumn('Stores', 'connection_mode', { type: DataTypes.STRING, defaultValue: 'wwebjs' });
     await safeAddColumn('Stores', 'roketchat_token', { type: DataTypes.STRING, allowNull: true });
@@ -288,5 +309,6 @@ module.exports = {
   ChatMessage,
   ChatSummary,
   PausedContact,
+  FollowUp,
   initDB
 };

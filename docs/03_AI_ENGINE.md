@@ -218,3 +218,32 @@ Dikirim sebagai konteks ke AI (AI "melihat" foto)
     ▼
 File sementara DIHAPUS (anti-leak storage)
 ```
+
+---
+
+## Fitur & Peningkatan Lanjutan (Multi-Product AI)
+
+### 1. Memori Terstruktur (Structured Memory)
+Untuk mengatasi masalah bot "lupa" data yang sudah dikirim oleh customer (seperti nama pemesan, jumlah, varian, dan alamat), sistem menggunakan **Key-Value Extraction** terstruktur. 
+- Di akhir setiap percakapan, AI menghasilkan rekap format JSON/Key-Value:
+  ```yaml
+  NAMA PEMESAN: [Nama]
+  JUMLAH ORDER: [Jumlah]
+  VARIAN PRODUK: [Varian]
+  ALAMAT KIRIM: [Alamat Lengkap]
+  STATUS CLOSE: [YA/TIDAK]
+  ```
+- Data terstruktur ini disuntikkan ke prompt berikutnya dengan prioritas tertinggi.
+
+### 2. Aturan Bobot Bawah (Bottom-Weighted Rules)
+OpenAI API cenderung memprioritaskan instruksi yang diletakkan di bagian paling akhir prompt (*recency bias*). Oleh karena itu, semua aturan draconian (seperti "DILARANG menanyakan ulang nama/jumlah/varian/alamat jika sudah ada di memori") diletakkan di **bagian paling bawah prompt** sebelum pesan user dikirim. Hal ini memaksa model untuk mematuhinya secara mutlak.
+
+### 3. Opening Flow Otomatis (Media-Driven)
+Pada interaksi pertama dengan pelanggan baru (di mana belum ada histori percakapan), AI secara otomatis diinstruksikan untuk memanggil tool `kirim_media_katalog` guna mengirimkan:
+- 1 Gambar Varian produk (contoh: catalog DTF/UV)
+- 1 Video Demonstrasi produk
+Ini memastikan alur onboarding pelanggan lebih visual, premium, dan interaktif.
+
+### 4. Dynamic Store Bot Names
+Meskipun menggunakan model Master Agent (otak tunggal) yang sama untuk melayani beberapa produk, nama CS/bot di-render secara dinamis menggunakan placeholder `{BOT_NAME}` yang digantikan dengan nilai `bot_name` dari tabel `Store` masing-masing perangkat.
+

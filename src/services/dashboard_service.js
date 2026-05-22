@@ -248,6 +248,14 @@ const upload = multer({
 function initDashboard(port = 3000) {
   io = new Server(server, { cors: { origin: '*' } });
 
+  // Initialize Follow-Up Scheduler
+  try {
+    const { initFollowUpScheduler } = require('./followup_service');
+    initFollowUpScheduler(io);
+  } catch (err) {
+    logger.error(`[Dashboard] Gagal inisialisasi Follow-Up Scheduler: ${err.message}`);
+  }
+
   // 1. HEALTH MONITOR (Transmit to UI)
   setInterval(() => {
     try {
@@ -403,6 +411,51 @@ function initDashboard(port = 3000) {
       res.json(summaries);
     } catch (e) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============================================================
+  // FOLLOW-UP APIs
+  // ============================================================
+
+  // GET: Get follow-up stats (HARUS SEBELUM /:storeId agar 'stats' tidak dianggap storeId)
+  app.get('/api/followups/stats/:storeId', async (req, res) => {
+    try {
+      const { getFollowUpStats } = require('./followup_service');
+      const stats = await getFollowUpStats(req.params.storeId);
+      res.json(stats);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET: Get all follow-ups for a specific store
+  app.get('/api/followups/:storeId', async (req, res) => {
+    try {
+      const { getFollowUps } = require('./followup_service');
+      const { status, limit } = req.query;
+      const followUps = await getFollowUps(req.params.storeId, {
+        status: status || undefined,
+        limit: limit ? parseInt(limit, 10) : 100
+      });
+      res.json(followUps);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST: Cancel follow-up by ID
+  app.post('/api/followups/cancel/:id', authorize('operator'), async (req, res) => {
+    try {
+      const { cancelFollowUpById } = require('./followup_service');
+      const success = await cancelFollowUpById(req.params.id);
+      if (success) {
+        res.json({ success: true, message: 'Follow-up berhasil dibatalkan.' });
+      } else {
+        res.status(400).json({ success: false, message: 'Follow-up tidak ditemukan atau sudah tidak pending.' });
+      }
+    } catch (e) {
+      res.status(500).json({ success: false, message: e.message });
     }
   });
 

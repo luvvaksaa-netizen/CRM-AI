@@ -262,6 +262,12 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
         });
         _scheduleAutoLabels(message, storeWaId, contactId, identity);
 
+        // Cancel pending follow-ups ketika customer merespons
+        try {
+            const { cancelPendingFollowUps } = require('../services/followup_service');
+            await cancelPendingFollowUps(storeWaId, contactId, 'Customer merespons');
+        } catch (e) { /* Non-critical: follow-up cancel failure */ }
+
         logger.info(`[${storeWaId}] Pesan masuk terdaftar: ${contactId}`);
 
         // ═══════════════════════════════════════════════════════
@@ -500,6 +506,10 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
 
     // TAHAP 4: Update Rekap Chat (Summary) secara background (Non-blocking)
     _updateConversationSummary(storeWaId, contactId, senderName);
+
+    // TAHAP 5: Jadwalkan Follow-Up jika belum closing (Non-blocking)
+    _scheduleFollowUpIfNeeded(storeWaId, contactId, senderName, summary);
+
     stopTyping();
 }
 
@@ -684,6 +694,27 @@ async function _updateConversationSummary(storeWaId, contactId, senderName) {
     }
 }
 
+/**
+ * TAHAP 5: Jadwalkan Follow-Up Otomatis jika customer belum closing.
+ * Deteksi status dari ChatSummary. Non-blocking.
+ */
+async function _scheduleFollowUpIfNeeded(storeWaId, contactId, contactName, currentSummary) {
+    try {
+        const { scheduleFollowUp } = require('../services/followup_service');
+
+        // Jangan jadwalkan follow-up jika summary menunjukkan sudah closing/selesai
+        const summaryLower = (currentSummary || '').toLowerCase();
+        const isClosedConversation = /(status:\s*(closing|selesai|menunggu transfer))/.test(summaryLower);
+
+        if (isClosedConversation) {
+            return; // Customer sudah closing, tidak perlu follow-up
+        }
+
+        await scheduleFollowUp(storeWaId, contactId, contactName, currentSummary);
+    } catch (e) {
+        logger.warn(`[FollowUp] Gagal menjadwalkan: ${e.message}`);
+    }
+}
 
 
 module.exports = { 

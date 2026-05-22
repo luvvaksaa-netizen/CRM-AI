@@ -154,7 +154,10 @@ async function _processAIResponse(userMessage, history = [], store = null, agent
     }
 
     try {
-        const sysPrompt = agent?.system_prompt || store?.system_prompt || 'Anda adalah admin CS yang ramah.';
+        // BOT_NAME: Store override > Agent default (1 Agent, banyak nama CS per-WA)
+        const botName = (store?.bot_name || agent?.bot_name || 'CS Bot').trim();
+        const rawSysPrompt = agent?.system_prompt || store?.system_prompt || 'Anda adalah admin CS yang ramah.';
+        const sysPrompt = rawSysPrompt.replace(/\{BOT_NAME\}/gi, botName);
         const knowledge = agent?.product_knowledge || store?.product_knowledge || 'Kami melayani pembuatan barang berkualitas.';
         const modelName = config.MODEL_NAME || 'gpt-4o-mini';
         const agentId   = agent?.id || null;
@@ -312,11 +315,16 @@ Kamu adalah CS yang sangat cerdas. Berikut panduan untuk menangani berbagai situ
             ? history.slice(0, history.length - 1) 
             : [];
 
+        // Build structured customer data from conversation summary (anti-lupa)
+        const knownDataSection = conversationSummary && conversationSummary !== 'Percakapan baru saja dimulai.'
+            ? `\n--- [⚠️ DATA CUSTOMER YANG SUDAH DIKETAHUI — DILARANG KERAS TANYA LAGI] ---\n${conversationSummary}\nPENTING: Data di atas sudah dikumpulkan dari percakapan sebelumnya. DILARANG KERAS menanyakan ulang data yang statusnya BUKAN "belum". Jika ada data yang sudah ada, LANGSUNG gunakan tanpa bertanya.\n---`
+            : '\n(Pelanggan baru. Mulai dengan opening flow: kirim gambar varian + video produk.)';
+
         // ══════════════════════════════════════════════════════════════════
         // STRATEGI PRIORITAS TERBALIK (BOTTOM-WEIGHTED)
         // Aturan Draconian diletakkan di instruksi sistem terakhir.
         // ══════════════════════════════════════════════════════════════════
-const draconianRules = `
+        const draconianRules = `
 --- [ATURAN MUTLAK & TEKNIS - WAJIB PATUH] ---
 1. STATUS: Ini adalah interaksi ke-${interactionCount}.
 2. DILARANG KERAS: Menulis karakter ![...](...) atau link http/example.com apapun di teks balasan. 
@@ -324,9 +332,9 @@ const draconianRules = `
 4. DILARANG KERAS: Menulis [WAKTU:...] atau tanggal/jam apapun di teks balasan. Gunakan informasi waktu HANYA untuk konteks sapaan.
 5. PENGGUNAAN TOOL ONGKIR: Jika pelanggan sudah memberikan alamat lengkap (terutama Kecamatan dan Kabupaten/Kota), kamu WAJIB memanggil tool 'cek_ongkir_jne'. DILARANG merespons dengan kalimat "Ongkir akan dicek" atau membiarkannya kosong.
 6. ATURAN REKAPITULASI (MEMORY): Saat memberikan Rekap Pesanan, kamu WAJIB menuliskan SEMUA data spesifik secara rinci (misalnya: Tuliskan kelima nama tersebut satu per satu). JANGAN PERNAH meringkas nama menjadi angka (misal "Nama: 5 nama").
-7. LOGIKA MATEMATIKA PESANAN: Pahami kelipatan paket. Jika 1 paket maksimal 4 nama, maka 2 paket = maksimal 8 nama, 3 paket = maksimal 12 nama. Jadi jika pelanggan pesan 2 paket untuk 5 nama, itu SANGAT DIPERBOLEHKAN karena 5 < 8.
-8. Jangan ulangi pertanyaan yang sudah dijawab user di riwayat.
-9. Untuk chat normal, boleh gunakan beberapa baris. Setiap baris akan dikirim sebagai satu bubble WhatsApp.
+7. LOGIKA MATEMATIKA PESANAN: Pahami kelipatan paket. Jika 1 paket maksimal 2 nama, maka 2 paket = maksimal 4 nama, 3 paket = maksimal 6 nama. Jadi jika pelanggan pesan 2 paket untuk 3 nama, itu SANGAT DIPERBOLEHKAN karena 3 < 4.
+8. ⚠️ ANTI-LUPA: JANGAN PERNAH ulangi pertanyaan yang sudah dijawab customer. Lihat DATA CUSTOMER DI BAWAH — jika data sudah terisi, GUNAKAN langsung tanpa bertanya ulang. Customer MARAH jika ditanya ulang.
+9. Untuk chat normal, boleh gunakan beberapa baris. Setiap baris akan dikirim sebagai satu bubble WhatsApp pendek (maksimal 10 kata).
 10. Setiap bubble normal MAKSIMAL 10 kata. Jika perlu lebih dari 10 kata, pecah ke baris berikutnya.
 11. Khusus rekap order, alamat, rekening, ongkir, dan rincian pembayaran: boleh lebih panjang, tetapi harus lengkap dan rapi.
 12. Jika prompt agen berisi FLOW WAJIB/opening/media, ikuti urutannya. Untuk gambar/katalog/varian, gunakan tool "kirim_media_katalog" dengan label media yang paling sesuai.
@@ -511,10 +519,27 @@ async function generateChatSummary(history = []) {
         const response = await openai.chat.completions.create({
             model: config.MODEL_NAME || "gpt-4o-mini",
             messages: [
-                { role: "system", content: "Tugasmu membuat REKAP PEMBAHASAN CHAT untuk dashboard CS. Jangan terlalu umum. Ambil detail yang sudah ada: nama label/teks custom, nama pemesan, varian, jumlah, alamat lengkap, produk, harga, ongkir, total, metode bayar, status COD/transfer, media yang pernah dikirim, pertanyaan terakhir, data yang masih kurang, dan next action. Jika data belum ada tulis 'belum ada', jangan mengarang. Gunakan poin pendek tapi lengkap." },
+                { role: "system", content: `Tugasmu membuat REKAP DATA CUSTOMER dalam format KEY-VALUE yang terstruktur.
+Ekstrak SEMUA informasi yang sudah disebutkan customer.
+Gunakan format PERSIS seperti ini (isi setiap field, tulis "belum" jika belum diketahui):
+
+NAMA CUSTOMER: [nama pemesan atau "belum"]
+PRODUK DIMINATI: [Label DTF / Label DTF UV / belum jelas]
+VARIAN: [varian 1/2/3/4 atau "belum"]
+WARNA: [warna pilihan atau "belum"]
+TEKS LABEL: [nama-nama yang mau dicetak, tulis semua satu per satu, atau "belum"]
+JUMLAH: [jumlah paket atau pcs, atau "belum"]
+DETAIL PER NAMA: [pembagian jumlah per nama, misal "Andi 25, Budi 25" atau "belum"]
+ALAMAT: [alamat lengkap atau "belum"]
+HARGA: [sudah disebutkan / belum]
+ONGKIR: [sudah dicek / belum]
+METODE BAYAR: [Transfer / COD / belum]
+STATUS: [opening / gali kebutuhan / negosiasi / menunggu alamat / menunggu rekap / menunggu transfer / closing / selesai]
+NEXT ACTION: [apa langkah selanjutnya yang perlu dilakukan bot]
+CATATAN: [info penting lain, keluhan, permintaan khusus]` },
                 { role: "user", content: `Berikut riwayat chatnya, buatkan rekapannya:\n\n${historyText}` }
             ],
-            temperature: 0.3 // Lebih stabil untuk rekap
+            temperature: 0.2 // Lebih stabil dan konsisten untuk format terstruktur
         }, { timeout: AI_CHAT_TIMEOUT_MS });
 
         return response.choices[0].message.content.trim();

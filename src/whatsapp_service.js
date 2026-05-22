@@ -271,6 +271,69 @@ async function sendManualMedia(storeWaId, to, mediaAsset) {
     }
 }
 
+/**
+ * Mengirim follow-up otomatis ke customer TANPA pause AI.
+ * Berbeda dengan sendManualMessage yang otomatis pause bot.
+ */
+async function sendFollowUpMessage(storeWaId, contactId, body, mediaAsset = null) {
+    const client = getActiveClient(storeWaId);
+    const targetChatId = assertWaChatId(contactId);
+
+    try {
+        // Kirim media jika ada
+        if (mediaAsset) {
+            const { MessageMedia } = require('whatsapp-web.js');
+            const { UPLOADS_DIR } = require('./config');
+            const mediaPath = path.join(UPLOADS_DIR, mediaAsset.filename);
+
+            if (fs.existsSync(mediaPath)) {
+                const mediaMsg = MessageMedia.fromFilePath(mediaPath);
+                // Kirim media dengan caption (atau body sebagai caption)
+                await client.sendMessage(targetChatId, mediaMsg, { caption: body || '' });
+
+                const fileExt = mediaPath.split('.').pop().toLowerCase();
+                const tag = ['mp4', 'mov', 'avi'].includes(fileExt) ? '[VIDEO' : '[MEDIA';
+                const logBody = `${tag}:/uploads/${mediaAsset.filename}] ${body || mediaAsset.label}`;
+
+                await dashboard.addToChatHistory(storeWaId, {
+                    from: targetChatId,
+                    body: logBody,
+                    isMe: true,
+                    sender_name: 'Follow-Up Bot'
+                });
+            } else {
+                logger.warn(`[FollowUp] Media tidak ditemukan: ${mediaAsset.filename}. Kirim teks saja.`);
+                // Fallback: kirim teks saja jika media tidak ada
+                if (body) {
+                    await client.sendMessage(targetChatId, body);
+                    await dashboard.addToChatHistory(storeWaId, {
+                        from: targetChatId,
+                        body: body,
+                        isMe: true,
+                        sender_name: 'Follow-Up Bot'
+                    });
+                }
+            }
+        } else if (body) {
+            // Kirim teks saja (tanpa media)
+            await client.sendMessage(targetChatId, body);
+            await dashboard.addToChatHistory(storeWaId, {
+                from: targetChatId,
+                body: body,
+                isMe: true,
+                sender_name: 'Follow-Up Bot'
+            });
+        }
+
+        // TIDAK pause AI — follow-up harus tetap bisa ditangani oleh AI
+        logger.info(`[${storeWaId}] Follow-Up dikirim ke [${targetChatId}].`);
+        return true;
+    } catch (error) {
+        logger.error(`[${storeWaId}] Gagal kirim follow-up: ${error.message}`);
+        throw error;
+    }
+}
+
 async function requestPhoneNumber(storeWaId, contactId) {
     return wajsBridge.requestPhoneNumber(getActiveClient(storeWaId), contactId, storeWaId);
 }
@@ -398,6 +461,7 @@ module.exports = {
     getClients,
     sendManualMessage,
     sendManualMedia,
+    sendFollowUpMessage,
     requestPhoneNumber,
     resolveContactPhone,
     getLabels,

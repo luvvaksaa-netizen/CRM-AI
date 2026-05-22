@@ -469,6 +469,10 @@
     <div class="nav-btn" onclick="switchView('summaries')" id="nav-summaries">
         <i class="fas fa-list-check"></i><span>Rekap</span>
     </div>
+    <!-- AUTOMATED FOLLOW-UPS -->
+    <div class="nav-btn" onclick="switchView('followups')" id="nav-followups">
+        <i class="fas fa-history"></i><span>Follow Up</span>
+    </div>
     <div class="nav-btn" onclick="switchView('connect')" id="nav-connect">
         <i class="fas fa-qrcode"></i><span>Koneksi</span>
     </div>
@@ -551,6 +555,57 @@
                 <div class="empty-state m-auto p-5 text-center w-100" style="grid-column: 1 / -1;">
                     <i class="fas fa-spinner fa-spin fa-2x mb-3 text-primary"></i>
                     <p>Memuat data rekapan...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- === VIEW: AUTOMATED FOLLOW-UPS (NEW) === -->
+    <div class="view" id="view-followups">
+        <div class="page-view">
+            <div class="page-header d-flex justify-content-between align-items-center">
+                <div>
+                    <h2 class="fw-bold m-0" style="color:var(--clr-primary)"><i class="fas fa-history me-3"></i>Follow-Up Otomatis</h2>
+                    <p class="text-muted m-0">Antrian pesan re-engagement berkala untuk customer yang belum closing</p>
+                </div>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-primary" onclick="loadFollowUps()"><i class="fas fa-sync-alt me-2"></i>Segarkan Antrian</button>
+                </div>
+            </div>
+
+            <!-- Stats Bar -->
+            <div class="row g-4 mb-4">
+                <div class="col-md-3">
+                    <div class="card-glass p-3 text-center">
+                        <small class="text-muted text-uppercase fw-bold" style="font-size:0.7rem;letter-spacing:1px">Menunggu Kirim</small>
+                        <h4 class="fw-bold text-warning m-0 mt-1" id="fu-stat-pending">0</h4>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card-glass p-3 text-center">
+                        <small class="text-muted text-uppercase fw-bold" style="font-size:0.7rem;letter-spacing:1px">Berhasil Dikirim</small>
+                        <h4 class="fw-bold text-success m-0 mt-1" id="fu-stat-sent">0</h4>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card-glass p-3 text-center">
+                        <small class="text-muted text-uppercase fw-bold" style="font-size:0.7rem;letter-spacing:1px">Dibalas/Selesai</small>
+                        <h4 class="fw-bold text-primary m-0 mt-1" id="fu-stat-replied">0</h4>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card-glass p-3 text-center">
+                        <small class="text-muted text-uppercase fw-bold" style="font-size:0.7rem;letter-spacing:1px">Total Antrian</small>
+                        <h4 class="fw-bold text-secondary m-0 mt-1" id="fu-stat-total">0</h4>
+                    </div>
+                </div>
+            </div>
+
+            <!-- List Grid -->
+            <div id="followupList" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap:20px;">
+                <div class="empty-state m-auto p-5 text-center w-100" style="grid-column: 1 / -1;">
+                    <i class="fas fa-spinner fa-spin fa-2x mb-3 text-primary"></i>
+                    <p>Memuat antrian follow-up...</p>
                 </div>
             </div>
         </div>
@@ -2519,6 +2574,12 @@
         if (container.children.length > 200) container.removeChild(container.firstChild);
     });
 
+    socket.on('followUpUpdated', ({ storeWaId }) => {
+        if (storeWaId === currentStoreId && document.getElementById('view-followups').classList.contains('active')) {
+            loadFollowUps();
+        }
+    });
+
     socket.on('storeUpdated', async ({ storeId }) => {
         // Sinkronkan daftar store dari server saat ada perubahan konfigurasi
         try {
@@ -2563,10 +2624,94 @@
         if (id === 'agents') loadAgents();
         if (id === 'media')  loadMedia();
         if (id === 'summaries') loadSummaries();
+        if (id === 'followups') loadFollowUps();
         if (id === 'system') {
             const el = document.getElementById('sysLogContainer');
             if (el) el.scrollTop = el.scrollHeight;
             loadBackups();
+        }
+    }
+
+    // Follow-Up JS functions
+    async function loadFollowUps() {
+        if (!currentStoreId) return;
+        const grid = document.getElementById('followupList');
+        try {
+            // Load Stats
+            const statsRes = await fetch(`/api/followups/stats/${currentStoreId}`);
+            const stats = await statsRes.json();
+            document.getElementById('fu-stat-pending').innerText = stats.pending || 0;
+            document.getElementById('fu-stat-sent').innerText = stats.sent || 0;
+            document.getElementById('fu-stat-replied').innerText = stats.replied || 0;
+            document.getElementById('fu-stat-total').innerText = stats.total || 0;
+
+            // Load List
+            const listRes = await fetch(`/api/followups/${currentStoreId}`);
+            const list = await listRes.json();
+            renderFollowUps(list);
+        } catch (e) {
+            grid.innerHTML = '<div class="text-danger p-4">Gagal memuat antrian follow-up.</div>';
+        }
+    }
+
+    function renderFollowUps(list) {
+        const grid = document.getElementById('followupList');
+        if (!list || list.length === 0) {
+            grid.innerHTML = '<div class="empty-state m-auto p-5 text-center w-100" style="grid-column: 1 / -1;"><i class="fas fa-history"></i><p>Tidak ada antrian follow-up saat ini.</p></div>';
+            return;
+        }
+        grid.innerHTML = '';
+        list.forEach(item => {
+            const div = document.createElement('div');
+            div.className = 'card-glass p-4 d-flex flex-column justify-content-between';
+            div.style = 'border-left: 4px solid ' + (item.status === 'pending' ? 'var(--clr-warning)' : (item.status === 'sent' ? 'var(--clr-accent)' : 'var(--clr-primary)')) + ' !important;';
+            
+            const stageBadge = `<span class="badge bg-light text-dark border px-2 py-1" style="font-size:0.7rem">Tahap ${item.stage}</span>`;
+            const statusBadge = `<span class="badge ${item.status === 'pending' ? 'bg-warning' : (item.status === 'sent' ? 'bg-success' : 'bg-secondary')} text-white px-2 py-1" style="font-size:0.7rem">${item.status.toUpperCase()}</span>`;
+            
+            const actionBtn = item.status === 'pending'
+                ? `<button class="btn btn-sm btn-outline-danger mt-3 align-self-end" onclick="cancelFollowUp(${item.id})"><i class="fas fa-times me-1"></i>Batalkan FU</button>`
+                : '';
+
+            const timeStr = item.status === 'pending'
+                ? `Jadwal: ${moment(item.scheduled_at).format('DD MMM, HH:mm')} (${moment(item.scheduled_at).fromNow()})`
+                : (item.status === 'sent'
+                    ? `Terkirim: ${moment(item.sent_at || item.updatedAt).format('DD MMM, HH:mm')}`
+                    : `Batal: ${item.cancel_reason || 'Customer merespons'}`);
+
+            div.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h6 class="fw-bold m-0 text-primary">${escapeHtml(item.contact_name || 'Customer')}</h6>
+                    <div class="d-flex gap-1">${stageBadge}${statusBadge}</div>
+                </div>
+                <div style="font-size:0.8rem; color:#64748b;" class="mb-2">
+                    <i class="fas fa-user-circle me-1"></i> ID: ${escapeHtml(item.contact_id)}
+                </div>
+                <div style="font-size:0.85rem; color:#475569; background:#f8fafc; padding:10px; border-radius:8px; border: 1px solid #e2e8f0; white-space:pre-wrap;" class="mb-2">
+                    <strong>Konteks Terakhir:</strong>\n${escapeHtml(item.last_chat_context || 'Belum ada konteks')}
+                </div>
+                <div class="text-muted" style="font-size:0.75rem;">
+                    <i class="fas fa-clock me-1"></i> ${timeStr}
+                </div>
+                ${actionBtn}
+            `;
+            grid.appendChild(div);
+        });
+    }
+
+    async function cancelFollowUp(id) {
+        if (!confirm('Apakah Anda yakin ingin membatalkan follow-up ini?')) return;
+        try {
+            const res = await fetch(`/api/followups/cancel/${id}`, { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+                toast('Follow-up berhasil dibatalkan!', 'success');
+                loadFollowUps();
+            } else {
+                toast(data.message, 'error');
+            }
+        } catch (e) {
+            toast('Gagal membatalkan follow-up.', 'error');
         }
     }
 
@@ -2625,7 +2770,7 @@
     // ============================================================
     // Restore view dari URL hash saat pertama kali load (deep link support)
     const _initHash = location.hash.replace('#/', '').trim();
-    const _validViews = ['chat', 'agents', 'bot', 'media', 'summaries', 'connect', 'system'];
+    const _validViews = ['chat', 'agents', 'bot', 'media', 'summaries', 'followups', 'connect', 'system'];
     if (_initHash && _validViews.includes(_initHash) && _initHash !== 'chat') {
         // Tunda agar init() selesai load data terlebih dahulu
         setTimeout(() => switchView(_initHash), 300);
