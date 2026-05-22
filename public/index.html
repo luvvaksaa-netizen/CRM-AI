@@ -501,6 +501,9 @@
                     </div>
                 </div>
                 <div class="d-flex align-items-center gap-3">
+                    <button id="btnManageLabels" class="btn btn-light border d-none" style="width:38px;height:38px;border-radius:10px;color:var(--slate-600);" onclick="openLabelManager()" title="Kelola label WhatsApp customer">
+                        <i class="fas fa-tags"></i>
+                    </button>
                     <button id="btnRequestPhone" class="btn btn-light border d-none" style="width:38px;height:38px;border-radius:10px;color:var(--slate-600);" onclick="requestCustomerPhone()" title="Minta nomor asli customer dari kontak privat WhatsApp">
                         <i class="fas fa-phone"></i>
                     </button>
@@ -537,7 +540,10 @@
                     <h2 class="fw-bold m-0" style="color:var(--clr-primary)"><i class="fas fa-list-check me-3"></i>Rekap Pembahasan</h2>
                     <p class="text-muted m-0">Ringkasan pembicaraan & status deal per pelanggan</p>
                 </div>
-                <button class="btn btn-primary" onclick="loadSummaries()"><i class="fas fa-sync-alt me-2"></i>Segarkan Rekap</button>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-light border" onclick="openLabelManager()"><i class="fas fa-tags me-2"></i>Kelola Label</button>
+                    <button class="btn btn-primary" onclick="loadSummaries()"><i class="fas fa-sync-alt me-2"></i>Segarkan Rekap</button>
+                </div>
             </div>
 
             <div id="summaryGrid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap:20px;">
@@ -818,6 +824,39 @@
     </div>
 </div>
 
+<!-- Modal: Label WhatsApp -->
+<div class="modal fade" id="modalLabelManager" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div>
+                    <h5 class="fw-bold m-0"><i class="fas fa-tags me-2 text-primary"></i>Label WhatsApp</h5>
+                    <small class="text-muted" id="labelManagerSubtitle">Kelola label akun dan tempelkan ke chat aktif.</small>
+                </div>
+                <button class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-3 mb-4">
+                    <div class="col-md-7">
+                        <label class="form-label">Nama Label Baru</label>
+                        <input type="text" class="form-ctrl" id="newWaLabelName" placeholder="Contoh: Hot Lead, Menunggu Transfer">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label">Warna</label>
+                        <input type="text" class="form-ctrl" id="newWaLabelColor" placeholder="#ffd429">
+                    </div>
+                    <div class="col-md-2 d-flex align-items-end">
+                        <button class="btn-primary-custom w-100 px-2" onclick="createWhatsAppLabel()"><i class="fas fa-plus"></i></button>
+                    </div>
+                </div>
+                <div id="waLabelList" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;">
+                    <div class="text-muted p-3">Memuat label...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Modal: Edit Media (NEW) -->
 <div class="modal fade" id="modalEditMedia" tabindex="-1">
     <div class="modal-dialog modal-dialog-centered modal-lg">
@@ -961,6 +1000,7 @@
     const statusCache = {}; // Cache status per store_wa_id
     let selectedFile = null;
     let selectedPurpose = 'both';
+    let waLabels = [];
 
     // ============================================================
     // INIT
@@ -1070,6 +1110,7 @@
         document.getElementById('hdrStatusDot').innerText = status;
         document.getElementById('hdrName').innerText = 'Pilih Pelanggan';
         document.getElementById('hdrSub').innerText = 'Pilih kontak dari daftar kiri';
+        document.getElementById('btnManageLabels').classList.add('d-none');
         document.getElementById('btnRequestPhone').classList.add('d-none');
         document.getElementById('chatBotToggleContainer').classList.add('d-none');
         
@@ -1499,7 +1540,7 @@
             if (!name || name.includes('@')) continue;
             if (isGeneratedDisplayName(name, id)) continue;
             if (parsed.domain === 'lid' && /^\+?\d[\d\s-]+$/.test(name)) continue;
-            if (meta.contact_phone && isPlaceholderContactName(name)) continue;
+            if (isPlaceholderContactName(name)) continue;
             return name;
         }
         if (meta.contact_phone) return formatPhoneDigits(meta.contact_phone);
@@ -1533,7 +1574,22 @@
             ...(messages || []),
             ...(window.activeChatMessages || [])
         ].filter(m => m.contact_id === contactId);
-        return all.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0] || {};
+        const sorted = all.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        const latest = sorted[0] || {};
+        const stable = sorted.find(m => {
+            const display = getContactDisplayName(contactId, '', m);
+            return m.contact_phone || (display && !isPlaceholderContactName(display));
+        }) || {};
+        return {
+            ...latest,
+            contact_display_name: isPlaceholderContactName(latest.contact_display_name)
+                ? (stable.contact_display_name || stable.sender_name || latest.contact_display_name)
+                : (latest.contact_display_name || stable.contact_display_name),
+            contact_phone: latest.contact_phone || stable.contact_phone,
+            contact_lid: latest.contact_lid || stable.contact_lid,
+            contact_type: latest.contact_type || stable.contact_type,
+            contact_source: latest.contact_source || stable.contact_source
+        };
     }
 
     function updateLocalContactIdentity(contactId, identity = {}) {
@@ -1664,6 +1720,7 @@
         document.getElementById('hdrName').innerText   = displayName;
         document.getElementById('hdrAvatar').innerHTML = `<i class="fas fa-user"></i>`;
         document.getElementById('hdrSub').innerText    = getContactSubtitle(c, meta);
+        document.getElementById('btnManageLabels').classList.remove('d-none');
         document.getElementById('btnRequestPhone').classList.toggle('d-none', !isLidContact(c));
         
         // Tampilkan & Cek status Human Override
@@ -1759,6 +1816,158 @@
             }
         } catch (e) {
             toast(e.message || 'Gagal meminta nomor customer.', 'error');
+        }
+    }
+
+    async function openLabelManager() {
+        if (!currentStoreId) {
+            toast('Pilih perangkat WhatsApp dulu.', 'error');
+            return;
+        }
+        const subtitle = document.getElementById('labelManagerSubtitle');
+        const activeName = currentContactId ? getContactDisplayName(currentContactId, '', getLatestContactMeta(currentContactId)) : '';
+        subtitle.innerText = activeName ? `Label akun dan chat aktif: ${activeName}` : 'Label akun WhatsApp Business untuk perangkat aktif.';
+        new bootstrap.Modal(document.getElementById('modalLabelManager')).show();
+        await loadWhatsAppLabels();
+    }
+
+    async function loadWhatsAppLabels() {
+        const list = document.getElementById('waLabelList');
+        list.innerHTML = '<div class="text-muted p-3">Memuat label...</div>';
+        try {
+            const res = await fetch(`/api/stores/${currentStoreId}/labels`);
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.message || 'WA-JS label belum siap.');
+            waLabels = data.labels || [];
+            renderWhatsAppLabels();
+        } catch (e) {
+            list.innerHTML = `<div class="text-danger p-3" style="grid-column:1/-1;">${escapeHtml(e.message || 'Gagal memuat label.')}</div>`;
+        }
+    }
+
+    function renderWhatsAppLabels() {
+        const list = document.getElementById('waLabelList');
+        if (!waLabels.length) {
+            list.innerHTML = '<div class="empty-state p-4" style="grid-column:1/-1;"><i class="fas fa-tags"></i><p>Belum ada label WhatsApp.</p></div>';
+            return;
+        }
+
+        list.innerHTML = '';
+        waLabels.forEach(label => {
+            const card = document.createElement('div');
+            card.className = 'border rounded-3 p-3 bg-light';
+            const color = label.hexColor || label.color || '#cbd5e1';
+            card.innerHTML = `
+                <div class="d-flex align-items-center justify-content-between gap-2 mb-3">
+                    <div class="d-flex align-items-center gap-2" style="min-width:0;">
+                        <span style="width:14px;height:14px;border-radius:50%;background:${escapeHtml(color)};display:inline-block;border:1px solid rgba(0,0,0,0.08);"></span>
+                        <strong style="font-size:0.88rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(label.name || 'Tanpa Nama')}</strong>
+                    </div>
+                    <small class="text-muted">${label.count || 0}</small>
+                </div>
+                <div class="d-flex gap-2 flex-wrap"></div>
+            `;
+            const actions = card.querySelector('.d-flex.gap-2.flex-wrap');
+
+            const addBtn = document.createElement('button');
+            addBtn.className = 'btn btn-sm btn-primary';
+            addBtn.innerHTML = '<i class="fas fa-plus me-1"></i>Tempel';
+            addBtn.disabled = !currentContactId;
+            addBtn.onclick = () => applyWhatsAppLabel(label.id, 'add');
+            actions.appendChild(addBtn);
+
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'btn btn-sm btn-outline-secondary';
+            removeBtn.innerHTML = '<i class="fas fa-minus me-1"></i>Lepas';
+            removeBtn.disabled = !currentContactId;
+            removeBtn.onclick = () => applyWhatsAppLabel(label.id, 'remove');
+            actions.appendChild(removeBtn);
+
+            const editBtn = document.createElement('button');
+            editBtn.className = 'btn btn-sm btn-outline-primary';
+            editBtn.innerHTML = '<i class="fas fa-pen"></i>';
+            editBtn.onclick = () => editWhatsAppLabel(label);
+            actions.appendChild(editBtn);
+
+            const delBtn = document.createElement('button');
+            delBtn.className = 'btn btn-sm btn-outline-danger';
+            delBtn.innerHTML = '<i class="fas fa-trash"></i>';
+            delBtn.onclick = () => deleteWhatsAppLabel(label);
+            actions.appendChild(delBtn);
+
+            list.appendChild(card);
+        });
+    }
+
+    async function createWhatsAppLabel() {
+        const name = document.getElementById('newWaLabelName').value.trim();
+        const color = document.getElementById('newWaLabelColor').value.trim();
+        if (!name) return toast('Nama label wajib diisi.', 'error');
+
+        try {
+            const res = await fetch(`/api/stores/${currentStoreId}/labels`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, color })
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.message || 'Gagal membuat label.');
+            document.getElementById('newWaLabelName').value = '';
+            document.getElementById('newWaLabelColor').value = '';
+            toast(`Label "${name}" dibuat.`, 'success');
+            await loadWhatsAppLabels();
+        } catch (e) {
+            toast(e.message || 'Gagal membuat label.', 'error');
+        }
+    }
+
+    async function applyWhatsAppLabel(labelId, type) {
+        if (!currentStoreId || !currentContactId) return toast('Pilih chat dulu.', 'error');
+        try {
+            const contactPath = encodeURIComponent(currentContactId);
+            const res = await fetch(`/api/stores/${currentStoreId}/contacts/${contactPath}/labels`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ labelId, type })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.success) throw new Error(data.message || 'Gagal mengubah label chat.');
+            toast(type === 'remove' ? 'Label dilepas dari chat.' : 'Label ditempel ke chat.', 'success');
+            await loadWhatsAppLabels();
+        } catch (e) {
+            toast(e.message || 'Gagal mengubah label chat.', 'error');
+        }
+    }
+
+    async function editWhatsAppLabel(label) {
+        const name = prompt('Nama label baru:', label.name || '');
+        if (name === null) return;
+        const color = prompt('Warna label (opsional, contoh #ffd429):', label.hexColor || '');
+        try {
+            const res = await fetch(`/api/stores/${currentStoreId}/labels/${encodeURIComponent(label.id)}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name.trim(), color: (color || '').trim() })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.success) throw new Error(data.message || 'Gagal mengedit label.');
+            toast('Label diperbarui.', 'success');
+            await loadWhatsAppLabels();
+        } catch (e) {
+            toast(e.message || 'Gagal mengedit label.', 'error');
+        }
+    }
+
+    async function deleteWhatsAppLabel(label) {
+        if (!confirm(`Hapus label "${label.name}" dari WhatsApp?`)) return;
+        try {
+            const res = await fetch(`/api/stores/${currentStoreId}/labels/${encodeURIComponent(label.id)}`, { method: 'DELETE' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.success) throw new Error(data.message || 'Gagal menghapus label.');
+            toast('Label dihapus.', 'success');
+            await loadWhatsAppLabels();
+        } catch (e) {
+            toast(e.message || 'Gagal menghapus label.', 'error');
         }
     }
 

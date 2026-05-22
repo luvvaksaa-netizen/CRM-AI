@@ -223,6 +223,7 @@ async function markIsComposing(client, chatId, duration = 6000, storeWaId = 'def
 
 async function safeMarkIsComposing(client, chatId, duration, storeWaId = 'default') {
   try {
+    if (!client?.__wajsReady && !await hasReadyWajs(client)) return false;
     await markIsComposing(client, chatId, duration, storeWaId);
     return true;
   } catch (_) {
@@ -242,6 +243,7 @@ async function markIsRead(client, chatId, storeWaId = 'default') {
 
 async function safeMarkIsRead(client, chatId, storeWaId = 'default') {
   try {
+    if (!client?.__wajsReady && !await hasReadyWajs(client)) return false;
     await markIsRead(client, chatId, storeWaId);
     return true;
   } catch (_) {
@@ -292,6 +294,51 @@ async function createLabel(client, name, color, storeWaId = 'default') {
   }, {
     labelName: cleanName,
     labelColor: typeof color === 'number' ? color : (String(color || '').trim() || undefined)
+  });
+}
+
+async function editLabel(client, labelId, updates = {}, storeWaId = 'default') {
+  const cleanId = String(labelId || '').trim();
+  if (!cleanId) throw new Error('labelId wajib diisi.');
+
+  const page = await getReadyPage(client, storeWaId);
+  return page.evaluate(async ({ id, labelName, labelColor }) => {
+    if (!window.WPP?.labels?.editLabel) {
+      throw new Error('WPP.labels.editLabel tidak tersedia.');
+    }
+    const options = {};
+    if (labelName) options.name = labelName;
+    if (labelColor !== undefined && labelColor !== null && labelColor !== '') {
+      options.labelColor = labelColor;
+    }
+    return window.WPP.labels.editLabel(id, options);
+  }, {
+    id: cleanId,
+    labelName: String(updates.name || '').trim() || undefined,
+    labelColor: typeof updates.color === 'number' ? updates.color : (String(updates.color || '').trim() || undefined)
+  });
+}
+
+async function deleteLabel(client, labelId, storeWaId = 'default') {
+  const cleanId = String(labelId || '').trim();
+  if (!cleanId) throw new Error('labelId wajib diisi.');
+
+  const page = await getReadyPage(client, storeWaId);
+  return page.evaluate((id) => {
+    if (!window.WPP?.labels?.deleteLabel) {
+      throw new Error('WPP.labels.deleteLabel tidak tersedia.');
+    }
+    return window.WPP.labels.deleteLabel(id);
+  }, cleanId);
+}
+
+async function getLabelColorPalette(client, storeWaId = 'default') {
+  const page = await getReadyPage(client, storeWaId);
+  return page.evaluate(() => {
+    if (!window.WPP?.labels?.getLabelColorPalette) {
+      throw new Error('WPP.labels.getLabelColorPalette tidak tersedia.');
+    }
+    return window.WPP.labels.getLabelColorPalette();
   });
 }
 
@@ -379,6 +426,9 @@ module.exports = {
   markIsRead,
   getLabels,
   createLabel,
+  editLabel,
+  deleteLabel,
+  getLabelColorPalette,
   addOrRemoveLabels,
   ensureLabel,
   addLabelByName,

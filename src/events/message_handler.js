@@ -3,7 +3,7 @@
  * @description Core Message Engine — Production-Grade Refactored.
  *
  * KEY UPGRADES:
- *  - Smart Message Debouncer: Menunggu 3.5 detik sebelum proses AI,
+ *  - Smart Message Debouncer: Menunggu sebentar sebelum proses AI,
  *    menggabungkan semua pesan beruntun menjadi 1 request (Anti-Spam)
  *  - Media Download Timeout: Mencegah hang jika pelanggan hapus pesan
  *  - Graceful Error Recovery: Tidak pernah crash, selalu log
@@ -11,7 +11,7 @@
  */
 
 const logger = require('../utils/logger');
-const { getAIResponse, calculateTypingDelay, RESPONSE_TYPE } = require('../ai_service');
+const { getAIResponse, calculateTypingDelay, prepareOutboundBubbles, RESPONSE_TYPE } = require('../ai_service');
 const { Store, ChatMessage } = require('../database/index');
 const { analyzeImage } = require('../services/vision_service');
 const { safeSendReactionToMessage, safeAddLabelByName, resolvePhoneForChatId, safeMarkIsRead } = require('../services/wajs_bridge');
@@ -83,13 +83,18 @@ async function resumeBotForContact(storeWaId, contactId) {
 // SMART MESSAGE DEBOUNCER (Anti-Spam / Anti-Brutal AI)
 //
 // Mekanisme:
-//  1. Pelanggan kirim "Halo"       → Timer 3.5 detik dimulai
-//  2. Pelanggan kirim "Mau tanya"  → Timer di-reset (3.5 detik lagi)
-//  3. Pelanggan kirim "Harganya?"  → Timer di-reset (3.5 detik lagi)
-//  4. 3.5 detik berlalu tanpa pesan baru → Semua digabung: "Halo\nMau tanya\nHarganya?"
+//  1. Pelanggan kirim "Halo"       → Timer singkat dimulai
+//  2. Pelanggan kirim "Mau tanya"  → Timer di-reset
+//  3. Pelanggan kirim "Harganya?"  → Timer di-reset
+//  4. Timer berlalu tanpa pesan baru → Semua digabung: "Halo\nMau tanya\nHarganya?"
 //  5. AI memproses 1 kali saja → 1 balasan koheren.
 // ══════════════════════════════════════════════════════════════════
-const DEBOUNCE_MS = 3500; // 3.5 detik — sweet spot antara responsif dan anti-spam
+const DEBOUNCE_MS = Number(process.env.AI_REPLY_DEBOUNCE_MS || 1400); // Responsif, tetap menahan chat beruntun singkat
+const ACTIVE_REPLY_WAIT_MS = Number(process.env.AI_ACTIVE_REPLY_WAIT_MS || 600);
+const THINKING_DELAY_MIN_MS = Number(process.env.AI_THINKING_DELAY_MIN_MS || 80);
+const THINKING_DELAY_JITTER_MS = Number(process.env.AI_THINKING_DELAY_JITTER_MS || 220);
+const BETWEEN_BUBBLE_DELAY_MS = Number(process.env.AI_BETWEEN_BUBBLE_DELAY_MS || 350);
+const MEDIA_STABILITY_DELAY_MS = Number(process.env.WA_MEDIA_STABILITY_DELAY_MS || 450);
 const debounceTimers = new Map();      // Key: 'storeWaId_contactId' → timeoutId
 const pendingMessages = new Map();     // Key: 'storeWaId_contactId' → { messages: [], mediaContexts: [], tempPaths: [], senderName, message (last) }
 
@@ -339,7 +344,7 @@ async function _processAIReply(storeWaId, contactId, batch) {
     const replyKey = `${storeWaId}_${contactId}`;
     while (activeAIReplies.has(replyKey)) {
         logger.info(`[${storeWaId}] AI reply untuk [${contactId}] masih berjalan. Menahan batch baru agar tidak spam.`);
-        await new Promise(resolve => setTimeout(resolve, 1200));
+        await new Promise(resolve => setTimeout(resolve, ACTIVE_REPLY_WAIT_MS));
     }
 
     activeAIReplies.add(replyKey);
@@ -433,8 +438,8 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
     // Gabungkan konteks autopilot ke body pesan agar AI tahu
     const finalBodyForAI = combinedBody + autopilotContext;
 
-    // 4. Jeda Berpikir (Natural Feel)
-    await new Promise(r => setTimeout(r, Math.floor(Math.random() * 700) + 500));
+    // 4. Jeda berpikir singkat agar respons tetap terasa natural tanpa membuat customer menunggu lama.
+    await new Promise(r => setTimeout(r, Math.floor(Math.random() * THINKING_DELAY_JITTER_MS) + THINKING_DELAY_MIN_MS));
 
     // 5. Status Mengetik
     await _markTyping(chat, storeWaId, contactId, lastMessage.client);
@@ -446,8 +451,11 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
     // SAFETY NET: Pastikan selalu ada konten untuk membalas, mencegah error WWebJS "Message cannot be empty"
     const fallbackContent = aiResult.content || "Mohon maaf, saya sedang kesulitan memproses pesan Anda. Bisa diulangi pertanyaannya Kak?";
 
+    const outboundBubbles = prepareOutboundBubbles(fallbackContent);
+    const primaryTextForDelay = outboundBubbles[0] || fallbackContent;
+
     // 7. Jeda Mengetik (Natural Feel)
-    const typingDelay = calculateTypingDelay(fallbackContent);
+    const typingDelay = calculateTypingDelay(primaryTextForDelay);
     await new Promise(r => setTimeout(r, typingDelay));
 
     // 8. Eksekusi Tool Khusus Non-Pesan (misal: Auto-Label)
@@ -457,7 +465,7 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
                 try {
                     const args = JSON.parse(tc.function.arguments);
                     const { safeAddLabelByName } = require('../services/wajs_bridge');
-                    await safeAddLabelByName(lastMessage.client, contactId, storeWaId, args.label_name);
+                    await safeAddLabelByName(lastMessage.client, contactId, args.label_name, undefined, storeWaId);
                     logger.success(`[${storeWaId}] AI otomatis melabeli '${args.label_name}' untuk [${contactId}]`);
                 } catch (e) {
                     logger.warn(`[${storeWaId}] AI gagal menambah label: ${e.message}`);
@@ -480,14 +488,10 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
             }
 
             if (aiResult.content) {
-                await _markTyping(chat, storeWaId, contactId, lastMessage.client);
-                await lastMessage.reply(aiResult.content);
-                await _logBotReply(storeWaId, contactId, aiResult.content, agent.bot_name);
+                await _sendTextBubbles(lastMessage, chat, storeWaId, contactId, outboundBubbles, agent.bot_name);
             }
         } else {
-            await _markTyping(chat, storeWaId, contactId, lastMessage.client);
-            await lastMessage.reply(fallbackContent);
-            await _logBotReply(storeWaId, contactId, fallbackContent, agent.bot_name);
+            await _sendTextBubbles(lastMessage, chat, storeWaId, contactId, outboundBubbles, agent.bot_name);
         }
         logger.success(`[${storeWaId}] Sesi [${contactId}] — Dibalas via AI (${messages.length} pesan digabung).`);
     } catch (sendErr) {
@@ -495,7 +499,7 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
     }
 
     // TAHAP 4: Update Rekap Chat (Summary) secara background (Non-blocking)
-    _updateConversationSummary(storeWaId, contactId, senderName, history); 
+    _updateConversationSummary(storeWaId, contactId, senderName);
     stopTyping();
 }
 
@@ -554,6 +558,32 @@ async function _downloadMediaWithTimeout(message, timeoutMs = 20000) {
 }
 
 /**
+ * Mengirim balasan teks sebagai beberapa bubble pendek jika AI memisahkan baris.
+ */
+async function _sendTextBubbles(message, chat, storeWaId, contactId, bubbles, botName) {
+    const list = (Array.isArray(bubbles) ? bubbles : [bubbles])
+        .map(item => String(item || '').trim())
+        .filter(Boolean);
+
+    const safeList = list.length > 0 ? list : ['Mohon maaf kak, bisa diulangi sebentar?'];
+
+    for (let i = 0; i < safeList.length; i++) {
+        const bubble = safeList[i];
+        await _markTyping(chat, storeWaId, contactId, message.client);
+        if (i > 0) {
+            await new Promise(r => setTimeout(r, BETWEEN_BUBBLE_DELAY_MS));
+        }
+
+        if (i === 0 || typeof chat?.sendMessage !== 'function') {
+            await message.reply(bubble);
+        } else {
+            await chat.sendMessage(bubble);
+        }
+        await _logBotReply(storeWaId, contactId, bubble, botName);
+    }
+}
+
+/**
  * Mengirimkan file media (foto/video) ke chat WhatsApp.
  */
 async function _sendMediaToChat(message, mediaAsset, caption, storeWaId, contactId, agent) {
@@ -563,8 +593,8 @@ async function _sendMediaToChat(message, mediaAsset, caption, storeWaId, contact
     try {
         if (!fs.existsSync(mediaPath)) throw new Error(`File tidak ditemukan: ${mediaAsset.filename}`);
 
-        // Berikan delay kecil untuk stabilitas pengiriman media di headless browser
-        await new Promise(r => setTimeout(r, 1000));
+        // Berikan delay kecil untuk stabilitas pengiriman media di headless browser.
+        await new Promise(r => setTimeout(r, MEDIA_STABILITY_DELAY_MS));
 
         const mediaMsg = MessageMedia.fromFilePath(mediaPath);
         await message.reply(mediaMsg, undefined, { caption: caption || "" });
@@ -612,13 +642,25 @@ function _cleanupTempFile(tempPath, storeWaId) {
 /**
  * TAHAP 4: Background Summary Updater dengan Nama Real
  */
-async function _updateConversationSummary(storeWaId, contactId, senderName, history) {
+async function _updateConversationSummary(storeWaId, contactId, senderName) {
     try {
         const { ChatSummary } = require('../database/index');
         const { generateChatSummary } = require('../ai_service');
         
+        const latestHistory = await ChatMessage.findAll({
+            where: { contact_id: contactId, store_wa_id: storeWaId },
+            limit: 50,
+            order: [['timestamp', 'DESC']]
+        });
+        const history = latestHistory.map(h => h.get({ plain: true })).reverse();
         const summaryText = await generateChatSummary(history);
-        const name = senderName || buildContactIdentity(contactId).displayName || formatWaNumber(contactId);
+        const latestIdentity = [...history].reverse().find(item => item.contact_display_name || item.sender_name) || {};
+        const stableName = [
+            latestIdentity.contact_display_name,
+            latestIdentity.sender_name,
+            senderName
+        ].map(v => String(v || '').trim()).find(v => v && !/^Kontak WA #\d+$/.test(v) && v !== 'Kontak WA Privat' && v !== 'Kontak WhatsApp');
+        const name = stableName || buildContactIdentity(contactId, { phone: latestIdentity.contact_phone }).displayName || formatWaNumber(contactId);
 
         const [summary, created] = await ChatSummary.findOrCreate({
             where: { store_wa_id: storeWaId, contact_id: contactId },

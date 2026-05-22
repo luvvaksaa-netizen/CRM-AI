@@ -275,6 +275,16 @@ pm2 save
 - Jika WA-JS aktif dan akun mendukung label WhatsApp Business, sistem mencoba memberi label `AI Lead Baru` pada customer masuk.
 - Untuk kontak `@lid`, sistem juga mencoba memberi label `Kontak LID`.
 - Jika akun tidak mendukung label, bot tetap berjalan normal dan hanya menulis warning di log.
+- Tombol label di header chat dan halaman Rekap membuka pengelola label WhatsApp.
+- Dari pengelola label, operator bisa membuat, mengedit, menghapus, menempelkan, dan melepas label pada chat aktif.
+- Daftar `Label Otomatis` pada AI Agent dipakai AI untuk memilih label via WA-JS saat konteks chat relevan.
+
+### Respons Lebih Cepat & Bubble Pendek
+- Debounce balasan default dipercepat menjadi `AI_REPLY_DEBOUNCE_MS=1400`.
+- Typing simulation dipangkas agar chat pendek tidak terasa menunggu lama.
+- Jika AI menulis beberapa baris, tiap baris dikirim sebagai bubble WhatsApp terpisah.
+- Chat normal dijaga maksimal 10 kata per bubble; rekap order/payment tetap boleh panjang agar data lengkap.
+- Brand/domain valid seperti `slaludiskon.com` tidak lagi dibersihkan oleh sanitizer.
 
 ### Troubleshooting Tambahan
 
@@ -290,6 +300,9 @@ pm2 save
 | POST | `/api/stores/:s/contacts/:c/request-phone` | Minta nomor asli kontak `@lid` via WA-JS |
 | GET | `/api/stores/:s/labels` | List label WA Business |
 | POST | `/api/stores/:s/labels` | Buat label WA Business |
+| GET | `/api/stores/:s/labels/palette` | List palet warna label WA Business |
+| PUT | `/api/stores/:s/labels/:labelId` | Edit label WA Business |
+| DELETE | `/api/stores/:s/labels/:labelId` | Hapus label WA Business |
 | POST | `/api/stores/:s/contacts/:c/labels` | Tambah/hapus label pada chat |
 | POST | `/api/stores/:s/messages/reaction` | Kirim reaksi emoji by message id |
 | POST | `/api/stores/:s/messages/forward` | Forward pesan by message id |
@@ -307,4 +320,3 @@ pm2 save
 - **Deep Link** — Anda bisa langsung buka URL di atas untuk masuk ke halaman tertentu.
 - **Toggle Auto-Reply AI** di halaman Koneksi sekarang **benar-benar tersimpan** ke database. Refresh halaman tidak akan mereset toggle.
 - Jika save gagal (misalnya koneksi terputus), UI akan otomatis **revert ke data server** terakhir untuk mencegah ketidakkonsistenan.
-

@@ -25,7 +25,7 @@ const { UPLOADS_DIR } = config;
 const { Store, ChatMessage, sequelize } = require('../database/index');
 const mediaService = require('./media_service');
 const { normalizeWaChatId } = require('../utils/wa_id');
-const { buildContactIdentity } = require('../utils/contact_identity');
+const { buildContactIdentity, formatPhoneNumber } = require('../utils/contact_identity');
 
 // Kredensial Login (Selalu dari env di production)
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
@@ -37,6 +37,42 @@ const storeStatuses = {};
 const app = express();
 app.set('trust proxy', 1); // Wajib untuk Cloudflare / Nginx proxy
 const server = http.createServer(app);
+
+function isPlaceholderContactName(name) {
+  const value = String(name || '').trim();
+  return /^Kontak WA #\d+$/.test(value) || value === 'Kontak WA Privat' || value === 'Kontak WhatsApp';
+}
+
+function firstStableDisplayName(...values) {
+  for (const value of values) {
+    const name = String(value || '').trim();
+    if (!name || name.includes('@')) continue;
+    if (isPlaceholderContactName(name)) continue;
+    return name;
+  }
+  return '';
+}
+
+function mergeStableContactIdentity(contactId, msg, identity, latestMsg) {
+  const latest = latestMsg?.get ? latestMsg.get({ plain: true }) : (latestMsg || {});
+  const stablePhone = msg.contact_phone || identity.phone || latest.contact_phone || null;
+  const phoneDisplay = stablePhone ? formatPhoneNumber(stablePhone) : '';
+  const stableDisplayName = firstStableDisplayName(
+    msg.contact_display_name,
+    identity.displayName,
+    latest.contact_display_name,
+    latest.sender_name,
+    phoneDisplay
+  ) || identity.displayName || latest.contact_display_name || latest.sender_name || phoneDisplay || 'Kontak WhatsApp';
+
+  return {
+    displayName: stableDisplayName,
+    phone: stablePhone,
+    lid: msg.contact_lid || identity.lid || latest.contact_lid || null,
+    type: msg.contact_type || identity.type || latest.contact_type,
+    source: msg.contact_source || identity.source || latest.contact_source
+  };
+}
 
 function parseAdminUsers() {
   if (!process.env.ADMIN_USERS_JSON) {
@@ -672,6 +708,37 @@ function initDashboard(port = 3000) {
     }
   });
 
+  app.get('/api/stores/:storeId/labels/palette', authorize('operator'), async (req, res) => {
+    try {
+      const whatsappService = require('../whatsapp_service');
+      const colors = await whatsappService.getLabelColorPalette(req.params.storeId);
+      res.json({ success: true, colors });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  app.put('/api/stores/:storeId/labels/:labelId', authorize('operator'), async (req, res) => {
+    try {
+      const { name, color } = req.body;
+      const whatsappService = require('../whatsapp_service');
+      const label = await whatsappService.editLabel(req.params.storeId, req.params.labelId, { name, color });
+      res.json({ success: true, label });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
+  app.delete('/api/stores/:storeId/labels/:labelId', authorize('operator'), async (req, res) => {
+    try {
+      const whatsappService = require('../whatsapp_service');
+      const result = await whatsappService.deleteLabel(req.params.storeId, req.params.labelId);
+      res.json({ success: true, result });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+
   app.post('/api/stores/:storeId/contacts/:contactId/labels', manualSendLimiter, authorize('operator'), async (req, res) => {
     try {
       const { labelId, labelIds, type, operations } = req.body;
@@ -890,16 +957,28 @@ async function addToChatHistory(storeId, msg) {
       name: msg.sender_name,
       number: msg.contact_phone
     });
+    const recentIdentityRows = await ChatMessage.findAll({
+      where: { store_wa_id: storeId, contact_id: msg.from },
+      limit: 20,
+      order: [['timestamp', 'DESC']]
+    });
+    const stableHistoryMsg = recentIdentityRows.find(row => {
+      const item = row.get({ plain: true });
+      return item.contact_phone || firstStableDisplayName(item.contact_display_name, item.sender_name);
+    }) || recentIdentityRows[0];
+    const stableIdentity = mergeStableContactIdentity(msg.from, msg, identity, stableHistoryMsg);
     const chatMsg = await ChatMessage.create({
       store_wa_id: storeId,
       contact_id:  msg.from,
       wa_message_id: msg.wa_message_id || msg.id || null,
-      sender_name: msg.sender_name || (msg.isMe ? 'CS Manual' : identity.displayName),
-      contact_display_name: msg.contact_display_name || identity.displayName,
-      contact_phone: msg.contact_phone || identity.phone || null,
-      contact_lid: msg.contact_lid || identity.lid || null,
-      contact_type: msg.contact_type || identity.type,
-      contact_source: msg.contact_source || identity.source,
+      sender_name: msg.isMe
+        ? (msg.sender_name || 'CS Manual')
+        : (firstStableDisplayName(msg.sender_name, stableIdentity.displayName) || stableIdentity.displayName),
+      contact_display_name: stableIdentity.displayName,
+      contact_phone: stableIdentity.phone || null,
+      contact_lid: stableIdentity.lid || null,
+      contact_type: stableIdentity.type,
+      contact_source: stableIdentity.source,
       body:        msg.body,
       is_from_me:  msg.isMe || false,
       type:        msg.type || 'chat',

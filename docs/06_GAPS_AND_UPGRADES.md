@@ -89,6 +89,8 @@ Jika `addToChatHistory()` gagal (DB error), pesan masuk tetap tidak tercatat tan
 
 > Update 2026-05-20: item #4, #8, #16, #7, dan #9 sudah selesai pada hardening terbaru. Gap tambahan dari real UI test juga sudah fixed: kontak `@lid` tidak lagi tampil sebagai nomor palsu, broadcast/newsletter/group chat diabaikan dari CRM, dan WA-JS bridge menambahkan request phone, label, reaction by id, serta forward message.
 
+> Update 2026-05-22: response latency diturunkan lewat debounce/typing yang lebih pendek dan WA-JS typing fallback yang tidak menunggu reinjection. Sanitizer diperbaiki agar brand domain valid tidak hilang. Identitas kontak LID tidak lagi regresi ke `Kontak WA #xxxxxx` jika sebelumnya sudah ada nomor/nama yang lebih stabil. Auto-label AI dari `BotAgent.auto_labels` dan label manager dashboard sudah ditambahkan.
+
 | # | Issue | Prioritas | Status |
 |---|-------|-----------|--------|
 | 1 | Double `module.exports` | ✅ | **FIXED** |

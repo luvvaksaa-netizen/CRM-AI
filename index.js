@@ -34,7 +34,8 @@ async function startBot() {
     performBackup(); // Snapshot saat startup
 
     // 2. Inisialisasi Web Dashboard
-    dashboard.initDashboard(3000);
+    const PORT = Number(process.env.PORT || 3001);
+    dashboard.initDashboard(PORT);
 
     // 3. Inisialisasi Akun WA (Multi-Session Sequential Launch)
     try {

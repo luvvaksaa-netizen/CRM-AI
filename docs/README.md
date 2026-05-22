@@ -109,3 +109,12 @@ Fitur WA-JS yang sudah dibuka:
 - Endpoint request phone bisa dipakai role `viewer` untuk enrichment nomor, sementara kirim pesan/media tetap dibatasi `operator`/`admin`.
 - Manual reply/media sekarang menerima chat id `@lid` yang sudah ada, sehingga operator tetap bisa membalas percakapan LID.
 - Auto-label WA-JS mencoba memberi label `AI Lead Baru` dan `Kontak LID` tanpa memblokir pipeline chat.
+
+## Response & Labeling Update 2026-05-22
+
+- Debounce dan typing simulation dipercepat supaya balasan pendek terasa lebih natural.
+- Output AI sekarang bisa dikirim sebagai beberapa bubble pendek; chat normal mengikuti batas 10 kata per bubble, sedangkan rekap/order tetap lengkap.
+- Sanitizer tidak lagi menghapus brand/domain valid seperti `slaludiskon.com`.
+- Identitas kontak tidak lagi turun dari nomor/nama nyata ke placeholder `Kontak WA #xxxxxx` ketika pesan LID terbaru belum membawa nomor asli.
+- Label WA-JS diperluas menjadi label manager di dashboard: list, create, edit, delete, apply, remove.
+- AI auto-label dari konfigurasi `BotAgent.auto_labels` diperbaiki agar benar-benar dieksekusi via WA-JS dan tetap non-blocking.

@@ -27,6 +27,68 @@ const RESPONSE_TYPE = {
     MEDIA: 'media'
 };
 
+const AI_CHAT_TIMEOUT_MS = Number(process.env.OPENAI_CHAT_TIMEOUT_MS || 25000);
+const NORMAL_BUBBLE_MAX_WORDS = Number(process.env.AI_MAX_BUBBLE_WORDS || 10);
+
+function parseAutoLabels(value = '') {
+    return String(value || '')
+        .split(',')
+        .map(label => label.trim())
+        .filter(Boolean)
+        .filter((label, index, list) => list.findIndex(x => x.toLowerCase() === label.toLowerCase()) === index);
+}
+
+function countWords(text = '') {
+    return (String(text).trim().match(/\S+/g) || []).length;
+}
+
+function isStructuredReply(text = '') {
+    return /(\*Nama\*|\*Alamat\*|\*Pesanan\*|\*Harga\*|\*Ongkir\*|\*total\*|rekening|rekap|detail pemesanan|transfer|cod)/i.test(String(text || ''));
+}
+
+function splitLongBubble(text, maxWords = NORMAL_BUBBLE_MAX_WORDS) {
+    const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+    if (words.length <= maxWords) return [String(text || '').trim()].filter(Boolean);
+
+    const chunks = [];
+    for (let i = 0; i < words.length; i += maxWords) {
+        chunks.push(words.slice(i, i + maxWords).join(' '));
+    }
+    return chunks;
+}
+
+function prepareOutboundBubbles(text, maxWords = NORMAL_BUBBLE_MAX_WORDS) {
+    const clean = sanitizeTextOutput(text);
+    if (!clean) return [];
+
+    // Rekap/order/payment perlu tetap utuh supaya data transaksi tidak hilang.
+    if (isStructuredReply(clean)) return [clean];
+
+    const parts = clean
+        .split(/\n+/)
+        .map(part => part.trim())
+        .filter(Boolean);
+
+    const bubbles = [];
+    for (const part of parts.length ? parts : [clean]) {
+        if (countWords(part) <= maxWords) {
+            bubbles.push(part);
+            continue;
+        }
+
+        const sentences = part
+            .split(/(?<=[.!?])\s+/)
+            .map(sentence => sentence.trim())
+            .filter(Boolean);
+
+        for (const sentence of sentences.length ? sentences : [part]) {
+            bubbles.push(...splitLongBubble(sentence, maxWords));
+        }
+    }
+
+    return bubbles;
+}
+
 // ══════════════════════════════════════════════════════════════════
 // FAULT-TOLERANT CONCURRENCY LIMITER (Deadlock-Proof)
 // Membatasi AI ke 3 proses serentak. Slot PASTI dibebaskan via finally().
@@ -96,6 +158,7 @@ async function _processAIResponse(userMessage, history = [], store = null, agent
         const knowledge = agent?.product_knowledge || store?.product_knowledge || 'Kami melayani pembuatan barang berkualitas.';
         const modelName = config.MODEL_NAME || 'gpt-4o-mini';
         const agentId   = agent?.id || null;
+        const configuredLabels = parseAutoLabels(agent?.auto_labels);
 
         // ── KNOWLEDGE MEDIA: Media yang jadi pengetahuan AI ──────────────────
         const knowledgeMedia = agentId ? await getKnowledgeMedia(agentId) : [];
@@ -117,6 +180,10 @@ async function _processAIResponse(userMessage, history = [], store = null, agent
                 `- ID: ${m.id} | Label: "${m.label || 'Tanpa Label'}" | Tipe: ${m.type} ${m.description ? '| Desc: ' + m.description : ''}`
               ).join('\n')
             : '(Tidak ada media yang bisa dikirim)';
+
+        const labelSection = configuredLabels.length > 0
+            ? configuredLabels.map(label => `- ${label}`).join('\n')
+            : '(Belum ada label otomatis yang dikonfigurasi untuk agen ini)';
 
         // ── TIMESTAMP AWARENESS (untuk AI, bukan untuk teks balasan) ─────────
         const nowStr = moment().format('dddd, DD MMMM YYYY HH:mm');
@@ -149,6 +216,9 @@ KATALOG MEDIA YANG BISA KAMU KIRIM:
 ═══════════════════════════════════════════
 PENTING: Gunakan tool "kirim_media_katalog" untuk mengirim media. Kamu HANYA tahu ID-nya. 
 ${catalogSection}
+
+LABEL OTOMATIS YANG BOLEH DIPAKAI:
+${labelSection}
 
 ═══════════════════════════════════════════
 REKAP PEMBAHASAN SEBELUMNYA (Long-Term Memory):
@@ -205,22 +275,29 @@ Kamu adalah CS yang sangat cerdas. Berikut panduan untuk menangani berbagai situ
                         required: ["media_ids"]
                     }
                 }
-            },
-            {
+            }
+        ];
+
+        if (configuredLabels.length > 0) {
+            tools.push({
                 type: "function",
                 function: {
                     name: "tambahkan_label_chat",
-                    description: "Menambahkan label khusus ke kontak WhatsApp pelanggan (misal: 'Hot Lead', 'Komplain', 'Menunggu Pembayaran'). Gunakan HANYA label yang tersedia dari konfigurasi.",
+                    description: "Menambahkan label khusus ke kontak WhatsApp pelanggan. Gunakan HANYA label yang tersedia dari konfigurasi agen.",
                     parameters: {
                         type: "object",
                         properties: {
-                            label_name: { type: "string", description: "Nama label yang ingin ditambahkan." }
+                            label_name: {
+                                type: "string",
+                                enum: configuredLabels,
+                                description: "Nama label persis dari daftar label otomatis agen."
+                            }
                         },
                         required: ["label_name"]
                     }
                 }
-            }
-        ];
+            });
+        }
 
         // ══════════════════════════════════════════════════════════════════
         // BUILD MESSAGES — FIX TIMESTAMP HALLUCINATION
@@ -249,7 +326,11 @@ const draconianRules = `
 6. ATURAN REKAPITULASI (MEMORY): Saat memberikan Rekap Pesanan, kamu WAJIB menuliskan SEMUA data spesifik secara rinci (misalnya: Tuliskan kelima nama tersebut satu per satu). JANGAN PERNAH meringkas nama menjadi angka (misal "Nama: 5 nama").
 7. LOGIKA MATEMATIKA PESANAN: Pahami kelipatan paket. Jika 1 paket maksimal 4 nama, maka 2 paket = maksimal 8 nama, 3 paket = maksimal 12 nama. Jadi jika pelanggan pesan 2 paket untuk 5 nama, itu SANGAT DIPERBOLEHKAN karena 5 < 8.
 8. Jangan ulangi pertanyaan yang sudah dijawab user di riwayat.
-9. Balas dengan SATU pesan yang lengkap dan koheren. JANGAN memecah menjadi beberapa balasan terpisah.
+9. Untuk chat normal, boleh gunakan beberapa baris. Setiap baris akan dikirim sebagai satu bubble WhatsApp.
+10. Setiap bubble normal MAKSIMAL 10 kata. Jika perlu lebih dari 10 kata, pecah ke baris berikutnya.
+11. Khusus rekap order, alamat, rekening, ongkir, dan rincian pembayaran: boleh lebih panjang, tetapi harus lengkap dan rapi.
+12. Jika prompt agen berisi FLOW WAJIB/opening/media, ikuti urutannya. Untuk gambar/katalog/varian, gunakan tool "kirim_media_katalog" dengan label media yang paling sesuai.
+13. Jika prompt agen melarang jawab harga terlalu cepat, jangan jawab harga sebelum syarat interaksi pada prompt terpenuhi.
 
 --- [KETERANGAN PENTING: KEPRIBADIAN & ATURAN UTAMA] ---
 ${sysPrompt}
@@ -287,10 +368,11 @@ ${sysPrompt}
             messages,
             tools,
             tool_choice: "auto",
-            temperature: 0.7,
-        }, { timeout: 30000 });
+            temperature: 0.55,
+        }, { timeout: AI_CHAT_TIMEOUT_MS });
 
         let responseMessage = response.choices[0].message;
+        const downstreamToolCalls = responseMessage.tool_calls || [];
 
         // === TOOL CALLING HANDLER ===
         if (responseMessage.tool_calls) {
@@ -328,7 +410,7 @@ ${sysPrompt}
                         if (allowedMedia.length > 0) {
                             mediaResults = allowedMedia.map(m => ({ media: m, caption: args.caption || "" }));
                             messages.push({ tool_call_id: toolCall.id, role: "tool", name: "kirim_media_katalog", content: `${allowedMedia.length} media berhasil dikirim.` });
-                            // For catalog sending, we don't need a second API call. The caption IS the message.
+                            needsSecondCall = true;
                         } else {
                             messages.push({ tool_call_id: toolCall.id, role: "tool", name: "kirim_media_katalog", content: "Media tidak ditemukan." });
                             needsSecondCall = true;
@@ -347,9 +429,10 @@ ${sysPrompt}
                     model: modelName, 
                     messages: [
                         ...messages,
-                        { role: "system", content: "PENGINGAT TEKNIS: Jangan tulis link/tag media/ID/timestamp apapun di teks jawaban akhir. Cukup balas teks ramah saja." }
-                    ]
-                });
+                        { role: "system", content: "PENGINGAT TEKNIS: Jangan tulis link/tag media/ID/timestamp. Untuk chat normal, pisahkan bubble dengan newline dan maksimal 10 kata per bubble. Untuk rekap/order/payment, tulis lengkap dan rapi." }
+                    ],
+                    temperature: 0.45
+                }, { timeout: AI_CHAT_TIMEOUT_MS });
                 responseMessage = secondResponse.choices[0].message;
                 finalContent = responseMessage.content;
             }
@@ -359,14 +442,14 @@ ${sysPrompt}
                     type: RESPONSE_TYPE.MEDIA,
                     content: finalContent ? sanitizeTextOutput(finalContent) : "",
                     mediaList: mediaResults,
-                    tool_calls: responseMessage.tool_calls || [] // Pass tool calls downstream
+                    tool_calls: downstreamToolCalls
                 };
             }
             
             return {
                 type: RESPONSE_TYPE.TEXT,
                 content: sanitizeTextOutput(finalContent) || "Ada yang bisa saya bantu?",
-                tool_calls: responseMessage.tool_calls || []
+                tool_calls: downstreamToolCalls
             };
         }
 
@@ -394,9 +477,9 @@ function sanitizeTextOutput(text) {
     // 1. Hapus format Markdown Image: ![...](...) 
     clean = clean.replace(/!\[.*?\]\(.*?\)/g, '');
     
-    // 2. Hapus format link fiktif: example.com, atau http:// fiktif
+    // 2. Hapus format link fiktif, tetapi jangan hapus nama brand valid seperti slaludiskon.com.
     clean = clean.replace(/https?:\/\/\S+/gi, '');
-    clean = clean.replace(/[a-zA-Z0-9-]+\.com\S*/gi, '');
+    clean = clean.replace(/\b(example|yourdomain|domain|website)\.com\S*/gi, '');
     
     // 3. Hapus tag internal jika bocor: [MEDIA:...] atau [VIDEO:...]
     clean = clean.replace(/\[MEDIA:.*?\]/g, '');
@@ -415,7 +498,7 @@ function sanitizeTextOutput(text) {
 
 /**
  * TAHAP 4: Generate Chat Summary (Rekap Pembahasan)
- * Mengubah 20+ chat menjadi 3-5 poin penting status pelanggan.
+ * Mengubah chat menjadi rekap operasional yang cukup detail untuk CS.
  */
 async function generateChatSummary(history = []) {
     if (history.length < 3) return "Percakapan baru saja dimulai. Belum ada rekapan.";
@@ -428,11 +511,11 @@ async function generateChatSummary(history = []) {
         const response = await openai.chat.completions.create({
             model: config.MODEL_NAME || "gpt-4o-mini",
             messages: [
-                { role: "system", content: "Tugasmu adalah membuat REKAP PEMBAHASAN CHAT singkat (3-5 poin). Fokus pada: 1. Nama/identitas pelanggan jika sudah tahu, 2. Produk yang diminati, 3. Progress diskusi (misal: sudah deal harga, baru tanya-tanya, atau mau kirim desain). Gunakan Bahasa Indonesia yang sangat ringkas." },
+                { role: "system", content: "Tugasmu membuat REKAP PEMBAHASAN CHAT untuk dashboard CS. Jangan terlalu umum. Ambil detail yang sudah ada: nama label/teks custom, nama pemesan, varian, jumlah, alamat lengkap, produk, harga, ongkir, total, metode bayar, status COD/transfer, media yang pernah dikirim, pertanyaan terakhir, data yang masih kurang, dan next action. Jika data belum ada tulis 'belum ada', jangan mengarang. Gunakan poin pendek tapi lengkap." },
                 { role: "user", content: `Berikut riwayat chatnya, buatkan rekapannya:\n\n${historyText}` }
             ],
             temperature: 0.3 // Lebih stabil untuk rekap
-        });
+        }, { timeout: AI_CHAT_TIMEOUT_MS });
 
         return response.choices[0].message.content.trim();
     } catch (e) {
@@ -463,11 +546,11 @@ async function transcribeAudio(audioPath) {
 /**
  * Menghitung jeda mengetik yang realistis (Natural Human Typing).
  */
-function calculateTypingDelay(text, minCharDelay = 60, maxDelay = 1000) {
-    if (!text) return 1000;
-    const randomSpeed = Math.floor(Math.random() * (50 - 30 + 1)) + 30; // Faster
+function calculateTypingDelay(text, minCharDelay = 18, maxDelay = 650) {
+    if (!text) return 250;
+    const randomSpeed = Math.floor(Math.random() * (32 - minCharDelay + 1)) + minCharDelay;
     const baseDelay = text.length * randomSpeed;
-    const humanOffset = Math.floor(Math.random() * (500 - 200 + 1)) + 200;
+    const humanOffset = Math.floor(Math.random() * (180 - 80 + 1)) + 80;
     return Math.min(baseDelay + humanOffset, maxDelay);
 }
 
@@ -476,5 +559,8 @@ module.exports = {
     generateChatSummary,
     transcribeAudio,
     calculateTypingDelay,
+    prepareOutboundBubbles,
+    sanitizeTextOutput,
+    parseAutoLabels,
     RESPONSE_TYPE
 };

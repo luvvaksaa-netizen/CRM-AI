@@ -53,10 +53,12 @@ credentials-file: C:\Users\NAMA_USER_ANDA\.cloudflared\<TUNNEL_ID>.json
 
 ingress:
   - hostname: crm.datasdm.com
-    service: http://localhost:3000
+    service: http://localhost:3001
   - service: http_status:404
 ```
-> **Catatan:** Ganti `NAMA_USER_ANDA` dengan username Windows Anda.
+> **Catatan:** 
+> - Ganti `NAMA_USER_ANDA` dengan username Windows Anda.
+> - Port **3001** digunakan agar tidak tabrakan dengan aplikasi `kirimfoto.com` yang menggunakan port 3000.
 
 ## Langkah 6: Menjalankan Tunnel sebagai Windows Service (Otomatis)
 Agar Tunnel selalu berjalan otomatis saat komputer dinyalakan tanpa harus membuka CMD terus menerus:

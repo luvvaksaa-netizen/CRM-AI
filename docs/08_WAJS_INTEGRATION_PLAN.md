@@ -171,7 +171,7 @@ Dipilih jalur **Opsi B: Inject WA-JS ke instance WWebJS** untuk meminimalkan ris
 
 Files:
 - `package.json` / `package-lock.json`: tambah `@wppconnect/wa-js`.
-- `src/services/wajs_bridge.js`: inject bundle, cek status, helper reaction, request phone, labels, dan forward message.
+- `src/services/wajs_bridge.js`: inject bundle, cek status, helper reaction, request phone, label CRUD, apply/remove labels, dan forward message.
 - `src/whatsapp_service.js`: inject WA-JS setelah client `ready`.
 - `src/events/message_handler.js`: reaksi emoji non-blocking untuk media/sticker dan auto-label inbound.
 - `src/services/dashboard_service.js`: endpoint `GET /api/system/wa-js` dan endpoint WA-JS CRM.
@@ -184,7 +184,9 @@ Catatan: core masih WWebJS. Migrasi penuh ke WPPConnect wrapper tetap menjadi it
 - LID support sekarang mencoba resolve nomor asli dengan `WPP.contact.getPnLidEntry`.
 - Jika mapping LID -> phone belum ada di cache WhatsApp lokal, tombol telepon memanggil `WPP.chat.requestPhoneNumber`.
 - Adapter WA-JS punya fallback inline injection jika `addScriptTag` gagal pada WhatsApp Web tertentu.
-- Typing indicator diperkuat dengan heartbeat: WWebJS `sendStateTyping()` tetap dipakai, dan WA-JS `WPP.chat.markIsComposing` dicoba jika tersedia.
+- Typing indicator diperkuat dengan heartbeat: WWebJS `sendStateTyping()` tetap dipakai, dan WA-JS `WPP.chat.markIsComposing` dicoba hanya jika `WPP` sudah ready agar tidak menunggu injeksi ulang saat membalas customer.
+- Dashboard sekarang punya pengelola label WhatsApp: list label, buat label, edit, hapus, serta tempel/lepas label pada chat aktif.
+- AI auto-label dari `BotAgent.auto_labels` dieksekusi via `tambahkan_label_chat` dengan urutan parameter WA-JS yang benar dan fallback non-blocking.
 
 ---
 

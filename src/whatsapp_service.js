@@ -288,6 +288,18 @@ async function createLabel(storeWaId, name, color) {
     return wajsBridge.createLabel(getActiveClient(storeWaId), name, color, storeWaId);
 }
 
+async function editLabel(storeWaId, labelId, updates) {
+    return wajsBridge.editLabel(getActiveClient(storeWaId), labelId, updates, storeWaId);
+}
+
+async function deleteLabel(storeWaId, labelId) {
+    return wajsBridge.deleteLabel(getActiveClient(storeWaId), labelId, storeWaId);
+}
+
+async function getLabelColorPalette(storeWaId) {
+    return wajsBridge.getLabelColorPalette(getActiveClient(storeWaId), storeWaId);
+}
+
 async function addOrRemoveLabels(storeWaId, contactIds, labelOps) {
     return wajsBridge.addOrRemoveLabels(getActiveClient(storeWaId), contactIds, labelOps, storeWaId);
 }
@@ -390,6 +402,9 @@ module.exports = {
     resolveContactPhone,
     getLabels,
     createLabel,
+    editLabel,
+    deleteLabel,
+    getLabelColorPalette,
     addOrRemoveLabels,
     sendReaction,
     forwardMessages,

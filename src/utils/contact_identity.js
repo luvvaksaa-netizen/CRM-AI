@@ -39,6 +39,7 @@ function firstHumanName(...values) {
     if (!name) continue;
     if (name.includes('@')) continue;
     if (/^\+?\d[\d\s-]+$/.test(name)) continue;
+    if (/^Kontak WA #\d+$/.test(name) || name === 'Kontak WA Privat' || name === 'Kontak WhatsApp') continue;
     return name;
   }
   return '';

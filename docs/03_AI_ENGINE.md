@@ -27,21 +27,21 @@ AI Engine adalah "otak" sistem yang mengorkestrasi semua kecerdasan. Ia tidak be
 ## Concurrency Queue (Deadlock-Proof)
 
 ```javascript
-const MAX_CONCURRENCY = 3;    // Maks 3 request AI serentak
-const QUEUE_TIMEOUT_MS = 120000; // Request kadaluarsa setelah 2 menit
+const MAX_CONCURRENCY = 10;   // Maks 10 request AI serentak
+const QUEUE_TIMEOUT_MS = 60000; // Request kadaluarsa setelah 1 menit
 ```
 
 ### Mekanisme:
 - Setiap request masuk → masuk ke `pendingQueue`
-- Hanya **3 request** bisa diproses bersamaan
+- Hanya **10 request** bisa diproses bersamaan
 - Slot dibebaskan via `Promise.finally()` → **tidak pernah deadlock**
-- Request yang menunggu > 2 menit otomatis digugurkan (mencegah balasan basi)
+- Request yang menunggu > 1 menit otomatis digugurkan (mencegah balasan basi)
 
 ---
 
 ## Tool Calling
 
-AI memiliki dua "alat" yang bisa dipanggil:
+AI memiliki tiga "alat" yang bisa dipanggil:
 
 ### Tool 1: `cek_ongkir_jne`
 ```json
@@ -76,6 +76,14 @@ Flow:
 3. Filter: hanya yang `purpose !== 'knowledge_only'`
 4. Return ke message_handler → kirim file fisik ke WA
 
+### Tool 3: `tambahkan_label_chat`
+Aktif hanya jika `BotAgent.auto_labels` berisi daftar label.
+
+Flow:
+1. AI memilih label dari konfigurasi agen, misalnya `Hot Lead` atau `Menunggu Transfer`
+2. `message_handler` mengeksekusi label via WA-JS `WPP.labels.*`
+3. Jika WA-JS/WA Business label belum tersedia, pipeline chat tetap lanjut dan hanya menulis warning
+
 ---
 
 ## Alur Proses AI (Dua Langkah)
@@ -103,7 +111,7 @@ Sebelum pesan dikirim ke WA, selalu melewati `sanitizeTextOutput()`:
 |---------|------|
 | `![...](...)`  | Hapus (markdown image) |
 | `https://...` | Hapus (link fiktif) |
-| `xxx.com...` | Hapus (domain fiktif) |
+| `example.com` / placeholder domain | Hapus (domain fiktif) |
 | `[MEDIA:...]` | Hapus (tag internal bocor) |
 | `[VIDEO:...]` | Hapus (tag internal bocor) |
 | `ID: 123` | Hapus (ID sistem bocor) |
@@ -127,20 +135,22 @@ Sebelum pesan dikirim ke WA, selalu melewati `sanitizeTextOutput()`:
 
 > **Kenapa aturan diletakkan di akhir?** Karena model LLM memberikan bobot lebih tinggi pada context yang posisinya lebih dekat ke akhir prompt (bottom-weighting). Ini memastikan larangan tidak bisa "dilupakan" oleh model.
 
+Aturan teknis terbaru tidak lagi memaksa satu pesan panjang. Untuk chat normal, AI boleh memisahkan baris; setiap baris dikirim sebagai satu bubble WhatsApp pendek (maksimal 10 kata). Rekap order/payment tetap boleh panjang agar detail transaksi tidak hilang.
+
 ---
 
 ## Typing Delay (Human Simulation)
 
 ```javascript
-function calculateTypingDelay(text, minCharDelay=60, maxDelay=5000) {
-    const randomSpeed = random(60, 100); // ms per karakter
+function calculateTypingDelay(text, minCharDelay=18, maxDelay=650) {
+    const randomSpeed = random(18, 32); // ms per karakter
     const baseDelay = text.length * randomSpeed;
-    const humanOffset = random(400, 1200); // noise manusia
-    return Math.min(baseDelay + humanOffset, maxDelay); // cap 5 detik
+    const humanOffset = random(80, 180); // noise manusia ringan
+    return Math.min(baseDelay + humanOffset, maxDelay); // cap 650ms
 }
 ```
 
-Selama delay, status `sedang mengetik...` ditampilkan di WA.
+Debounce balasan default sekarang `AI_REPLY_DEBOUNCE_MS=1400`. Typing WA-JS hanya dipakai jika `WPP` sudah ready; jika belum, sistem langsung fallback ke WWebJS supaya tidak menunggu injeksi ulang.
 
 ---
 
@@ -150,13 +160,12 @@ Setelah setiap interaksi, AI generate ringkasan percakapan (background, non-bloc
 
 ```
 Prompt ke GPT-4o-mini:
-"Buat REKAP PEMBAHASAN CHAT singkat (3-5 poin):
- 1. Identitas pelanggan (jika sudah tahu)
- 2. Produk yang diminati
- 3. Progress diskusi (deal, tanya-tanya, mau kirim desain)"
+"Buat REKAP PEMBAHASAN CHAT untuk dashboard CS:
+ identitas, produk, varian, teks custom, jumlah, alamat,
+ harga, ongkir, total, metode bayar, data kurang, dan next action."
 ```
 
-Rekap ini disimpan di `ChatSummaries` dan digunakan sebagai **long-term memory** untuk sesi berikutnya dari pelanggan yang sama.
+Rekap diambil dari 50 pesan terbaru setelah balasan bot terkirim, disimpan di `ChatSummaries`, dan digunakan sebagai **long-term memory** untuk sesi berikutnya dari pelanggan yang sama.
 
 ---
 
