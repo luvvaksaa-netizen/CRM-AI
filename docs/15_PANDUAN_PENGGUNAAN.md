@@ -1,270 +1,362 @@
 # 🚀 Panduan Lengkap Penggunaan Sistem WA-AI CRM
 **Untuk operator, tim CS, dan admin bisnis label nama**
+*Versi 2.0 — Mencakup 2 Produk: Label DTF & UV DTF*
 
 ---
 
-## ✅ STATUS AUDIT SISTEM (22 Mei 2026)
+## ✅ STATUS SISTEM (Audit Terakhir: 22 Mei 2026)
 
-> Audit mendalam telah dilakukan terhadap **seluruh codebase** (8 file inti, 3 flow utama). Satu bug kritis ditemukan dan **telah diperbaiki**.
+| Komponen | Status |
+|---|---|
+| AI Engine (OpenAI) | ✅ Aktif |
+| Follow-Up Otomatis 4-Tahap | ✅ Aktif |
+| Memori Terstruktur (Anti-Lupa) | ✅ Aktif |
+| Sinkronisasi Chat dari HP | ✅ Aktif (diperbaiki) |
+| Label Otomatis WA Business | ✅ Aktif |
 
-| Komponen | Status | Catatan |
-|---|---|---|
-| Database (`FollowUp` table) | ✅ Selesai | Schema lengkap + auto-migrate |
-| `followup_service.js` (Scheduler 4-tahap) | ✅ Selesai | Dipanggil otomatis di startup |
-| `message_handler.js` (Trigger & Cancel) | ✅ Selesai | Wired dengan benar |
-| `whatsapp_service.js` (`sendFollowUpMessage`) | ✅ Selesai | Tidak pause AI |
-| `dashboard_service.js` (API Routes) | ✅ **BUGFIX** | Route `stats` dipindah sebelum `/:storeId` |
-| `ai_service.js` (Bot Name + Memory + Bottom-Weight) | ✅ Selesai | `{BOT_NAME}` dan draconian rules |
-| `index.html` (Tab Follow-Up UI) | ✅ Selesai | Stats + grid + cancel button |
-| `generateChatSummary` (Structured Memory) | ✅ Selesai | Format KEY-VALUE 14 field |
-
-> ⚠️ **PENTING: Restart server** setelah semua perubahan agar database tabel `FollowUps` otomatis dibuat dan scheduler aktif.
+> ⚠️ **Wajib restart server setelah update kode** agar semua perbaikan berjalan.
 
 ---
 
-## 🔄 LANGKAH WAJIB: RESTART SERVER
+## 🧠 CARA KERJA BOT MEMBEDAKAN 2 PRODUK
 
-Karena `npm start` masih berjalan dengan kode lama, **harus di-restart**:
+> **Ini adalah bagian terpenting yang harus dipahami sebelum konfigurasi.**
 
-```powershell
-# Di terminal yang sedang running npm start
-Tekan Ctrl + C
+Bisnis Anda memiliki **2 produk berbeda**:
+- **Produk 1: Label Nama DTF** (Bahan Kain / Setrika) — Rp 37.000 / 50 pcs
+- **Produk 2: Label Nama UV DTF** (Bahan Stiker Keras / Timbul) — Rp 38.000 / 50 pcs
 
-# Jalankan kembali
-node index.js
-```
+Masing-masing produk memiliki **foto varian dan video demo yang berbeda**. Bot membedakan keduanya melalui **2 mekanisme utama**:
 
-Setelah restart, cari log ini untuk konfirmasi:
-```
-✅ Database SQLite (Agent-Based Architecture) Siap!
-[FollowUp] Scheduler otomatis aktif (cek tiap 60 detik).
-```
+### Mekanisme 1: Label Media (Penanda Produk)
+Setiap file yang Anda upload di tab Media **harus diberi label yang spesifik**. Label inilah yang menjadi "nama panggil" bagi AI untuk mengirimkan media yang tepat ke customer.
 
----
+Contoh: Jika customer tanya tentang Label DTF, AI akan mencari media dengan label `varian dtf` di katalog, lalu kirim ke customer.
 
-## 🎯 PANDUAN KONFIGURASI AGENT (Langkah Demi Langkah)
+### Mekanisme 2: Deskripsi Media (Konteks AI)
+Selain label, setiap media juga bisa diberi **Deskripsi** yang menjelaskan isi media tersebut. Deskripsi ini masuk ke "otak" AI sebagai pengetahuan visual, sehingga AI benar-benar "mengerti" isi gambar/video sebelum berbicara kepada customer.
 
-### STEP 1: Buka Dashboard Admin
-Buka browser → `http://localhost:3001` (atau `https://crm.datasdm.com` jika sudah setup Cloudflare)
+### Mekanisme 3: Trigger Words (Kata Kunci Otomatis)
+Anda bisa mengisi kolom **Trigger Words** di setiap media. Jika customer menyebut kata tersebut, media langsung dikirim otomatis tanpa AI perlu memutuskan.
 
 ---
 
-### STEP 2: Buat Master Agent
-1. Klik tab **"AI Agents"** di sidebar kiri
-2. Klik tombol **"Buat Agen Baru"**
-3. Isi form berikut:
+## 📋 SKEMA MEDIA YANG HARUS DIUPLOAD (Wajib Lengkap)
 
-**Nama Agen (Internal):**
+> **Perhatian:** Label di kolom "Label Wajib Persis" harus diketik **PERSIS SAMA** (huruf kecil semua) agar sistem bisa menemukannya.
+
+### Untuk Agent: Label Nama DTF (Bahan Setrika)
+
+| No | Tipe | Label (Wajib Persis) | Isi File | Trigger Words | Fungsi |
+|----|------|---------------------|----------|---------------|--------|
+| 1 | 📷 Gambar | `varian dtf` | Foto 4 varian font Label DTF | `dtf, label kain, label setrika, bahan kain` | Dikirim AI saat opening (customer tanya DTF) |
+| 2 | 🎬 Video | `video dtf` | Video demo cetak + pasang label DTF | `lihat video dtf, demo dtf` | Follow-up Stage 1 & 3 + Saat opening |
+| 3 | 📷 Gambar | `testimoni dtf` | Screenshot review customer label DTF | *(kosongkan)* | Follow-up Stage 2 & 4 |
+| 4 | 📷 Gambar | `contoh order dtf` | Gambar contoh format order (nama, jumlah, varian) | *(kosongkan)* | Dikirim saat customer bingung cara order |
+
+### Untuk Agent: Label Nama UV DTF (Stiker Timbul)
+
+| No | Tipe | Label (Wajib Persis) | Isi File | Trigger Words | Fungsi |
+|----|------|---------------------|----------|---------------|--------|
+| 1 | 📷 Gambar | `varian uv` | Foto 4 varian font Label UV | `uv, stiker, stiker timbul, uv dtf` | Dikirim AI saat opening (customer tanya UV) |
+| 2 | 🎬 Video | `video uv` | Video demo cetak + hasil jadi stiker timbul | `lihat video uv, demo uv` | Follow-up Stage 1 & 3 + Saat opening |
+| 3 | 📷 Gambar | `testimoni uv` | Screenshot review customer UV | *(kosongkan)* | Follow-up Stage 2 & 4 |
+| 4 | 📷 Gambar | `contoh order uv` | Gambar contoh format order UV | *(kosongkan)* | Dikirim saat customer bingung cara order |
+
+---
+
+## 🔧 KONFIGURASI STEP-BY-STEP (Sangat Detail)
+
+### STEP 1: Buat 2 Agent Terpisah
+
+**Kenapa harus 2 Agent?** Karena setiap agent memiliki media katalog sendiri. Jika digabung, AI bisa salah kirim foto/video produk yang tidak sesuai.
+
+Masuk ke Dashboard → Tab **"AI Agents"** → Klik **"Buat Agen Baru"**.
+
+---
+
+#### AGENT 1: Label Nama DTF (Bahan Kain/Setrika)
+
+**Nama Agent (Internal):**
 ```
-Master Agent - Label Nama
+Agent Label DTF - Bahan Kain
 ```
 
-**Nama Bot (yang muncul ke customer):**
+**Nama Bot (yang terlihat customer):**
 ```
 Dini
 ```
-> ⚡ Tiap nomor WA bisa punya nama CS berbeda. Caranya: di menu **Koneksi**, isi field "Nama Bot Override" per-perangkat. Ini akan menggantikan `{BOT_NAME}` secara otomatis.
+*(Setiap nomor WA bisa punya nama berbeda, diatur di menu Koneksi)*
 
-**Kepribadian / System Prompt:**
+**Kepribadian / System Prompt — Copy-Paste ini:**
 ```
-Kamu adalah {BOT_NAME}, admin customer service dari slaludiskon.com yang ramah dan natural 😊
+Kamu adalah {BOT_NAME}, admin CS dari slaludiskon.com 😊
+Produk yang kamu jual: Label Nama DTF (bahan kain, setrika ke baju).
 
-⚠️ RULE UTAMA:
-* Maksimal chat 1 bubble = 10 kata.
-* Wajib singkat seperti chat manusia (tidak kaku/formal).
-* Jangan pernah mengirim paragraf panjang.
-* Gunakan emoji secukupnya agar terkesan ramah.
-* Jangan terlihat seperti bot/AI.
+⚠️ ALUR WAJIB (Ikuti urutannya!):
+1. Sapa customer, kirim gambar varian font DTF + video demo DTF.
+2. Tanya nama yang mau dicetak di label (bukan nama penerima paket).
+3. Tanya detail per nama: nama A berapa pcs, nama B berapa pcs.
+   (Ingat: 1 paket = 50 pcs, MAKS 2 nama/paket)
+4. Tanya alamat lengkap (sampai nama kecamatan).
+5. OTOMATIS cek ongkir JNE setelah dapat alamat.
+6. Kirim rekap lengkap + nomor rekening.
 
-⚠️ DILARANG KERAS (DRACONIAN RULES):
-* Dilarang mengulang pertanyaan atau menanyakan informasi yang sudah dijawab oleh customer.
-* Selalu periksa bagian "DATA CUSTOMER YANG SUDAH DIKETAHUI" sebelum membalas.
-* Jika Nama Pemesan, Varian, Detail Qty, dan Alamat sudah ada, JANGAN TANYAKAN LAGI. Langsung berikan total rekapan dan nomor rekening.
-* Dilarang meminta ulang gambar/nama/jumlah yang sudah dikirim oleh customer.
-
-🎯 ALUR PERCAKAPAN SEDERHANA:
-1. Menyapa ramah, tawarkan varian (kirim gambar & 1 video saat opening jika interaksi baru).
-2. Minta nama yang mau dicetak di label (bukan nama penerima).
-3. Tanya detail qty per nama (maksimal 2 nama per paket).
-4. Tanya alamat lengkap untuk cek ongkir.
-5. Berikan total rekapan pesanan (harga + ongkir + biaya admin jika ada).
-6. Berikan nomor rekening untuk pembayaran (atau konfirmasi COD jika customer minta).
+⚠️ ATURAN KETAT:
+- Maksimal 10 kata per bubble chat.
+- DILARANG tanya ulang data yang sudah dijawab.
+- DILARANG sebut harga sebelum customer tanya varian.
+- Jika customer tanya produk UV/stiker, jelaskan bahwa ini khusus DTF (kain). Untuk UV, ada CS lain.
 ```
 
-**Pengetahuan Produk / Product Knowledge:**
+**Pengetahuan Produk — Copy-Paste ini:**
 ```
-Kategori Bisnis: Cetak Label Nama DTF & UV DTF
+PRODUK: Label Nama DTF (Bahan Kain / Setrika ke Baju)
+HARGA: Rp 37.000 per paket (isi 50 pcs)
+MAKS NAMA PER PAKET: 2 nama berbeda
+UKURAN LABEL: Sesuai standar label nama sekolah/baju
+BAHAN: Polyflex / DTF (Direct to Film) — ditempel dengan setrika
+KETAHANAN: Tahan cuci, tidak mudah luntur
+VARIAN: 4 varian (dibedakan jenis font). Warna sesuai katalog.
+CARA PASANG: Gunting sesuai bentuk → setrika 10-15 detik → siap pakai
 
-1. DETAIL PRODUK & HARGA:
-- Paket Label Nama DTF (Bahan Kain/Setrika): Isi 50 pcs per paket, harga Rp 37.000,-
-- Paket Label Nama UV DTF (Bahan Stiker Keras/Timbul): Isi 50 pcs per paket, harga Rp 38.000,-
-- Batasan Nama: Maksimal 2 nama berbeda untuk 1 paket.
+CONTOH PERHITUNGAN PAKET:
+- 1 paket 50 pcs: maks 2 nama (misal: Andi 25 pcs, Budi 25 pcs)
+- 2 paket 100 pcs: maks 4 nama (misal: Andi 25, Budi 25, Cici 25, Dedi 25)
+- 3 paket 150 pcs: maks 6 nama
+- Boleh 1 paket hanya 1 nama: Andi 50 pcs
 
-2. VARIAN & DESAIN:
-- Varian: Tersedia dalam 4 varian desain yang dibedakan berdasarkan jenis font.
-- Pilihan Warna: Hanya tersedia warna sesuai yang ada di gambar katalog.
+REKENING PEMBAYARAN:
+Bank: Bank Mandiri
+No Rek: 1710016814843
+A/N: PARE DIGITAL CUSTOM
 
-3. INFORMASI REKENING PEMBAYARAN:
-- Bank: Bank Mandiri
-- Nomor Rekening: 1710016814843
-- Atas Nama: PARE DIGITAL CUSTOM
-
-4. METODE PENGIRIMAN & COD:
-- Pengiriman dikirim dari Kediri menggunakan kurir JNE.
-- Mendukung COD (Cash On Delivery) jika customer memintanya.
+PENGIRIMAN: Dari Kediri menggunakan JNE. Bisa COD.
 ```
 
 **Label Otomatis:**
 ```
-Hot Lead, Menunggu Transfer, Sudah Closing, Komplain
+Hot Lead DTF, Menunggu Transfer, Sudah Closing, Komplain
 ```
-> Pisahkan dengan koma. AI akan otomatis menempelkan label ini ke WhatsApp Business sesuai konteks percakapan.
-
-4. Klik **"Simpan Agent"**
 
 ---
 
-### STEP 3: Upload Media Katalog
-1. Klik tab **"Media"** di sidebar kiri
-2. Pastikan Agent yang aktif adalah Agent yang baru dibuat
-3. Upload media dalam kategori ini:
+#### AGENT 2: Label Nama UV DTF (Stiker Timbul)
 
-| Tipe | Label (WAJIB PERSIS) | Keterangan | Fungsi |
-|------|---------------------|------------|--------|
-| 📷 Gambar | `varian font` | Foto 4 varian font | Dikirim AI saat opening |
-| 🎬 Video | `video produk` | Video demo cetak label | Dikirim AI saat opening + follow-up stage 1 & 3 |
-| 📷 Gambar | `testimoni` | Screenshot review bintang 5 | Untuk follow-up stage 2 & 4 |
+**Nama Agent (Internal):**
+```
+Agent Label UV - Stiker Timbul
+```
 
-> ⚠️ **Label media sangat penting!** Sistem follow-up otomatis mencari media berdasarkan label. Jika label salah, follow-up akan dikirim teks saja (tanpa gambar/video).
+**Nama Bot:** `Dini` *(atau nama lain untuk nomor WA yang berbeda)*
+
+**Kepribadian / System Prompt — Copy-Paste ini:**
+```
+Kamu adalah {BOT_NAME}, admin CS dari slaludiskon.com 😊
+Produk yang kamu jual: Label Nama UV DTF (stiker keras/timbul, tempel ke botol/peralatan).
+
+⚠️ ALUR WAJIB (Ikuti urutannya!):
+1. Sapa customer, kirim gambar varian font UV + video demo UV.
+2. Tanya nama yang mau dicetak di label (bukan nama penerima paket).
+3. Tanya detail per nama: nama A berapa pcs, nama B berapa pcs.
+   (Ingat: 1 paket = 50 pcs, MAKS 2 nama/paket)
+4. Tanya alamat lengkap (sampai nama kecamatan).
+5. OTOMATIS cek ongkir JNE setelah dapat alamat.
+6. Kirim rekap lengkap + nomor rekening.
+
+⚠️ ATURAN KETAT:
+- Maksimal 10 kata per bubble chat.
+- DILARANG tanya ulang data yang sudah dijawab.
+- DILARANG sebut harga sebelum customer tanya varian.
+- Jika customer tanya produk DTF/kain/setrika, jelaskan bahwa ini khusus UV (stiker). Untuk DTF, ada CS lain.
+```
+
+**Pengetahuan Produk — Copy-Paste ini:**
+```
+PRODUK: Label Nama UV DTF (Stiker Keras / Timbul)
+HARGA: Rp 38.000 per paket (isi 50 pcs)
+MAKS NAMA PER PAKET: 2 nama berbeda
+BAHAN: UV DTF — stiker keras, efek timbul/glossy
+KETAHANAN: Waterproof, tahan air, tidak mudah luntur, cocok untuk botol/tumbler/peralatan
+VARIAN: 4 varian (dibedakan jenis font). Warna sesuai katalog.
+CARA PASANG: Kupas backing → tempel ke permukaan → tekan rata
+
+CONTOH PERHITUNGAN PAKET:
+- 1 paket 50 pcs: maks 2 nama (misal: Andi 25 pcs, Budi 25 pcs)
+- 2 paket 100 pcs: maks 4 nama
+- Boleh 1 paket hanya 1 nama: Andi 50 pcs
+
+REKENING PEMBAYARAN:
+Bank: Bank Mandiri
+No Rek: 1710016814843
+A/N: PARE DIGITAL CUSTOM
+
+PENGIRIMAN: Dari Kediri menggunakan JNE. Bisa COD.
+```
+
+**Label Otomatis:**
+```
+Hot Lead UV, Menunggu Transfer, Sudah Closing, Komplain
+```
+
+---
+
+### STEP 2: Upload Media ke Masing-Masing Agent
+
+> ⚠️ **SANGAT PENTING:** Pastikan Anda sedang memilih agent yang benar di dropdown sebelum upload. Media yang salah masuk ke agent yang salah = bot kirim foto DTF ke customer yang tanya UV.
 
 **Cara Upload:**
-1. Klik "Upload Baru" → pilih file → isi Label dan Deskripsi → klik Upload
-2. Tunggu hingga status menjadi ✅ "Analisis Vision AI Selesai"
-3. Media siap digunakan oleh bot
+1. Klik tab **"Media"** di sidebar kiri
+2. Di bagian atas, pilih **Agent** yang sesuai (contoh: "Agent Label DTF")
+3. Klik tombol **"Upload Baru"**
+4. Pilih file dari komputer Anda
+5. **Isi form dengan benar:**
+   - **Label** → Ketik persis sesuai tabel di atas (contoh: `varian dtf`)
+   - **Deskripsi** → Jelaskan isi media (contoh: "Foto 4 varian font label DTF untuk baju sekolah")
+   - **Tujuan** → Pilih `Kirim ke Customer & Pengetahuan AI (Both)` untuk semua media
+   - **Trigger Words** → Isi jika ada kata yang memicu media ini dikirim otomatis (contoh: `dtf, label kain, label setrika`)
+6. Klik **"Upload"**
+7. Tunggu status berubah menjadi ✅ **"Analisis Selesai"** sebelum melanjutkan
+8. Ulangi untuk semua media (minimal 4 per agent)
 
 ---
 
-### STEP 4: Hubungkan Nomor WA ke Agent
-1. Klik tab **"Koneksi"** di sidebar kiri
+### STEP 3: Hubungkan Nomor WA ke Agent yang Tepat
+
+1. Klik tab **"Koneksi"** di sidebar
 2. Pilih perangkat/nomor WA dari daftar
-3. Di dropdown **"AI Agent"**, pilih agent yang baru dibuat
+3. Di dropdown **"AI Agent"**, pilih agent yang sesuai:
+   - Nomor WA untuk jualan Label DTF → pilih **"Agent Label DTF"**
+   - Nomor WA untuk jualan Label UV → pilih **"Agent Label UV"**
 4. Aktifkan toggle **"Auto-Reply AI"**
-5. Klik **"Simpan"**
-6. Scan QR Code (jika belum terhubung)
+5. *(Opsional)* Isi **"Nama Bot Override"** jika nama CS untuk nomor ini berbeda dari default Agent (contoh: `Sari`)
+6. Klik **"Simpan"**
 
 ---
 
-## 🤖 CARA KERJA SISTEM OTOMATIS
+### STEP 4: Tes Percakapan Sebelum Go Live
 
-### Alur Percakapan Customer Baru (Tanpa Interaksi Manual)
+Setelah semua dikonfigurasi, lakukan tes dari nomor HP pribadi:
+1. Kirim "halo" ke nomor WA yang sudah dikonfigurasi
+2. Bot harusnya **otomatis mengirim gambar varian + video** produk yang sesuai
+3. Jawab semua pertanyaan bot sampai ke tahap rekap pesanan
+4. Pastikan rekap menampilkan harga dan ongkir yang benar
+5. Jika ada yang salah, periksa kembali isi **Pengetahuan Produk** dan **Label Media**
+
+---
+
+## 🤖 CARA KERJA LENGKAP: DARI CUSTOMER MASUK HINGGA CLOSING
 
 ```
 Customer kirim "halo"
     ↓
-Bot baca pesan → set centang biru
+Bot otomatis kirim: Gambar Varian + Video Demo (sesuai produk agent)
     ↓
-AI: Interaksi pertama? → Kirim gambar varian + video produk
+Bot tanya: Nama yang mau dicetak?
     ↓
-AI tanya nama yang mau dicetak
+Customer jawab: "tiara"
+    ↓ (Tersimpan di memori: TEKS LABEL = Tiara)
+Bot tanya: Berapa pcs nama Tiara? (Ingat max 2 nama/paket)
     ↓
-AI tanya qty per nama
+Customer jawab: "50 pcs"
+    ↓ (Tersimpan: JUMLAH = 50 pcs / 1 paket)
+Bot tanya: Alamat kirimnya kak?
     ↓
-Customer beri alamat → AI OTOMATIS cek ongkir JNE
+Customer jawab: "Jl. Merdeka, Kec. Loceret, Kab. Nganjuk"
     ↓
-AI kirim REKAP TOTAL (nama, qty, harga, ongkir, total, rekening)
+Bot OTOMATIS hitung ongkir JNE dari Kediri ke Loceret, Nganjuk
     ↓
-Bot catat semua data di DATABASE (Rekap Pembahasan)
-    ↓ (jika customer tidak reply 10 menit)
-Follow-Up Stage 1: Kirim video + teks reminder (dengan nama customer)
-    ↓ (jika masih tidak reply 1 jam)
-Follow-Up Stage 2: Kirim foto testimoni + promo text
-    ↓ (jika masih tidak reply, jam 19:00)
-Follow-Up Stage 3: Kirim video + urgency closing malam ini
-    ↓ (jika masih tidak reply, jam 06:00 esok)
-Follow-Up Stage 4: Kirim foto + sapaan pagi
-    ↓
-Jika customer reply kapanpun → SEMUA follow-up pending DIBATALKAN otomatis
+Bot kirim REKAP FINAL:
+   ┌─────────────────────────────────┐
+   │ 📋 REKAP PESANAN                │
+   │ Nama: Tiara                     │
+   │ Produk: Label DTF / UV          │
+   │ Varian: [sesuai pilihan]        │
+   │ Jumlah: 50 pcs (1 paket)        │
+   │ Harga: Rp 37.000                │
+   │ Ongkir: Rp [hasil cek]          │
+   │ TOTAL: Rp [harga + ongkir]      │
+   │                                 │
+   │ 🏦 Mandiri: 1710016814843       │
+   │ A/N: PARE DIGITAL CUSTOM        │
+   └─────────────────────────────────┘
+    ↓ (jika tidak ada reply 10 menit)
+Follow-Up Stage 1 → Stage 2 → Stage 3 → Stage 4
+    ↓ (jika customer reply kapanpun)
+Semua follow-up DIBATALKAN otomatis
 ```
 
 ---
 
-## 📊 CARA MEMANTAU PERFORMA (Dashboard)
-
-### Tab: Live Chat
-- **Badge merah** = pesan yang belum dibaca CS
-- **Toggle AI Reply** per-kontak: matikan jika ingin CS manusia ambil alih
-- **Rekap Pembahasan** muncul di panel kanan setiap customer
-
-### Tab: Follow Up
-| Kolom | Artinya |
-|-------|---------|
-| 🟡 Menunggu Kirim | Customer masih menunggu follow-up dikirim |
-| 🟢 Berhasil Dikirim | Follow-up sudah terkirim ke WhatsApp customer |
-| 🔵 Dibalas/Selesai | Customer sudah membalas → antrian dibatalkan |
-
-- Klik **"Batalkan FU"** untuk membatalkan satu follow-up secara manual
-
-### Tab: Rekap
-- Lihat status setiap customer: **STATUS** field di rekap (opening → gali kebutuhan → menunggu transfer → closing)
-- Customer yang **STATUS: closing** tidak akan dapat follow-up
-
----
-
-## ⚙️ KONFIGURASI TOGGLE BOT
+## ⚙️ KONFIGURASI TOGGLE & KONTROL MANUAL
 
 ### Toggle Global (Semua Customer)
-**Lokasi:** Tab Koneksi → Toggle "Auto-Reply AI"
-- ✅ ON = Bot membalas semua customer
-- ❌ OFF = Bot diam, semua pesan tetap dicatat
+- **Lokasi:** Tab Koneksi → Toggle **"Auto-Reply AI"**
+- ✅ ON = Bot balas semua customer
+- ❌ OFF = Bot diam total, pesan tetap dicatat
 
 ### Toggle Per-Customer (Human Override)
-**Lokasi:** Tab Live Chat → klik icon toggle di header chat customer
+- **Lokasi:** Tab Live Chat → icon toggle di header chat
 - ✅ ON = Bot balas customer ini
-- ❌ OFF = Bot diam untuk customer ini saja (CS manusia bisa balas manual)
-
-> 💡 **Penting:** Follow-up otomatis juga menghormati toggle ini. Jika kontak di-pause, follow-up tidak dikirim.
-
----
-
-## 🎯 TIPS CLOSING MAKSIMAL
-
-### 1. Prompt yang Tepat = Closing Lebih Cepat
-Pastikan `system_prompt` mengandung instruksi alur yang jelas:
-- "Tanya nama dulu sebelum harga"
-- "Setelah dapat alamat, WAJIB cek ongkir"
-- "Setelah ongkir didapat, langsung kirim rekap + rekening"
-
-### 2. Upload Media yang Tepat
-- **Video demo cetak** = paling efektif meningkatkan trust
-- **Foto varian** = wajib ada agar opening visual dan menarik
-- **Screenshot testimoni** = untuk follow-up stage 2 & 4
-
-### 3. Pantau Tab Follow-Up
-- Jika banyak customer di stage 1 tapi tidak lanjut ke stage 2, artinya pesan stage 1 kurang menarik
-- Edit template di `src/services/followup_service.js` → array `copies` setiap stage
-
-### 4. Gunakan Label Otomatis
-Dengan label `Menunggu Transfer` atau `Hot Lead`, tim manusia bisa langsung tahu mana yang perlu di-follow-up manual.
+- ❌ OFF = Bot diam untuk customer ini, CS manusia ambil alih
+- *(Follow-up otomatis juga ikut dinonaktifkan jika kontak di-pause)*
 
 ---
 
-## 🛠️ TROUBLESHOOTING UMUM
+## 📊 CARA MONITORING DI DASHBOARD
 
-| Masalah | Kemungkinan Penyebab | Solusi |
-|---------|---------------------|--------|
-| Bot tidak membalas | Toggle AI OFF atau Agent belum terhubung | Cek tab Koneksi, aktifkan toggle |
-| Follow-up tidak terkirim | Media tidak ditemukan (label salah) | Cek label media di tab Media |
-| Bot kirim teks aneh / markdown | Sanitizer AI gagal filter | Restart server |
-| Statistik Follow-Up selalu 0 | Server belum di-restart setelah update | Restart `node index.js` |
-| Bot lupa data customer | Summary belum ter-generate (chat < 3 pesan) | Normal, akan aktif setelah 3+ interaksi |
-| Ongkir tidak muncul | AI tidak extract kecamatan dari alamat | Pastikan customer menyebut kecamatan |
+### Tab Live Chat
+| Indikator | Artinya |
+|-----------|---------|
+| Badge angka merah | Pesan belum dibaca CS |
+| Dot hijau di avatar | Customer sedang online |
+| "AI Menjawab" (biru) | Bot aktif untuk customer ini |
+| "CS Ambil Alih" (merah) | Bot di-pause, CS manual aktif |
+
+### Tab Rekap
+Lihat ringkasan per customer. Field STATUS sangat penting:
+- `opening` = Customer baru sapa, belum ada data
+- `gali kebutuhan` = AI sedang tanya-jawab
+- `menunggu alamat` = Tinggal perlu alamat untuk cek ongkir
+- `menunggu transfer` = Rekap sudah dikirim, tunggu bayar
+- `closing` / `selesai` = **Follow-up otomatis BERHENTI** untuk customer ini
+
+### Tab Follow Up
+| Status | Warna | Artinya |
+|--------|-------|---------|
+| Menunggu Kirim | 🟡 Kuning | Akan dikirim sesuai jadwal |
+| Berhasil Dikirim | 🟢 Hijau | Sudah terkirim ke customer |
+| Dibalas/Selesai | 🔵 Biru | Customer sudah membalas |
+| Dibatalkan | ⚫ Abu | CS cancel manual atau bot OFF |
 
 ---
 
-## 📝 GIT COMMIT (Simpan semua perubahan)
+## 🛠️ TROUBLESHOOTING BOT NGAWUR / PELUPA
 
+| Gejala | Penyebab | Solusi |
+|--------|----------|--------|
+| Bot tanya ulang nama padahal sudah dijawab | Memori belum ter-update (butuh minimal 3 interaksi) | Periksa tab Rekap, apakah summary sudah ter-update |
+| Bot kirim foto salah produk | Salah agent terhubung ke nomor WA | Cek tab Koneksi, pilih agent yang benar |
+| Bot tidak kirim foto/video saat opening | Label media salah atau media belum selesai analisis | Cek tab Media, pastikan label tepat dan status ✅ |
+| Bot jawab harga tidak sesuai | Pengetahuan produk salah atau tidak lengkap | Update field "Pengetahuan Produk" di konfigurasi agent |
+| Ongkir tidak muncul / ngawur | Customer tidak menyebut nama kecamatan | Bot sudah dikonfig untuk minta kecamatan. Jika masih salah, minta customer kirim alamat lengkap |
+| Bot masih balas padahal sudah dimatikan | Ada proses Chrome zombie di background | Buka Task Manager → End task semua proses `chrome.exe` dan `node.exe` → restart server |
+| Pesan lama tidak muncul di web | Chat sudah dibaca di HP sebelum bot nyala | Restart server agar sinkronisasi ulang (max 20 pesan × 15 chat terbaru) |
+
+---
+
+## 📝 GIT COMMIT (Simpan Perubahan ke Server)
+
+Setelah konfigurasi selesai, simpan semua perubahan:
 ```bash
-git add docs/03_AI_ENGINE.md docs/13_FOLLOWUP_SYSTEM.md docs/14_MASTER_AGENT_PROMPT.md public/index.html src/ai_service.js src/database/index.js src/events/message_handler.js src/services/dashboard_service.js src/services/followup_service.js src/whatsapp_service.js
-git commit -m "feat(crm): implement 4-stage follow-up system, structured AI memory, and bot name override; fix: followup API route ordering bug"
+git add .
+git commit -m "config: setup agent DTF and UV with media catalog"
 git push
+```
+
+Lalu di Laptop Server:
+```bash
+git pull
+# Tekan Ctrl+C untuk stop server lama
+node index.js
 ```
