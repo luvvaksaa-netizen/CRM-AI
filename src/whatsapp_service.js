@@ -160,27 +160,95 @@ function setupEventListeners(client, storeWaId) {
 
         await wajsBridge.injectWajs(client, storeWaId);
         
+        // ══════════════════════════════════════════════════════════════════
+        // SINKRONISASI PESAN SAAT STARTUP
+        // Tarik 20 pesan terakhir dari 15 chat terbaru (bukan hanya unread).
+        // Ini memastikan percakapan yang sudah dibaca di HP tetap tersimpan di CRM.
+        // Pesan yang sudah ada di DB (berdasarkan wa_message_id) di-skip agar tidak duplikat.
+        // ══════════════════════════════════════════════════════════════════
         try {
-            logger.info(`[${storeWaId}] Memulai sinkronisasi pesan tertunda...`);
+            logger.info(`[${storeWaId}] Memulai sinkronisasi chat terbaru (20 pesan × 15 chat)...`);
+            const { ChatMessage } = require('./database/index');
             const chats = await getChatsWithRetry(client);
-            const unreadChats = chats.filter(chat => chat.unreadCount > 0);
-            
-            for (const chat of unreadChats) {
-                const messages = await chat.fetchMessages({ limit: chat.unreadCount });
-                for (const msg of messages) {
-                    await handleMessage(msg, storeWaId, false);
+            // Ambil 15 chat terbaru (diurutkan dari yang paling aktif)
+            const recentChats = chats
+                .filter(c => !shouldIgnoreIncomingChat(c.id._serialized))
+                .slice(0, 15);
+
+            let totalSynced = 0;
+            for (const chat of recentChats) {
+                try {
+                    const messages = await chat.fetchMessages({ limit: 20 });
+                    for (const msg of messages) {
+                        const msgId = msg.id?._serialized || msg.id?.id;
+                        if (!msgId) continue;
+
+                        // Skip jika sudah ada di database (anti-duplikat)
+                        const exists = await ChatMessage.findOne({ where: { wa_message_id: msgId } });
+                        if (exists) continue;
+
+                        // Proses tapi jangan trigger AI reply (shouldAIReply = false)
+                        await handleMessage(msg, storeWaId, false);
+                        totalSynced++;
+                    }
+                    // Tandai sebagai terbaca jika memang ada unread
+                    if (chat.unreadCount > 0) await chat.sendSeen();
+                } catch (chatErr) {
+                    logger.warn(`[${storeWaId}] Skip sync chat [${chat.id._serialized}]: ${cleanErrorMessage(chatErr)}`);
                 }
-                await chat.sendSeen();
             }
-            if (unreadChats.length > 0) logger.success(`[${storeWaId}] Berhasil menarik ${unreadChats.length} chat tertunda.`);
+            if (totalSynced > 0) {
+                logger.success(`[${storeWaId}] ✅ Sinkronisasi selesai: ${totalSynced} pesan baru berhasil diimpor.`);
+            } else {
+                logger.info(`[${storeWaId}] Database sudah up-to-date, tidak ada pesan baru.`);
+            }
         } catch (e) {
-            logger.warn(`[${storeWaId}] Sinkronisasi pesan tertunda dilewati: ${cleanErrorMessage(e)}`);
+            logger.warn(`[${storeWaId}] Sinkronisasi chat dilewati: ${cleanErrorMessage(e)}`);
         }
     });
 
+    // Pesan MASUK dari customer
     client.on('message', async (message) => {
         if (message.isStatus || shouldIgnoreIncomingChat(message.from)) return;
         await handleMessage(message, storeWaId);
+    });
+
+    // ══════════════════════════════════════════════════════════════════
+    // SINKRONISASI PESAN KELUAR DARI HP (message_create)
+    // Menangkap pesan yang dikirim LANGSUNG dari HP (bukan dari bot/dashboard).
+    // Penting agar riwayat percakapan di CRM selalu lengkap & konsisten dengan HP.
+    // ══════════════════════════════════════════════════════════════════
+    client.on('message_create', async (message) => {
+        // Hanya proses pesan dari sisi kita (isMe = true) yang dikirim dari HP, bukan dari bot
+        if (!message.fromMe) return;
+        if (message.isStatus) return;
+        if (shouldIgnoreIncomingChat(message.to)) return;
+
+        const msgId = message.id?._serialized || message.id?.id;
+        if (!msgId) return;
+
+        // Cek apakah pesan ini sudah dicatat (mungkin sudah dicatat oleh bot sendiri via _logBotReply)
+        try {
+            const { ChatMessage } = require('./database/index');
+            const exists = await ChatMessage.findOne({ where: { wa_message_id: msgId } });
+            if (exists) return; // Sudah ada, skip
+
+            const body = message.body || '';
+            if (!body && !message.hasMedia) return;
+
+            // Log pesan keluar dari HP ke dashboard (bukan AI, tapi CS Manual dari HP)
+            await dashboard.addToChatHistory(storeWaId, {
+                id: msgId,
+                from: message.to,
+                body: body || '(Media dari HP)',
+                isMe: true,
+                timestamp: new Date(message.timestamp * 1000),
+                sender_name: 'CS (dari HP)'
+            });
+            logger.info(`[${storeWaId}] Pesan keluar dari HP tercatat: ke [${message.to}]`);
+        } catch (e) {
+            // Non-critical
+        }
     });
 
     client.on('disconnected', (reason) => {
