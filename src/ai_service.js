@@ -535,6 +535,7 @@ HARGA: [sudah disebutkan / belum]
 ONGKIR: [sudah dicek / belum]
 METODE BAYAR: [Transfer / COD / belum]
 STATUS: [opening / gali kebutuhan / negosiasi / menunggu alamat / menunggu rekap / menunggu transfer / closing / selesai]
+UPSELLING_TERKIRIM: [ya / belum]
 NEXT ACTION: [apa langkah selanjutnya yang perlu dilakukan bot]
 CATATAN: [info penting lain, keluhan, permintaan khusus]` },
                 { role: "user", content: `Berikut riwayat chatnya, buatkan rekapannya:\n\n${historyText}` }

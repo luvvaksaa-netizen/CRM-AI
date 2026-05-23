@@ -60,7 +60,8 @@ const FOLLOWUP_TEMPLATES = {
         scheduled_hour: 6,
         scheduled_next_day: true,
         media_type: 'mixed',
-        media_label_hints: ['testimoni', 'pemasangan', 'review', 'value'],
+        // Stage 4: kirim foto testimoni DAN video pemasangan (sesuai instruksi bos)
+        media_label_hints: ['testimoni', 'pemasangan', 'video pemasangan', 'review', 'video', 'value'],
         copies: [
             "Selamat pagi ka {name} 😊\nIni testimoni customer kami ✨\nLabelnya rapi dan tahan lama 🙌\nMau pesan juga kak?",
             "Pagi ka {name} 😊\nBanyak yang sudah pakai label kami ✨\nHasilnya bagus kak 🙌\nMau aku buatkan juga?",

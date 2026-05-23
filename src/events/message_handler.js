@@ -581,12 +581,16 @@ async function _sendTextBubbles(message, chat, storeWaId, contactId, bubbles, bo
             await new Promise(r => setTimeout(r, BETWEEN_BUBBLE_DELAY_MS));
         }
 
+        let sentMsg;
         if (i === 0 || typeof chat?.sendMessage !== 'function') {
-            await message.reply(bubble);
+            sentMsg = await message.reply(bubble);
         } else {
-            await chat.sendMessage(bubble);
+            sentMsg = await chat.sendMessage(bubble);
         }
-        await _logBotReply(storeWaId, contactId, bubble, botName);
+
+        // Capture WA message ID to prevent message_create event from double-logging
+        const waMessageId = sentMsg?.id?._serialized || sentMsg?.id?.id || null;
+        await _logBotReply(storeWaId, contactId, bubble, botName, waMessageId);
     }
 }
 
@@ -604,13 +608,14 @@ async function _sendMediaToChat(message, mediaAsset, caption, storeWaId, contact
         await new Promise(r => setTimeout(r, MEDIA_STABILITY_DELAY_MS));
 
         const mediaMsg = MessageMedia.fromFilePath(mediaPath);
-        await message.reply(mediaMsg, undefined, { caption: caption || "" });
+        const sentMsg = await message.reply(mediaMsg, undefined, { caption: caption || "" });
+        const waMessageId = sentMsg?.id?._serialized || sentMsg?.id?.id || null;
 
         const fileExt = mediaPath.split('.').pop().toLowerCase();
         const tag = ['mp4', 'mov', 'avi'].includes(fileExt) ? '[VIDEO' : '[MEDIA';
         
         const logBody = `${tag}:/uploads/${mediaAsset.filename}] ${caption || `Katalog: ${mediaAsset.label}`}`;
-        await _logBotReply(storeWaId, contactId, logBody, agent?.bot_name);
+        await _logBotReply(storeWaId, contactId, logBody, agent?.bot_name, waMessageId);
         
         logger.success(`[${storeWaId}] Media [${mediaAsset.label}] dikirim ke [${contactId}]`);
     } catch (mediaError) {
@@ -623,9 +628,12 @@ async function _sendMediaToChat(message, mediaAsset, caption, storeWaId, contact
 
 /**
  * Log balasan bot ke database & dashboard.
+ * @param {string} waMessageId - ID pesan WA yang dikirim (dari sentMsg.id._serialized)
+ *                               Digunakan sebagai dedup key agar message_create event tidak re-log.
  */
-async function _logBotReply(storeWaId, contactId, body, botName) {
+async function _logBotReply(storeWaId, contactId, body, botName, waMessageId = null) {
     await dashboard.addToChatHistory(storeWaId, {
+        id: waMessageId,         // Kunci dedup — message_create akan menemukan ini dan skip
         from: contactId,
         body: body,
         isMe: true,

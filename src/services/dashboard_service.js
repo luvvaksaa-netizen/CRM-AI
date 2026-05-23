@@ -404,11 +404,74 @@ function initDashboard(port = 3000) {
   app.get('/api/summaries', async (req, res) => {
     try {
       const { ChatSummary } = require('../database/index');
-      // Ambil semua rekap, diurutkan dari yang terbaru
+      const { storeId, status } = req.query;
+      const where = {};
+      if (storeId) where.store_wa_id = storeId;
+
       const summaries = await ChatSummary.findAll({
+        where,
         order: [['last_updated', 'DESC']]
       });
-      res.json(summaries);
+
+      // Filter by status keyword if requested (e.g. ?status=closing)
+      const filtered = status
+        ? summaries.filter(s => (s.summary || '').toLowerCase().includes(`status: ${status.toLowerCase()}`))
+        : summaries;
+
+      res.json(filtered);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET: Rekap hanya yang STATUS closing / menunggu transfer (untuk halaman Closing)
+  app.get('/api/summaries/closing', async (req, res) => {
+    try {
+      const { ChatSummary } = require('../database/index');
+      const { storeId } = req.query;
+      const where = {};
+      if (storeId) where.store_wa_id = storeId;
+
+      const allSummaries = await ChatSummary.findAll({
+        where,
+        order: [['last_updated', 'DESC']]
+      });
+
+      // Filter: hanya kontak yang sudah transfer / closing / selesai
+      const CLOSING_STATUSES = ['menunggu transfer', 'closing', 'selesai'];
+      const closingList = allSummaries.filter(s => {
+        const summaryLower = (s.summary || '').toLowerCase();
+        return CLOSING_STATUSES.some(st => summaryLower.includes(`status: ${st}`));
+      });
+
+      res.json(closingList);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // GET: Statistik ringkas — jumlah closing hari ini
+  app.get('/api/summaries/stats', async (req, res) => {
+    try {
+      const { ChatSummary } = require('../database/index');
+      const { storeId } = req.query;
+      const where = {};
+      if (storeId) where.store_wa_id = storeId;
+
+      const allSummaries = await ChatSummary.findAll({ where });
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      let closing = 0, transferPending = 0, selesai = 0, total = allSummaries.length;
+      for (const s of allSummaries) {
+        const txt = (s.summary || '').toLowerCase();
+        if (txt.includes('status: closing'))           closing++;
+        if (txt.includes('status: menunggu transfer')) transferPending++;
+        if (txt.includes('status: selesai'))           selesai++;
+      }
+
+      res.json({ total, closing, transferPending, selesai });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }

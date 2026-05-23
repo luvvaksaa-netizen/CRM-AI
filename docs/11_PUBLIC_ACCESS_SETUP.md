@@ -1,84 +1,93 @@
 # 🚀 Panduan Setup Akses Publik (Cloudflare Tunnel)
 
-Dokumen ini menjelaskan langkah-demi-langkah cara meng-online-kan server lokal CRM Anda (di PC Windows) ke domain publik `crm.datasdm.com` agar mampu menangani trafik hingga 1000 pelanggan/hari secara stabil, tanpa perlu menyewa VPS tambahan, dan 100% gratis.
+Dokumen ini menjelaskan cara meng-online-kan server lokal CRM Anda (di PC Windows) ke domain publik `crm.datasdm.com` agar dapat diakses dari mana saja (HP/Luar Kota).
 
-Solusi yang kita gunakan adalah **Cloudflare Tunnel (cloudflared)**. Solusi ini jauh lebih kuat daripada Ngrok (versi gratis) karena tidak memiliki limit koneksi, otomatis mendapatkan SSL (https), dan tahan serangan DDoS.
+**PENTING UNTUK KASUS ANDA:** Anda saat ini memiliki 2 aplikasi yang berjalan di laptop/server yang sama:
+1. **Aplikasi KirimFoto** (`kirimfoto.com`) berjalan di Port `3000`
+2. **Aplikasi WA CRM AI** (`crm.datasdm.com`) berjalan di Port `3001`
 
-## Prasyarat
-1. Domain Anda (`datasdm.com`) sudah menggunakan **Name Server Cloudflare** (DNS dikelola di dashboard Cloudflare).
-2. PC Server Lokal menyala dan terhubung ke internet.
-3. Aplikasi CRM Anda sudah berjalan di port lokal (biasanya `http://localhost:3000`).
+Jika sebelumnya Anda membuka `crm.datasdm.com` tapi yang muncul malah `kirimfoto.com`, itu karena **aturan routing (ingress) di Cloudflare Tunnel Anda saling bertabrakan atau mengarah ke port yang sama (3000).** 
+
+Jika saat ini muncul **Error 1033 (Cloudflare Tunnel error)**, itu karena service `cloudflared` di laptop Anda sedang mati (karena perintah `net stop cloudflared` yang Anda jalankan sebelumnya).
+
+Berikut adalah solusi tuntas langkah demi langkah yang sangat mudah dipahami.
 
 ---
 
-## Langkah 1: Download & Install Cloudflared
-1. Buka browser di PC Server Anda dan unduh file installer `cloudflared` resmi untuk Windows:
-   👉 [Download cloudflared-windows-amd64.msi](https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.msi)
-2. Buka file `.msi` yang baru diunduh dan ikuti proses instalasinya (klik Next sampai selesai).
+## 🛠️ LANGKAH 1: Bersihkan & Matikan Tunnel Lama
 
-## Langkah 2: Autentikasi Cloudflare
-1. Buka aplikasi **Command Prompt (CMD)** atau **PowerShell** sebagai Administrator.
-2. Ketik perintah berikut dan tekan Enter:
-   ```cmd
-   cloudflared tunnel login
-   ```
-3. Browser Anda akan terbuka secara otomatis, meminta Anda untuk login ke akun Cloudflare.
-4. Pilih domain Anda (`datasdm.com`) lalu klik **Authorize**.
-5. Kembali ke CMD, Anda akan melihat pesan bahwa sertifikat telah berhasil diunduh.
+Pertama, pastikan tidak ada tunnel yang nyangkut. Buka **Command Prompt (CMD) sebagai Administrator**, lalu jalankan:
 
-## Langkah 3: Membuat Tunnel
-Di CMD yang sama, buat sebuah Tunnel baru (mari kita namakan `wa-crm-tunnel`):
 ```cmd
-cloudflared tunnel create wa-crm-tunnel
+net stop cloudflared
+cloudflared service uninstall
 ```
-*(Catat ID Tunnel yang muncul di layar, contoh: `a1b2c3d4-xxxx-xxxx-xxxx-...`)*
 
-## Langkah 4: Mengarahkan Domain (Routing)
-Sekarang, hubungkan Tunnel tersebut ke subdomain `crm.datasdm.com` milik Anda. Ketik perintah ini:
-```cmd
-cloudflared tunnel route dns wa-crm-tunnel crm.datasdm.com
-```
-Perintah ini akan secara otomatis membuat *record CNAME* di DNS Cloudflare Anda.
+> *Abaikan jika muncul error "service not found" atau semacamnya, itu wajar.*
 
-## Langkah 5: Membuat File Konfigurasi
-Anda perlu memberi tahu Cloudflare ke port mana lalu lintas harus diarahkan (yaitu port aplikasi CRM kita, `localhost:3000`).
+---
 
-1. Buka folder `.cloudflared` di *user directory* Anda (biasanya di `C:\Users\NAMA_USER_ANDA\.cloudflared\`).
-2. Buat file baru bernama `config.yml` (pastikan ekstensinya `.yml`, bukan `.txt`).
-3. Buka file tersebut dengan Notepad, dan isikan kode berikut (Ganti `<TUNNEL_ID>` dengan ID panjang yang Anda dapatkan di Langkah 3):
+## 🛠️ LANGKAH 2: Konfigurasi Routing (Ingress) yang Benar
+
+Karena Anda punya 2 domain (`kirimfoto.com` dan `crm.datasdm.com`), kita harus menggabungkannya dalam **SATU** file konfigurasi agar Cloudflare tidak bingung.
+
+1. Buka File Explorer, masuk ke folder: `C:\Windows\System32\config\systemprofile\.cloudflared\`
+   *(Jika folder tidak ada, coba cek di `C:\Users\NAMA_USER_ANDA\.cloudflared\`)*
+2. Cari file bernama `config.yml`. Jika tidak ada, buat file baru menggunakan Notepad dan simpan dengan nama `config.yml` (pastikan ekstensinya `.yml`, BUKAN `.yml.txt`).
+3. Hapus semua isi file tersebut, lalu **Copy-Paste kode di bawah ini**:
 
 ```yaml
-tunnel: <TUNNEL_ID>
-credentials-file: C:\Users\NAMA_USER_ANDA\.cloudflared\<TUNNEL_ID>.json
+tunnel: <TUNNEL_ID_ANDA>
+credentials-file: C:\Windows\System32\config\systemprofile\.cloudflared\<TUNNEL_ID_ANDA>.json
 
 ingress:
+  # 1. Routing untuk KirimFoto (Aplikasi Lama) -> diarahkan ke Port 3000
+  - hostname: kirimfoto.com
+    service: http://localhost:3000
+    
+  # 2. Routing untuk WA CRM AI (Aplikasi Baru) -> diarahkan ke Port 3001
   - hostname: crm.datasdm.com
     service: http://localhost:3001
+    
+  # 3. Default jika ada salah ketik domain
   - service: http_status:404
 ```
-> **Catatan:** 
-> - Ganti `NAMA_USER_ANDA` dengan username Windows Anda.
-> - Port **3001** digunakan agar tidak tabrakan dengan aplikasi `kirimfoto.com` yang menggunakan port 3000.
 
-## Langkah 6: Menjalankan Tunnel sebagai Windows Service (Otomatis)
-Agar Tunnel selalu berjalan otomatis saat komputer dinyalakan tanpa harus membuka CMD terus menerus:
-
-1. Di CMD (Run as Administrator), ketik:
-   ```cmd
-   cloudflared service install
-   ```
-2. Jalankan servicenya dengan membuka aplikasi **Services** bawaan Windows, cari `Cloudflared`, klik kanan, lalu pilih **Start**.
-   *(Alternatif dari CMD: ketik `net start cloudflared`)*
+**⚠️ PERHATIAN PENTING:** 
+Ganti `<TUNNEL_ID_ANDA>` dengan ID Tunnel milik Anda yang asli (berupa kombinasi huruf dan angka panjang). Anda bisa melihat ID ini dari nama file `.json` yang ada di dalam folder `.cloudflared` tersebut. *Pastikan juga path `credentials-file` sesuai dengan lokasi folder tempat file json Anda berada.*
 
 ---
 
-## 🎉 Selesai!
-Sekarang, cobalah buka browser di HP atau perangkat lain (gunakan jaringan seluler) dan akses:
-**https://crm.datasdm.com**
+## 🛠️ LANGKAH 3: Install Ulang & Jalankan Service Tunnel
 
-Anda akan melihat dashboard CRM Anda berjalan dengan gembok hijau (SSL) yang aman!
+Setelah file `config.yml` disimpan dengan benar, kembali ke **CMD (Run as Administrator)** dan jalankan:
 
-### Mengapa ini yang Terbaik untuk 1000 Customer/Hari?
-- **Koneksi Stabil (WebSocket Friendly):** Cloudflare mempertahankan koneksi *real-time* Socket.io tanpa *drop* (berbeda dengan Ngrok gratis yang sering terputus).
-- **Caching & Proteksi:** Cloudflare otomatis menyaring bot/spam, meringankan beban CPU PC lokal Anda.
-- **Auto-Reconnect:** Jika PC restart atau internet sempat putus, *service cloudflared* akan otomatis terhubung kembali tanpa ganti URL.
+```cmd
+cloudflared service install
+net start cloudflared
+```
+
+Jika berhasil, Anda akan melihat pesan bahwa service telah dijalankan.
+
+---
+
+## 🛠️ LANGKAH 4: Pastikan DNS di Dashboard Cloudflare Sudah Benar
+
+Log in ke website **dash.cloudflare.com**:
+
+1. Buka pengaturan DNS untuk domain **datasdm.com**.
+2. Pastikan ada **Record CNAME** untuk `crm` yang mengarah ke `<TUNNEL_ID_ANDA>.cfargotunnel.com`.
+3. *(Lakukan hal yang sama untuk kirimfoto.com jika dikelola di Cloudflare juga).*
+
+---
+
+## ✅ LANGKAH 5: Verifikasi Akhir
+
+Setelah service `cloudflared` statusnya **Running**, cobalah buka dari browser HP Anda:
+1. Akses **https://kirimfoto.com** 👉 Harusnya terbuka Web KirimFoto.
+2. Akses **https://crm.datasdm.com** 👉 Harusnya terbuka Web Dashboard WA CRM AI.
+
+### Masalah & Solusi (Troubleshooting):
+* **Masih Error 1033?** Berarti `cloudflared` gagal start. Coba buka CMD biasa, jalankan `cloudflared tunnel run` untuk melihat pesan errornya. Kemungkinan besar karena salah ketik spasi (indentasi) di dalam file `config.yml`.
+* **Keduanya malah nyasar ke web yang sama?** Pastikan Anda TIDAK menjalankan perintah `cloudflared tunnel run` dua kali di terminal berbeda. Cukup gunakan service otomatis dari Langkah 3 di atas.
+* **NPM Start Mati?** Pastikan `node index.js` untuk CRM berjalan di satu terminal, dan `npm start` untuk KirimFoto berjalan di terminal lainnya. Keduanya harus hidup agar website bisa diakses.
