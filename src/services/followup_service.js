@@ -172,8 +172,44 @@ async function executeFollowUp(followUp) {
         return;
     }
 
-    // 3. Guard: Cek apakah customer sudah merespons setelah follow-up dijadwalkan
-    const { ChatMessage } = require('../database/index');
+    // 3. Guard: Cek ChatSummary terbaru — apakah percakapan sudah closing?
+    // Ini memastikan follow-up tidak dikirim ke customer yang sudah selesai order,
+    // bahkan jika follow-up dijadwalkan sebelum status berubah.
+    const { ChatMessage, ChatSummary: ChatSummaryModel } = require('../database/index');
+    const freshSummary = await ChatSummaryModel.findOne({
+        where: { store_wa_id: followUp.store_wa_id, contact_id: followUp.contact_id }
+    });
+
+    if (freshSummary?.summary) {
+        const { isConversationClosed } = require('./bot_activation_service');
+        if (isConversationClosed(freshSummary.summary)) {
+            await followUp.update({ status: 'cancelled', cancel_reason: 'Percakapan sudah closing/selesai' });
+            logger.info(`[FollowUp] Dibatalkan (closing): stage-${followUp.stage} [${followUp.contact_id}]`);
+            emitFollowUpUpdate(followUp.store_wa_id);
+            return;
+        }
+    }
+
+    // 4. Guard: Cek apakah CS sudah membalas dari HP setelah follow-up ini dijadwalkan
+    // Jika CS sudah handle manual → tidak perlu follow-up otomatis lagi
+    const csManualReply = await ChatMessage.findOne({
+        where: {
+            store_wa_id: followUp.store_wa_id,
+            contact_id: followUp.contact_id,
+            is_from_me: true,
+            sender_name: 'CS (dari HP)',
+            timestamp: { [Op.gt]: followUp.createdAt }
+        }
+    });
+
+    if (csManualReply) {
+        await followUp.update({ status: 'cancelled', cancel_reason: 'CS sudah membalas manual dari HP' });
+        logger.info(`[FollowUp] Dibatalkan (CS manual reply): stage-${followUp.stage} [${followUp.contact_id}]`);
+        emitFollowUpUpdate(followUp.store_wa_id);
+        return;
+    }
+
+    // 5. Guard: Cek apakah customer sudah merespons setelah follow-up dijadwalkan
     const recentCustomerMsg = await ChatMessage.findOne({
         where: {
             store_wa_id: followUp.store_wa_id,
@@ -191,7 +227,7 @@ async function executeFollowUp(followUp) {
         return;
     }
 
-    // 4. Ambil template dan personalisasi
+    // 6. Ambil template dan personalisasi
     const template = FOLLOWUP_TEMPLATES[followUp.stage];
     if (!template) {
         await followUp.update({ status: 'cancelled', cancel_reason: 'Template tidak ditemukan' });
@@ -269,29 +305,49 @@ async function executeFollowUp(followUp) {
         }
     }
 
-    // 6. Kirim via WhatsApp
-    try {
-        const whatsappService = require('../whatsapp_service');
-        await whatsappService.sendFollowUpMessage(
-            followUp.store_wa_id,
-            followUp.contact_id,
-            personalizedCopy,
-            mediaToSend
-        );
+    // 6. Kirim via WhatsApp — dengan retry jika client baru saja restart
+    const MAX_WAIT_RESTART_MS = 3 * 60 * 1000; // Tunggu maks 3 menit jika client restart
+    const startWait = Date.now();
+    
+    while (true) {
+        try {
+            const whatsappService = require('../whatsapp_service');
+            await whatsappService.sendFollowUpMessage(
+                followUp.store_wa_id,
+                followUp.contact_id,
+                personalizedCopy,
+                mediaToSend
+            );
 
-        await followUp.update({ status: 'sent', sent_at: new Date() });
-        logger.success(`[FollowUp] ✅ Stage-${followUp.stage} terkirim ke [${customerName}] (${followUp.contact_id})`);
+            await followUp.update({ status: 'sent', sent_at: new Date() });
+            logger.success(`[FollowUp] ✅ Stage-${followUp.stage} terkirim ke [${customerName}] (${followUp.contact_id})`);
 
-        // 7. Jadwalkan stage berikutnya (jika belum stage terakhir)
-        if (followUp.stage < 4) {
-            await scheduleNextStage(followUp);
+            // 7. Jadwalkan stage berikutnya (jika belum stage terakhir)
+            if (followUp.stage < 4) {
+                await scheduleNextStage(followUp);
+            }
+
+            emitFollowUpUpdate(followUp.store_wa_id);
+            return; // Berhasil
+        } catch (sendErr) {
+            const isRestartError = /null|evaluate|detached|not ready|belum siap/i.test(sendErr.message);
+            const elapsed = Date.now() - startWait;
+
+            if (isRestartError && elapsed < MAX_WAIT_RESTART_MS) {
+                // Client sedang restart, tunggu 15 detik lalu coba lagi
+                logger.warn(`[FollowUp] Client sedang restart, menunggu 15 detik lalu coba kirim ulang stage-${followUp.stage} ke [${customerName}]...`);
+                await new Promise(r => setTimeout(r, 15000));
+                continue;
+            }
+
+            // Gagal permanent — jadwal ulang 5 menit kemudian (bukan cancel)
+            logger.error(`[FollowUp] Gagal kirim stage-${followUp.stage}: ${sendErr.message}`);
+            const retryAt = new Date(Date.now() + 5 * 60 * 1000);
+            await followUp.update({ scheduled_at: retryAt });
+            logger.info(`[FollowUp] Follow-up stage-${followUp.stage} dijadwal ulang ke ${retryAt.toLocaleTimeString('id-ID')}`);
+            emitFollowUpUpdate(followUp.store_wa_id);
+            return;
         }
-
-        emitFollowUpUpdate(followUp.store_wa_id);
-    } catch (sendErr) {
-        logger.error(`[FollowUp] Gagal kirim stage-${followUp.stage}: ${sendErr.message}`);
-        await followUp.update({ status: 'cancelled', cancel_reason: `Gagal kirim: ${sendErr.message}` });
-        emitFollowUpUpdate(followUp.store_wa_id);
     }
 }
 

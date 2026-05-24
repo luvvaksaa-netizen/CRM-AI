@@ -27,7 +27,9 @@ const RESPONSE_TYPE = {
     MEDIA: 'media'
 };
 
-const AI_CHAT_TIMEOUT_MS = Number(process.env.OPENAI_CHAT_TIMEOUT_MS || 25000);
+const AI_CHAT_TIMEOUT_MS = Number(process.env.OPENAI_CHAT_TIMEOUT_MS || 18000);
+const AI_SECOND_CALL_TIMEOUT_MS = Number(process.env.OPENAI_SECOND_CALL_TIMEOUT_MS || Math.min(AI_CHAT_TIMEOUT_MS, 10000));
+const AI_MEDIA_FAST_REPLY_ENABLED = process.env.AI_MEDIA_FAST_REPLY_ENABLED !== 'false';
 const NORMAL_BUBBLE_MAX_WORDS = Number(process.env.AI_MAX_BUBBLE_WORDS || 10);
 
 function parseAutoLabels(value = '') {
@@ -44,6 +46,30 @@ function countWords(text = '') {
 
 function isStructuredReply(text = '') {
     return /(\*Nama\*|\*Alamat\*|\*Pesanan\*|\*Harga\*|\*Ongkir\*|\*total\*|rekening|rekap|detail pemesanan|transfer|cod)/i.test(String(text || ''));
+}
+
+function inferAgentProductKind(agent = {}, mediaResults = []) {
+    const haystack = [
+        agent.name,
+        agent.system_prompt,
+        agent.product_knowledge,
+        ...mediaResults.map(item => item?.media?.label)
+    ].join(' ').toLowerCase();
+
+    if (/\buv\b|stiker keras|timbul|botol|helm|tumbler/.test(haystack)) return 'uv';
+    if (/\bdtf\b|setrika|baju|kain|seragam|hijab/.test(haystack)) return 'dtf';
+    return 'generic';
+}
+
+function buildFastMediaReply(agent, mediaResults = [], interactionCount = 1) {
+    const kind = inferAgentProductKind(agent, mediaResults);
+    if (interactionCount === 1 && kind === 'uv') {
+        return 'Hai kak! Ini stiker UV kami 😊\nMau varian yang mana kak?';
+    }
+    if (interactionCount === 1 && kind === 'dtf') {
+        return 'Hai kak! Ini label DTF kami 😊\nMau varian yang mana kak?';
+    }
+    return 'Ini ya kak 😊\nMau pilih yang mana kak?';
 }
 
 function splitLongBubble(text, maxWords = NORMAL_BUBBLE_MAX_WORDS) {
@@ -224,9 +250,13 @@ LABEL OTOMATIS YANG BOLEH DIPAKAI:
 ${labelSection}
 
 ═══════════════════════════════════════════
-REKAP PEMBAHASAN SEBELUMNYA (Long-Term Memory):
+STATUS PERCAKAPAN & INSTRUKSI KONTEKSTUAL:
 ═══════════════════════════════════════════
-${conversationSummary || 'Percakapan baru saja dimulai.'}
+INTERAKSI KE-${interactionCount} DENGAN PELANGGAN INI.
+${interactionCount === 1
+  ? `⚠️ INI PESAN PERTAMA PELANGGAN INI! WAJIB LAKUKAN OPENING FLOW SESUAI AGENT INI:\n1. Ikuti label media yang tertulis di prompt/knowledge agent dan tersedia di katalog.\n2. Agent DTF kain biasanya memakai ["katalog dtf", "video dtf"]. Agent UV/stiker keras biasanya memakai ["katalog uv", "video uv"].\n3. Jangan memakai katalog/video produk lain.\n4. Kirim teks pendek sesuai opening agent setelah media dipilih.\nJANGAN bertanya nomor pesanan atau data apapun sebelum langkah opening selesai!`
+  : `REKAP PEMBAHASAN SEBELUMNYA (Long-Term Memory):\n${conversationSummary || 'Percakapan sedang berlangsung.'}`
+}
 
 ═══════════════════════════════════════════
 PANDUAN KECERDASAN LANJUTAN (Advanced Intelligence):
@@ -264,18 +294,39 @@ Kamu adalah CS yang sangat cerdas. Berikut panduan untuk menangani berbagai situ
                 type: "function",
                 function: {
                     name: "kirim_media_katalog",
-                    description: "Mengirimkan satu atau beberapa foto/video produk kepada pelanggan.",
+                    description: "Mengirimkan foto/video produk ke pelanggan berdasarkan ID atau nama label.",
                     parameters: {
                         type: "object",
                         properties: {
                             media_ids: { 
                                 type: "array", 
                                 items: { type: "integer" },
-                                description: "Array ID media dari katalog yang ingin dikirimkan." 
+                                description: "Array ID media (Opsional, gunakan label_names jika lebih mudah)." 
                             },
-                            caption: { type: "string", description: "Teks penjelasan singkat tentang media yang dikirim." }
+                            label_names: { 
+                                type: "array", 
+                                items: { type: "string" },
+                                description: "Array nama label dari media yang ingin dikirim (misal: ['katalog dtf', 'video dtf'] atau ['katalog uv', 'video uv'])." 
+                            },
+                            caption: { type: "string", description: "Teks penjelasan singkat untuk media." }
+                        }
+                    }
+                }
+            },
+            {
+                type: "function",
+                function: {
+                    name: "matikan_bot_kontak",
+                    description: "Mem-pause bot untuk kontak ini jika percakapan harus dilanjutkan CS manusia, misalnya produk di luar scope agent, komplain berat, atau kasus yang berisiko.",
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            reason: {
+                                type: "string",
+                                description: "Alasan singkat kenapa bot harus dipause."
+                            }
                         },
-                        required: ["media_ids"]
+                        required: ["reason"]
                     }
                 }
             }
@@ -318,7 +369,7 @@ Kamu adalah CS yang sangat cerdas. Berikut panduan untuk menangani berbagai situ
         // Build structured customer data from conversation summary (anti-lupa)
         const knownDataSection = conversationSummary && conversationSummary !== 'Percakapan baru saja dimulai.'
             ? `\n--- [⚠️ DATA CUSTOMER YANG SUDAH DIKETAHUI — DILARANG KERAS TANYA LAGI] ---\n${conversationSummary}\nPENTING: Data di atas sudah dikumpulkan dari percakapan sebelumnya. DILARANG KERAS menanyakan ulang data yang statusnya BUKAN "belum". Jika ada data yang sudah ada, LANGSUNG gunakan tanpa bertanya.\n---`
-            : '\n(Pelanggan baru. Mulai dengan opening flow: kirim gambar varian + video produk.)';
+            : '\n(Pelanggan baru. Mulai dengan opening flow sesuai prompt agent dan label media produk agent ini.)';
 
         // ══════════════════════════════════════════════════════════════════
         // STRATEGI PRIORITAS TERBALIK (BOTTOM-WEIGHTED)
@@ -339,6 +390,7 @@ Kamu adalah CS yang sangat cerdas. Berikut panduan untuk menangani berbagai situ
 11. Khusus rekap order, alamat, rekening, ongkir, dan rincian pembayaran: boleh lebih panjang, tetapi harus lengkap dan rapi.
 12. Jika prompt agen berisi FLOW WAJIB/opening/media, ikuti urutannya. Untuk gambar/katalog/varian, gunakan tool "kirim_media_katalog" dengan label media yang paling sesuai.
 13. Jika prompt agen melarang jawab harga terlalu cepat, jangan jawab harga sebelum syarat interaksi pada prompt terpenuhi.
+14. Jika prompt agen meminta bot dimatikan/dialihkan ke CS manusia, gunakan tool "matikan_bot_kontak" dan tetap kirim jawaban sopan terakhir.
 
 --- [KETERANGAN PENTING: KEPRIBADIAN & ATURAN UTAMA] ---
 ${sysPrompt}
@@ -404,23 +456,42 @@ ${sysPrompt}
                         needsSecondCall = true;
                     }
 
+                    if (toolCall.function.name === 'matikan_bot_kontak') {
+                        const args = JSON.parse(toolCall.function.arguments || '{}');
+                        messages.push({ tool_call_id: toolCall.id, role: "tool", name: "matikan_bot_kontak", content: `Bot akan dipause untuk kontak ini. Alasan: ${args.reason || 'perlu CS manusia'}` });
+                        needsSecondCall = true;
+                    }
+
                     if (toolCall.function.name === 'kirim_media_katalog') {
                         const args = JSON.parse(toolCall.function.arguments);
                         const ids = args.media_ids || [];
+                        const labels = args.label_names || (args.label ? [args.label] : []);
+                        
                         if (!agentId) {
                              messages.push({ tool_call_id: toolCall.id, role: "tool", name: "kirim_media_katalog", content: "Gagal: Agent ID tidak ditemukan." });
                              needsSecondCall = true;
                              continue;
                         }
-                        const foundMedia = await MediaAsset.findAll({ where: { id: ids, agent_id: agentId } });
-                        const allowedMedia = foundMedia.filter(m => m.purpose !== 'knowledge_only');
+                        
+                        const sendableMedia = await getSendableMedia(agentId);
+                        const allowedMedia = sendableMedia.filter(m => 
+                            ids.includes(m.id) || 
+                            labels.some(l => {
+                                if (!m.label) return false;
+                                const mLbl = m.label.toLowerCase().trim();
+                                const qLbl = l.toLowerCase().trim();
+                                // Exact match ATAU contains match (fuzzy)
+                                return mLbl === qLbl || mLbl.includes(qLbl) || qLbl.includes(mLbl);
+                            })
+                        );
 
                         if (allowedMedia.length > 0) {
-                            mediaResults = allowedMedia.map(m => ({ media: m, caption: args.caption || "" }));
+                            mediaResults.push(...allowedMedia.map(m => ({ media: m, caption: args.caption || "" })));
                             messages.push({ tool_call_id: toolCall.id, role: "tool", name: "kirim_media_katalog", content: `${allowedMedia.length} media berhasil dikirim.` });
                             needsSecondCall = true;
                         } else {
-                            messages.push({ tool_call_id: toolCall.id, role: "tool", name: "kirim_media_katalog", content: "Media tidak ditemukan." });
+                            const availableLabels = sendableMedia.map(m => m.label).filter(Boolean).join(', ');
+                            messages.push({ tool_call_id: toolCall.id, role: "tool", name: "kirim_media_katalog", content: `Media tidak ditemukan untuk label: ${labels.join(', ')}. Label yang tersedia: ${availableLabels || '(kosong, belum ada media)'}` });
                             needsSecondCall = true;
                         }
                     }
@@ -431,8 +502,13 @@ ${sysPrompt}
                 }
             }
 
-            let finalContent = "";
-            if (needsSecondCall) {
+            const toolNames = responseMessage.tool_calls.map(tc => tc.function.name);
+            const canFastReturnMedia = AI_MEDIA_FAST_REPLY_ENABLED &&
+                mediaResults.length > 0 &&
+                toolNames.every(name => name === 'kirim_media_katalog');
+            let finalContent = sanitizeTextOutput(responseMessage.content || "");
+
+            if (needsSecondCall && !canFastReturnMedia) {
                 const secondResponse = await openai.chat.completions.create({ 
                     model: modelName, 
                     messages: [
@@ -440,9 +516,11 @@ ${sysPrompt}
                         { role: "system", content: "PENGINGAT TEKNIS: Jangan tulis link/tag media/ID/timestamp. Untuk chat normal, pisahkan bubble dengan newline dan maksimal 10 kata per bubble. Untuk rekap/order/payment, tulis lengkap dan rapi." }
                     ],
                     temperature: 0.45
-                }, { timeout: AI_CHAT_TIMEOUT_MS });
+                }, { timeout: AI_SECOND_CALL_TIMEOUT_MS });
                 responseMessage = secondResponse.choices[0].message;
                 finalContent = responseMessage.content;
+            } else if (canFastReturnMedia && !finalContent) {
+                finalContent = buildFastMediaReply(agent, mediaResults, interactionCount);
             }
 
             if (mediaResults.length > 0) {
@@ -572,11 +650,11 @@ async function transcribeAudio(audioPath) {
 /**
  * Menghitung jeda mengetik yang realistis (Natural Human Typing).
  */
-function calculateTypingDelay(text, minCharDelay = 18, maxDelay = 650) {
-    if (!text) return 250;
-    const randomSpeed = Math.floor(Math.random() * (32 - minCharDelay + 1)) + minCharDelay;
+function calculateTypingDelay(text, minCharDelay = 12, maxDelay = 300) {
+    if (!text) return 150;
+    const randomSpeed = Math.floor(Math.random() * (22 - minCharDelay + 1)) + minCharDelay;
     const baseDelay = text.length * randomSpeed;
-    const humanOffset = Math.floor(Math.random() * (180 - 80 + 1)) + 80;
+    const humanOffset = Math.floor(Math.random() * (100 - 50 + 1)) + 50;
     return Math.min(baseDelay + humanOffset, maxDelay);
 }
 

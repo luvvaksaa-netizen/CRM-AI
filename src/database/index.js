@@ -83,6 +83,10 @@ const ChatMessage = sequelize.define('ChatMessage', {
   contact_lid:          { type: DataTypes.STRING, allowNull: true },
   contact_type:         { type: DataTypes.STRING, allowNull: true },
   contact_source:       { type: DataTypes.STRING, allowNull: true },
+  quoted_message_id:    { type: DataTypes.STRING, allowNull: true },
+  quoted_body:          { type: DataTypes.TEXT, allowNull: true },
+  quoted_from_me:       { type: DataTypes.BOOLEAN, allowNull: true },
+  quoted_sender_name:   { type: DataTypes.STRING, allowNull: true },
   body:        { type: DataTypes.TEXT },
   type:        { type: DataTypes.STRING,  defaultValue: 'chat' },
   is_from_me:  { type: DataTypes.BOOLEAN, defaultValue: false },
@@ -277,6 +281,10 @@ async function initDB() {
     await safeAddColumn('ChatMessages', 'contact_lid', { type: DataTypes.STRING, allowNull: true });
     await safeAddColumn('ChatMessages', 'contact_type', { type: DataTypes.STRING, allowNull: true });
     await safeAddColumn('ChatMessages', 'contact_source', { type: DataTypes.STRING, allowNull: true });
+    await safeAddColumn('ChatMessages', 'quoted_message_id', { type: DataTypes.STRING, allowNull: true });
+    await safeAddColumn('ChatMessages', 'quoted_body', { type: DataTypes.TEXT, allowNull: true });
+    await safeAddColumn('ChatMessages', 'quoted_from_me', { type: DataTypes.BOOLEAN, allowNull: true });
+    await safeAddColumn('ChatMessages', 'quoted_sender_name', { type: DataTypes.STRING, allowNull: true });
     await safeAddColumn('ChatMessages', 'is_read', { type: DataTypes.BOOLEAN, defaultValue: false });
     await safeAddColumn('BotAgents', 'auto_labels', { type: DataTypes.TEXT, defaultValue: '' });
 

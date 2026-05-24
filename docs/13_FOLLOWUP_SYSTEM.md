@@ -14,6 +14,7 @@ Tujuan dari modul follow-up ini adalah untuk mengembalikan perhatian customer ya
 3. **Random Delay Execution**: Pengiriman pesan follow-up tidak dilakukan serentak di waktu yang sama persis, melainkan diberi jeda acak 2-5 menit antar-customer untuk meniru perilaku manusia asli.
 4. **Media Integrations**: Setiap pesan follow-up dapat melampirkan media yang relevan (seperti video testimoni atau foto produk) berdasarkan label media di library agen.
 5. **Human Override Safety**: Jika status AI Reply pada kontak di-pause oleh operator CRM (status PAUSED_CONTACT), follow-up otomatis ditunda/tidak dikirimkan untuk mencegah bentrokan balasan.
+6. **WA Runtime Safety**: Saat browser WhatsApp sedang recovery, follow-up menunggu client siap (`WA_SEND_READY_TIMEOUT_MS`) sebelum mencoba `sendMessage`, sehingga tidak langsung gagal dengan error `Cannot read properties of null (reading 'evaluate')`.
 
 ---
 

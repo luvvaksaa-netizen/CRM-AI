@@ -1,6 +1,6 @@
 # 📖 Panduan Pengguna — WA-AI-CS CRM Dashboard
 
-> **Versi:** 1.7 (WA-JS LID Resolve + Typing Hardening)  
+> **Versi:** 1.8 (WA-JS Sync Recovery + Fast Typing)  
 > **Terakhir Diperbarui:** 2026-05-20  
 > **Target:** Pengguna Non-Teknis & Admin
 
@@ -246,7 +246,7 @@ pm2 save
 | DELETE | `/api/media/:agentId/:id` | Hapus media |
 | GET | `/api/chat/:storeId` | Ambil histori chat |
 | GET | `/api/summaries` | List semua rekap percakapan |
-| POST | `/api/send` | Kirim pesan manual via WA |
+| POST | `/api/send` | Kirim pesan manual via WA; mendukung `quotedMessageId` untuk reply spesifik |
 | POST | `/api/send-media` | Kirim media manual via WA |
 | GET | `/api/stores/:s/contacts/:c/pause` | Cek status pause kontak |
 | POST | `/api/stores/:s/contacts/:c/pause` | Toggle pause kontak |
@@ -258,6 +258,8 @@ pm2 save
 - Histori chat panjang sekarang bisa dimuat bertahap. Buka satu kontak lalu scroll ke bagian atas chat untuk memuat pesan lama.
 - Kirim pesan manual sekarang memvalidasi nomor WA dan punya rate limit agar dashboard lebih aman.
 - Sistem memakai hybrid WA-JS untuk fitur tambahan seperti reaksi emoji pada media/stiker, dengan fallback otomatis ke WWebJS.
+- Startup sync memakai WA-JS `chat.list/getMessages` jika tersedia. Pesan non-reply tetap aman karena metadata quoted dibaca secara defensif.
+- Typing customer-side dibatasi pendek dan muncul dekat waktu kirim, bukan sepanjang AI sedang berpikir.
 | GET | `/api/system/backups` | List backup database |
 
 ---
@@ -280,7 +282,7 @@ pm2 save
 - Daftar `Label Otomatis` pada AI Agent dipakai AI untuk memilih label via WA-JS saat konteks chat relevan.
 
 ### Respons Lebih Cepat & Bubble Pendek
-- Debounce balasan default dipercepat menjadi `AI_REPLY_DEBOUNCE_MS=1400`.
+- Debounce balasan default dipercepat menjadi `AI_REPLY_DEBOUNCE_MS=1200`.
 - Typing simulation dipangkas agar chat pendek tidak terasa menunggu lama.
 - Jika AI menulis beberapa baris, tiap baris dikirim sebagai bubble WhatsApp terpisah.
 - Chat normal dijaga maksimal 10 kata per bubble; rekap order/payment tetap boleh panjang agar data lengkap.

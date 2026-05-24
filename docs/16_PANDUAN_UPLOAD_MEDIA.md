@@ -15,13 +15,54 @@ terpakai di follow-up otomatis, dan sebagai knowledge AI.
 
 ---
 
+## 🔍 CARA KERJA PENGIRIMAN MEDIA (WAJIB DIBACA)
+
+### Update Teknis Video
+
+- Video besar dianalisis dari dua sisi: visual frame + audio narasi.
+- Untuk transkripsi, sistem mengekstrak audio kecil dulu sebelum memanggil Whisper. Video 20MB/45 detik tidak lagi dikirim penuh ke API transkripsi.
+- Untuk pengiriman WhatsApp, video di atas threshold dibuatkan versi MP4 ringan otomatis (`*-wa.mp4`) saat analisis atau saat pertama kali dikirim, agar customer tidak menunggu terlalu lama.
+- Rekomendasi tetap: video katalog 8-12MB atau lebih kecil, durasi 15-45 detik, audio jelas, dan tidak perlu resolusi terlalu tinggi.
+- Jika status analisis selesai tetapi `narasi=false`, berarti audio tidak ada/tidak terbaca atau koneksi Whisper gagal setelah retry; analisis visual tetap bisa dipakai AI.
+
+### Apakah bisa kirim lebih dari 1 gambar dengan label yang sama?
+
+**Ya, bisa.** Tapi ada yang perlu Anda pahami:
+
+#### Fakta Teknis
+- Setiap file yang dikirim = **1 bubble pesan WhatsApp tersendiri**
+- WhatsApp tidak bisa menggabungkan beberapa gambar dalam 1 bubble
+- Namun jika beberapa gambar dikirim berurutan cepat, **WhatsApp akan otomatis menampilkannya sebagai album** (terlihat rapih)
+
+#### Contoh Skenario
+| Anda upload | Label | Yang terjadi |
+|-------------|-------|--------------|
+| 1 file kolase (4 varian dalam 1 gambar) | `katalog dtf` | **✅ 1 bubble — PALING CLEAN** |
+| 3 file terpisah | `katalog dtf 1`, `katalog dtf 2`, `katalog dtf 3` | ⚠️ 3 bubble — AI mungkin tidak kirim semua |
+| 3 file terpisah | semua diberi label `katalog dtf` | ✅ 3 bubble — AI biasanya kirim semua (jika diperintahkan) |
+
+#### Rekomendasi Terbaik
+> **Gabungkan semua varian menjadi 1 gambar kolase/grid**, lalu upload 1 file dengan label `katalog dtf`.  
+> Ini paling **reliable, cepat, dan clean** — 1 bubble, selalu terkirim, tidak tergantung pilihan AI.
+
+#### Jika Tetap Ingin Multi-File
+Beri label yang **sama persis** (misalnya semua `katalog dtf`), bukan `katalog dtf 1`, `katalog dtf 2`.  
+AI akan melihat semua file berlabel sama di katalog dan bisa memilih semua dengan `media_ids: [1, 2, 3]`.  
+Pastikan di System Prompt sudah ada instruksi: *"Kirim SEMUA gambar yang berlabel 'katalog dtf'"*
+
+#### Bagaimana dengan Follow-Up Otomatis?
+Follow-up sistem hanya mengirim **1 media per stage** (media pertama yang cocok ditemukan).
+Jadi untuk follow-up, cukup 1 file per label sudah optimal.
+
+---
+
 ## 🟦 AGENT DTF (Label Nama Baju/Kain)
 *Upload semua media berikut ke Agent DTF*
 
 | No | Tipe | Label (WAJIB PERSIS INI) | Isi / Keterangan | Digunakan Untuk |
 |----|------|--------------------------|------------------|-----------------|
 | 1 | 📷 Gambar | `katalog dtf` | Foto 4 varian font DTF (bahan kain) | Dikirim bot saat opening — customer lihat pilihan font |
-| 2 | 🎬 Video | `video dtf` | Video cara setrika label ke baju/seragam | Dikirim saat opening + Follow-Up Stage 1 & 3 |
+| 2 | 🎬 Video | `video dtf` | Video cara setrika label ke baju/seragam/bahan kain lain | Dikirim saat opening + Follow-Up Stage 1 & 3 |
 | 3 | 📷 Gambar | `testimoni dtf` | Screenshot/foto review customer DTF | Follow-Up Stage 2 & 4 |
 | 4 | 📷 Gambar | `value dtf` | Infografis keunggulan DTF (waterproof, tahan cuci, dll) | Follow-Up Stage 2 |
 | 5 | 📷 Gambar | `bundling upsell` | Foto paket bundling Back to School | Upselling setelah customer closing |
@@ -80,7 +121,8 @@ terpakai di follow-up otomatis, dan sebagai knowledge AI.
 ```
 Customer Chat Pertama
         ↓
-Bot: "Hai kak!" + kirim [katalog dtf/uv] + [video dtf/uv]
+Bot: kirim teks cepat + [katalog dtf/uv] + [video dtf/uv]
+      (jika ada video, teks dikirim dulu agar customer tidak menunggu upload)
         ↓
 Customer pilih varian → tanya nama → tanya qty → tanya alamat
         ↓

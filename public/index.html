@@ -243,6 +243,72 @@
         .msg-out { align-self: flex-end; background: var(--clr-primary); color: white; border-bottom-right-radius: 5px; box-shadow: 0 4px 14px rgba(91,94,244,0.25); }
         .msg-in  { align-self: flex-start; background: white; color: #1e293b; border-bottom-left-radius: 5px; box-shadow: var(--shadow-msg); }
         .msg-out small { text-align: right; }
+        .msg-quote {
+            border-left: 3px solid rgba(91,94,244,0.45);
+            background: rgba(15,23,42,0.05);
+            border-radius: 8px;
+            padding: 7px 9px;
+            margin-bottom: 8px;
+            font-size: 0.78rem;
+            line-height: 1.35;
+            cursor: pointer;
+        }
+        .msg-out .msg-quote {
+            border-left-color: rgba(255,255,255,0.7);
+            background: rgba(255,255,255,0.16);
+        }
+        .msg-quote-label {
+            display: block;
+            font-size: 0.68rem;
+            font-weight: 800;
+            opacity: 0.72;
+            margin-bottom: 2px;
+        }
+        .msg-meta {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+            margin-top: 5px;
+        }
+        .msg-reply-btn {
+            width: 24px;
+            height: 24px;
+            border: 0;
+            border-radius: 8px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(15,23,42,0.08);
+            color: inherit;
+            opacity: 0;
+            transition: var(--transition);
+        }
+        .msg:hover .msg-reply-btn { opacity: 0.75; }
+        .msg-reply-btn:hover { opacity: 1; background: rgba(15,23,42,0.14); }
+        .reply-context {
+            margin: 0 28px;
+            padding: 10px 14px;
+            background: #f8fafc;
+            border-top: 1px solid #eef2f7;
+            border-left: 3px solid var(--clr-primary);
+            font-size: 0.78rem;
+            color: #475569;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .reply-context strong { color: #1e293b; }
+        .reply-context button {
+            border: 0;
+            background: transparent;
+            color: #64748b;
+            width: 28px;
+            height: 28px;
+            border-radius: 8px;
+        }
+        .reply-context button:hover { background: #e2e8f0; color: #0f172a; }
 
         #replyBar {
             padding: 18px 28px;
@@ -511,6 +577,9 @@
                     <button id="btnRequestPhone" class="btn btn-light border d-none" style="width:38px;height:38px;border-radius:10px;color:var(--slate-600);" onclick="requestCustomerPhone()" title="Minta nomor asli customer dari kontak privat WhatsApp">
                         <i class="fas fa-phone"></i>
                     </button>
+                    <button id="btnClearChat" class="btn btn-light border d-none" style="width:38px;height:38px;border-radius:10px;color:#ef4444;" onclick="clearContactChat()" title="Hapus semua riwayat chat kontak ini dari CRM">
+                        <i class="fas fa-trash-alt"></i>
+                    </button>
                     <!-- TAHAP 3: GUI Human Override (Toggle per Chat) -->
                     <div class="form-check form-switch m-0 d-none" id="chatBotToggleContainer" title="Matikan untuk membalas manual tanpa diganggu bot AI">
                         <input class="form-check-input" type="checkbox" id="chatBotToggle" onchange="toggleBotForChat()" style="cursor:pointer; width: 2em; height: 1.1em;" checked>
@@ -527,6 +596,8 @@
                     <p>Pilih percakapan untuk mulai memantau atau membalas.</p>
                 </div>
             </div>
+
+            <div id="manualReplyContext" class="reply-context d-none"></div>
 
             <div id="replyBar" class="d-flex align-items-center gap-2">
                 <button class="btn btn-light border" style="width:45px;height:45px;border-radius:12px;color:var(--slate-500);transition:0.2s;" onclick="openMediaSelector()" title="Sisipkan Katalog/Gambar"><i class="fas fa-paperclip"></i></button>
@@ -1056,6 +1127,7 @@
     let selectedFile = null;
     let selectedPurpose = 'both';
     let waLabels = [];
+    let selectedReplyContext = null;
 
     // ============================================================
     // INIT
@@ -1167,6 +1239,7 @@
         document.getElementById('hdrSub').innerText = 'Pilih kontak dari daftar kiri';
         document.getElementById('btnManageLabels').classList.add('d-none');
         document.getElementById('btnRequestPhone').classList.add('d-none');
+        document.getElementById('btnClearChat').classList.add('d-none');
         document.getElementById('chatBotToggleContainer').classList.add('d-none');
         
         // Sync the connection card (QR/Spinner/Success View)
@@ -1768,6 +1841,7 @@
         currentContactId = c;
         window.activeChatMessages = null; // Clear previous specific history
         chatPagination = { hasMore: false, nextBefore: null, loading: false };
+        clearReplyContext();
         
         const meta = getLatestContactMeta(c);
         const displayName = getContactDisplayName(c, friendlyName, meta);
@@ -1777,6 +1851,7 @@
         document.getElementById('hdrSub').innerText    = getContactSubtitle(c, meta);
         document.getElementById('btnManageLabels').classList.remove('d-none');
         document.getElementById('btnRequestPhone').classList.toggle('d-none', !isLidContact(c));
+        document.getElementById('btnClearChat').classList.remove('d-none');
         
         // Tampilkan & Cek status Human Override
         document.getElementById('chatBotToggleContainer').classList.remove('d-none');
@@ -1843,6 +1918,26 @@
         } catch (e) {
             toast('Gagal mengatur status AI.', 'error');
             document.getElementById('chatBotToggle').checked = !isAIActive; // Revert
+        }
+    }
+
+    async function clearContactChat() {
+        if (!currentStoreId || !currentContactId) return;
+        const displayName = document.getElementById('hdrName').innerText || currentContactId;
+        if (!confirm(`Hapus SEMUA riwayat chat "${displayName}" dari CRM?\n\nChat di WhatsApp HP tidak terpengaruh.\nBot akan menganggap ini pelanggan baru.`)) return;
+        try {
+            const contactPath = encodeURIComponent(currentContactId);
+            const res = await fetch(`/api/chat/${currentStoreId}/${contactPath}`, { method: 'DELETE' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.message || 'Gagal menghapus.');
+            toast(`Riwayat chat ${displayName} dihapus (${data.deletedMsgs} pesan).`, 'success');
+            // Reset UI
+            messages = messages.filter(m => m.contact_id !== currentContactId);
+            if (window.activeChatMessages) window.activeChatMessages = [];
+            renderMessages();
+            renderConvList();
+        } catch (e) {
+            toast(e.message || 'Gagal menghapus riwayat chat.', 'error');
         }
     }
 
@@ -2048,6 +2143,79 @@
         }
     }
 
+    function getMessageStableId(message) {
+        return message?.wa_message_id || message?.id || '';
+    }
+
+    function quotePreviewText(text) {
+        const preview = getPreviewText(text || '').replace(/\s+/g, ' ').trim();
+        if (!preview) return 'Pesan terkait';
+        return preview.length > 120 ? `${preview.slice(0, 117)}...` : preview;
+    }
+
+    function renderQuotedPreview(message) {
+        if (!message?.quoted_message_id && !message?.quoted_body) return '';
+        const encodedId = message.quoted_message_id ? encodeURIComponent(message.quoted_message_id) : '';
+        const clickAttr = encodedId ? ` onclick="scrollToQuotedMessage('${encodedId}')"` : '';
+        const label = message.quoted_sender_name || (message.quoted_from_me ? 'Admin / AI' : 'Customer');
+        return `
+            <div class="msg-quote"${clickAttr}>
+                <span class="msg-quote-label"><i class="fas fa-reply me-1"></i>${escapeHtml(label)}</span>
+                <span>${escapeHtml(quotePreviewText(message.quoted_body))}</span>
+            </div>`;
+    }
+
+    function scrollToQuotedMessage(encodedId) {
+        const messageId = decodeURIComponent(encodedId || '');
+        if (!messageId) return;
+        const target = [...document.querySelectorAll('.msg')].find(el => el.dataset.waMessageId === messageId);
+        if (!target) {
+            toast('Pesan asal belum termuat. Coba muat histori lama.', 'info');
+            return;
+        }
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        target.style.boxShadow = '0 0 0 3px rgba(91,94,244,0.28)';
+        setTimeout(() => { target.style.boxShadow = ''; }, 1300);
+    }
+
+    function setReplyContext(message) {
+        const id = getMessageStableId(message);
+        if (!id) {
+            toast('Pesan ini belum punya ID WhatsApp untuk di-reply.', 'error');
+            return;
+        }
+        selectedReplyContext = {
+            id,
+            body: quotePreviewText(message.body),
+            fromMe: Boolean(message.is_from_me),
+            senderName: message.sender_name || (message.is_from_me ? 'Admin / AI' : 'Customer')
+        };
+        renderManualReplyContext();
+        document.getElementById('replyInput').focus();
+    }
+
+    function clearReplyContext() {
+        selectedReplyContext = null;
+        renderManualReplyContext();
+    }
+
+    function renderManualReplyContext() {
+        const bar = document.getElementById('manualReplyContext');
+        if (!bar) return;
+        if (!selectedReplyContext) {
+            bar.classList.add('d-none');
+            bar.innerHTML = '';
+            return;
+        }
+        bar.classList.remove('d-none');
+        bar.innerHTML = `
+            <div style="min-width:0;">
+                <strong><i class="fas fa-reply me-1"></i>Membalas ${escapeHtml(selectedReplyContext.senderName)}</strong>
+                <div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(selectedReplyContext.body)}</div>
+            </div>
+            <button type="button" onclick="clearReplyContext()" title="Batal reply"><i class="fas fa-times"></i></button>`;
+    }
+
     function parseMediaMsg(text) {
         if(!text) return '';
         let html = text.replace(/</g, "&lt;").replace(/>/g, "&gt;"); // XSS
@@ -2112,8 +2280,20 @@
 
             const div = document.createElement('div');
             div.className = `msg ${m.is_from_me ? 'msg-out' : 'msg-in'}`;
+            div.dataset.waMessageId = getMessageStableId(m);
             // Use logical payload rendering instead of raw text
-            div.innerHTML  = `<div>${parseMediaMsg(m.body)}</div><small>${moment(m.timestamp).format('HH:mm')}</small>`;
+            div.innerHTML  = `
+                ${renderQuotedPreview(m)}
+                <div>${parseMediaMsg(m.body)}</div>
+                <div class="msg-meta">
+                    <small>${moment(m.timestamp).format('HH:mm')}</small>
+                    <button type="button" class="msg-reply-btn" title="Reply pesan ini"><i class="fas fa-reply"></i></button>
+                </div>`;
+            const replyBtn = div.querySelector('.msg-reply-btn');
+            if (replyBtn) replyBtn.onclick = (event) => {
+                event.stopPropagation();
+                setReplyContext(m);
+            };
             container.appendChild(div);
         });
         if (options.preserveScroll) {
@@ -2134,10 +2314,19 @@
             const res = await fetch('/api/send', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ storeId: currentStoreId, to: currentContactId, body })
+                body: JSON.stringify({
+                    storeId: currentStoreId,
+                    to: currentContactId,
+                    body,
+                    quotedMessageId: selectedReplyContext?.id || null,
+                    quotedBody: selectedReplyContext?.body || '',
+                    quotedFromMe: selectedReplyContext?.fromMe ?? null,
+                    quotedSenderName: selectedReplyContext?.senderName || ''
+                })
             })
             if (res.ok) {
                 input.value = '';
+                clearReplyContext();
                 // TAHAP 3: Jika manusia balas manual, UI Toggle otomatis berubah jadi "Dipause"
                 loadBotToggleState(); 
             } else {
@@ -2512,6 +2701,35 @@
             const container = document.getElementById('chatMessages');
             if (container) container.scrollTop = container.scrollHeight;
         }
+    });
+
+    // === SINKRONISASI HAPUS PESAN ===
+    // Ketika customer/CS menghapus pesan dari HP, UI CRM juga langsung ikut menghapus.
+    socket.on('messageRevoked', ({ storeId, waMessageId, contactId }) => {
+        if (storeId !== currentStoreId) return;
+        // Hapus dari array messages lokal
+        const idx = messages.findIndex(m => m.wa_message_id === waMessageId || m.id === waMessageId);
+        if (idx !== -1) messages.splice(idx, 1);
+        // Hapus dari activeChatMessages jika kontak sedang dibuka
+        if (window.activeChatMessages) {
+            const aIdx = window.activeChatMessages.findIndex(m => m.wa_message_id === waMessageId || m.id === waMessageId);
+            if (aIdx !== -1) window.activeChatMessages.splice(aIdx, 1);
+        }
+        // Re-render jika kontak yang aktif
+        if (contactId === currentContactId || window.activeChatMessages) renderMessages();
+        renderConvList();
+    });
+
+    // === SINKRONISASI HAPUS SEMUA CHAT KONTAK ===
+    socket.on('chatCleared', ({ storeId, contactId }) => {
+        if (storeId !== currentStoreId) return;
+        messages = messages.filter(m => m.contact_id !== contactId);
+        if (window.activeChatMessages) {
+            window.activeChatMessages = window.activeChatMessages.filter(m => m.contact_id !== contactId);
+        }
+        if (contactId === currentContactId) clearReplyContext();
+        if (contactId === currentContactId) renderMessages();
+        renderConvList();
     });
 
     socket.on('statusUpdate', ({ storeId, status }) => {

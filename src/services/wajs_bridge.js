@@ -413,6 +413,158 @@ async function forwardMessages(client, toChatId, messageIds, options = {}, store
   }, { to: toChatId, idsToForward: cleanIds, forwardOptions: options || {} });
 }
 
+/**
+ * Mendapatkan daftar chat aktif via WPPConnect.
+ * @param {object} client WWebJS Client
+ * @param {string} storeWaId Store identifier
+ * @returns {Array} List of chat objects
+ */
+async function getChats(client, storeWaId = 'default') {
+  const page = await getReadyPage(client, storeWaId);
+  const rawChats = await page.evaluate(async () => {
+    if (!window.WPP?.chat?.list && !window.WPP?.chat?.getChats) {
+      throw new Error('WPP.chat.list/getChats tidak tersedia.');
+    }
+    const chats = window.WPP.chat.list
+      ? await window.WPP.chat.list({ count: 50, onlyUsers: true, ignoreGroupMetadata: true })
+      : await window.WPP.chat.getChats();
+
+    const safeGet = (fn, fallback = null) => {
+      try {
+        const value = fn();
+        return value === undefined ? fallback : value;
+      } catch (_) {
+        return fallback;
+      }
+    };
+    const getWaId = (idObj) => {
+      if (!idObj) return '';
+      if (typeof idObj === 'string') return idObj;
+      if (idObj._serialized) return idObj._serialized;
+      if (idObj.id?._serialized) return idObj.id._serialized;
+      if (idObj.user && idObj.server) return `${idObj.user}@${idObj.server}`;
+      return String(idObj);
+    };
+
+    // Petakan properti WPP ke WWebJS style
+    return (chats || []).map(chat => ({
+      id: { _serialized: getWaId(safeGet(() => chat.id)) || null },
+      name: safeGet(() => chat.name) || safeGet(() => chat.formattedTitle) || '',
+      isGroup: Boolean(safeGet(() => chat.isGroup, false)),
+      unreadCount: Number(safeGet(() => chat.unreadCount, 0) || 0),
+      timestamp: Number(safeGet(() => chat.t, 0) || 0),
+      pin: safeGet(() => chat.pin, 0) || 0,
+      archived: Boolean(safeGet(() => chat.archive, false)),
+      isReadOnly: Boolean(safeGet(() => chat.isReadOnly, false))
+    }));
+  });
+
+  // Tambahkan mock methods yang sering dipanggil oleh WWebJS logic
+  return rawChats.map(chat => ({
+    ...chat,
+    sendSeen: async () => safeMarkIsRead(client, chat.id._serialized, storeWaId)
+  }));
+}
+
+/**
+ * Mengambil pesan-pesan terakhir dalam suatu chat via WPPConnect.
+ * Berguna karena WWebJS fetchMessages sering crash karena 'waitForChatLoading'.
+ * @param {object} client WWebJS Client
+ * @param {string} chatId Target chat ID
+ * @param {number} limit Maksimal pesan yang ditarik
+ * @param {string} storeWaId Store identifier
+ * @returns {Array} List of message objects
+ */
+async function getMessages(client, chatId, limit = 20, storeWaId = 'default') {
+  const cleanChatId = String(chatId || '').trim();
+  if (!cleanChatId) throw new Error('chatId wajib diisi.');
+
+  const page = await getReadyPage(client, storeWaId);
+  const rawMessages = await page.evaluate(async ({ id, count }) => {
+    if (!window.WPP?.chat?.getMessages) {
+      throw new Error('WPP.chat.getMessages tidak tersedia.');
+    }
+    const msgs = await window.WPP.chat.getMessages(id, { count });
+    
+    // Helper internal untuk stringify _serialized jika object
+    const getWaId = (idObj) => {
+      if (!idObj) return '';
+      if (typeof idObj === 'string') return idObj;
+      if (idObj._serialized) return idObj._serialized;
+      if (idObj.id?._serialized) return idObj.id._serialized;
+      if (idObj.user && idObj.server) return `${idObj.user}@${idObj.server}`;
+      return String(idObj);
+    };
+    const getMsgId = (idObj) => {
+      if (!idObj) return '';
+      if (typeof idObj === 'string') return idObj;
+      if (idObj._serialized) return idObj._serialized;
+      if (typeof idObj.id === 'string') return idObj.id;
+      if (idObj.id?._serialized) return idObj.id._serialized;
+      if (idObj.remote && idObj.id) return `${idObj.fromMe ? 'true' : 'false'}_${getWaId(idObj.remote)}_${idObj.id}`;
+      return String(idObj);
+    };
+    const safeGet = (fn, fallback = null) => {
+      try {
+        const value = fn();
+        return value === undefined ? fallback : value;
+      } catch (_) {
+        return fallback;
+      }
+    };
+
+    // Petakan properti WPP ke WWebJS style untuk message_handler compatibility
+    return (msgs || []).map(msg => ({
+      ...(() => {
+        const quoted = safeGet(() => msg.quotedMsg, null) ||
+          safeGet(() => (typeof msg.quotedMsgObj === 'function' ? msg.quotedMsgObj() : null), null);
+        const quotedId = getMsgId(
+          safeGet(() => msg.quotedMsgId, null) ||
+          safeGet(() => msg.quotedMsgKey, null) ||
+          safeGet(() => quoted?.id, null)
+        ) || safeGet(() => msg.quotedStanzaID, '') || '';
+        return {
+          hasQuotedMsg: Boolean(quotedId || quoted),
+          quotedMsgId: quotedId,
+          quotedBody: safeGet(() => quoted?.body, '') || safeGet(() => quoted?.caption, '') || '',
+          quotedFromMe: Boolean(safeGet(() => quoted?.id?.fromMe, false) || safeGet(() => quoted?.fromMe, false)),
+          quotedSenderName: safeGet(() => quoted?.pushName, '') || ''
+        };
+      })(),
+      id: { _serialized: getMsgId(safeGet(() => msg.id, null)) || null },
+      from: getWaId(safeGet(() => msg.from, null)),
+      to: getWaId(safeGet(() => msg.to, null)),
+      body: safeGet(() => msg.body, '') || '',
+      isStatus: Boolean(safeGet(() => msg.isStatusV3, false)),
+      fromMe: Boolean(safeGet(() => msg.id?.fromMe, false) || safeGet(() => msg.fromMe, false)),
+      timestamp: safeGet(() => msg.t, 0) || 0,
+      hasMedia: Boolean(safeGet(() => msg.hasMedia, false) || safeGet(() => msg.isMedia, false) || safeGet(() => msg.mediaData, null)),
+      type: safeGet(() => msg.type, 'chat') || 'chat',
+      author: getWaId(safeGet(() => msg.author, null)) || undefined,
+      vCards: safeGet(() => msg.vCards, []) || [],
+      // properti tambahan untuk keperluan spesifik WWebJS
+      ack: safeGet(() => msg.ack, 0) || 0,
+      deviceType: safeGet(() => msg.deviceType, 'web') || 'web'
+    }));
+  }, { id: cleanChatId, count: limit });
+
+  // Tambahkan util methods
+  return rawMessages.map(msg => ({
+    ...msg,
+    client: client, // penting untuk downloadMedia jika ada
+    getContact: async () => {
+      // Ambil basic info dari object message atau fallback
+      return {
+        name: msg.author || msg.from,
+        pushname: '',
+        shortName: '',
+        displayName: msg.author || msg.from,
+        number: String(msg.from).split('@')[0]
+      };
+    }
+  }));
+}
+
 module.exports = {
   injectWajs,
   getClientWajsStatus,
@@ -434,5 +586,7 @@ module.exports = {
   addLabelByName,
   safeAddLabelByName,
   sendReactionById,
-  forwardMessages
+  forwardMessages,
+  getChats,
+  getMessages
 };

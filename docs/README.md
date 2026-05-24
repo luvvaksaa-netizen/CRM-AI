@@ -118,3 +118,16 @@ Fitur WA-JS yang sudah dibuka:
 - Identitas kontak tidak lagi turun dari nomor/nama nyata ke placeholder `Kontak WA #xxxxxx` ketika pesan LID terbaru belum membawa nomor asli.
 - Label WA-JS diperluas menjadi label manager di dashboard: list, create, edit, delete, apply, remove.
 - AI auto-label dari konfigurasi `BotAgent.auto_labels` diperbaiki agar benar-benar dieksekusi via WA-JS dan tetap non-blocking.
+
+## Reliability Update 2026-05-23
+
+- Upload video besar sekarang mengekstrak audio kecil via ffmpeg sebelum dikirim ke Whisper, lalu retry otomatis untuk error koneksi sementara.
+- Video katalog di atas threshold dikompresi otomatis menjadi MP4 ringan saat analisis atau saat pertama kali dikirim, agar aset lama pun tidak tersangkut upload video 20MB.
+- Lock AI per kontak sekarang memakai coalescing queue: pesan baru saat AI masih menjawab digabung ke satu batch lanjutan, bukan membuat banyak job menunggu serial.
+- Jika balasan AI berisi video, teks dikirim lebih awal supaya customer cepat melihat respons walau media masih diunggah WhatsApp.
+- `ChatMessages` menyimpan metadata quoted reply (`quoted_message_id`, `quoted_body`, `quoted_from_me`, `quoted_sender_name`) dan dashboard menampilkan konteks "membalas pesan yang mana".
+- Manual reply di dashboard bisa memilih pesan asal dan mengirim WhatsApp quoted reply memakai `quotedMessageId`.
+- WA-JS startup sync kini memakai `WPP.chat.list()` + defensive quoted parsing, sehingga pesan non-reply tidak lagi menjatuhkan sync ke error `does not have a reply` / `waitForChatLoading`.
+- Health check browser sekarang restart runtime tanpa menghapus folder sesi login; pengiriman AI, manual, dan follow-up menunggu client siap sebelum `sendMessage`.
+- Typing indicator hanya ditampilkan dekat momen kirim dan hard-stop default 7 detik, agar customer tidak melihat "sedang mengetik" lama lalu hilang.
+- AI punya tool `matikan_bot_kontak` untuk benar-benar mem-pause kontak saat prompt agent mengalihkan kasus ke CS manusia.

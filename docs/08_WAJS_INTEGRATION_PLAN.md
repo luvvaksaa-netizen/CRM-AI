@@ -188,6 +188,22 @@ Catatan: core masih WWebJS. Migrasi penuh ke WPPConnect wrapper tetap menjadi it
 - Dashboard sekarang punya pengelola label WhatsApp: list label, buat label, edit, hapus, serta tempel/lepas label pada chat aktif.
 - AI auto-label dari `BotAgent.auto_labels` dieksekusi via `tambahkan_label_chat` dengan urutan parameter WA-JS yang benar dan fallback non-blocking.
 
+## Update 2026-05-23
+
+- Memigrasikan fungsi inti *message syncing* dari `whatsapp-web.js` ke WA-JS sepenuhnya untuk menghindari error `waitForChatLoading` yang sering membuat web dashboard menjadi kosong.
+- `wajs_bridge.js` sekarang memiliki implementasi API `getChats` dan `getMessages` yang membungkus pemanggilan dari internal `window.WPP.chat`. 
+- `whatsapp_service.js` diperbarui untuk memanfaatkan WA-JS sebagai layer primer dalam proses inisialisasi awal (startup) sinkronisasi history pesan, dengan WWebJS digunakan murni sebagai *fallback* jika `WA-JS` tidak merespon/aktif.
+- Modifikasi objek message WA-JS agar kompatibel 100% dengan kebutuhan `message_handler.js`, termasuk bypassing `downloadMedia` otomatis pada saat startup syncing.
+- Metadata quoted reply dari WA-JS/WWebJS sekarang dipetakan ke `ChatMessages`, sehingga dashboard bisa menampilkan pesan asal yang sedang dibalas.
+- Manual reply dashboard mengirim `quotedMessageId` saat operator memilih pesan asal, jadi konteks reply tetap terbaca di WhatsApp dan CRM.
+
+## Update 2026-05-23 Malam
+
+- `getChats` disesuaikan dengan WA-JS v4.2.0: adapter memakai `WPP.chat.list()` sebagai jalur utama, bukan `WPP.chat.getChats` yang tidak selalu tersedia.
+- Mapping pesan WA-JS sekarang membungkus akses `quotedMsg`, `quotedMsgObj`, `quotedMsgId`, dan `quotedStanzaID` dengan safe getter. Pesan non-reply tidak boleh melempar `Message ... does not have a reply`.
+- Fallback WWebJS `fetchMessages()` hanya dipakai jika WA-JS benar-benar kosong/gagal, sehingga risiko `waitForChatLoading` jauh lebih kecil.
+- Recovery browser dipisah dari logout manual: health check hanya destroy/relaunch runtime dan mempertahankan sesi login.
+
 ---
 
 ## Perhatian Keamanan (ToS Risk)

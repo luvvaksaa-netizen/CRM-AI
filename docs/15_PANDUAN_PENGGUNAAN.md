@@ -87,8 +87,8 @@ Kamu adalah {BOT_NAME}, admin customer service dari slaludiskon.com yang ramah d
 1. Menyapa ramah. Jika customer bilang "mau pesan", "pesan stiker", "pesan label" atau kata serupa secara ambigu:
    -> WAJIB TANYA: "Rencana mau ditempel di baju/kain atau di botol/helm/buku, Kak?"
 2. Klasifikasikan jenis produk berdasarkan jawaban customer:
-   - Jika untuk Baju/Kain/Hijab/Seragam: Berarti produknya "DTF Label Nama (Bahan Setrika)" dengan harga Rp 37.000,- per paket. Kirimkan media catalog berlabel "katalog dtf" dan tawarkan varian fontnya.
-   - Jika untuk Botol/Helm/Buku/Tumbler/Plastik/Kaca: Berarti produknya "DTF UV Label Nama (Stiker Timbul)" dengan harga Rp 38.000,- per paket. Kirimkan media catalog berlabel "katalog uv" dan tawarkan varian fontnya.
+   - Jika untuk Baju/Kain/Hijab/Seragam: Berarti produknya "DTF Label Nama (Bahan Setrika)" dengan harga Rp 39.000,- per paket. Kirimkan media catalog berlabel "katalog dtf" dan tawarkan varian fontnya.
+   - Jika untuk Botol/Helm/Buku/Tumbler/Plastik/Kaca: Berarti produknya "DTF UV Label Nama (Stiker Timbul)" dengan harga Rp 39.000,- per paket. Kirimkan media catalog berlabel "katalog uv" dan tawarkan varian fontnya.
 3. Setelah customer memilih varian: Minta nama-nama yang ingin dicetak di label (bukan nama penerima). Jelaskan maksimal 2 nama berbeda per paket.
 4. Tanya detail pembagian jumlah per nama (contoh: "Andi 25, Budi 25").
 5. Tanya alamat lengkap (Kecamatan & Kota/Kabupaten) untuk cek ongkir.
@@ -101,8 +101,8 @@ Kamu adalah {BOT_NAME}, admin customer service dari slaludiskon.com yang ramah d
 Kategori Bisnis: Cetak Label Nama DTF (Baju/Kain) & DTF UV (Stiker Keras)
 
 1. DETAIL PRODUK & HARGA:
-- Paket Label Nama DTF (Bahan Kain/Setrika): Isi 50 pcs per paket, harga Rp 37.000,-
-- Paket Label Nama UV DTF (Bahan Stiker Keras/Timbul/Anti Air): Isi 50 pcs per paket, harga Rp 38.000,-
+- Paket Label Nama DTF (Bahan Kain/Setrika): Isi 50 pcs per paket, harga Rp 39.000,-
+- Paket Label Nama UV DTF (Bahan Stiker Keras/Timbul/Anti Air): Isi 50 pcs per paket, harga Rp 39.000,-
 - Batasan Nama: Maksimal 2 nama berbeda untuk 1 paket.
 
 2. VARIAN & DESAIN:
@@ -210,6 +210,7 @@ Jika customer reply kapanpun → SEMUA follow-up pending DIBATALKAN otomatis
 - **Badge merah** = pesan yang belum dibaca CS
 - **Toggle AI Reply** per-kontak: matikan jika ingin CS manusia ambil alih
 - **Rekap Pembahasan** muncul di panel kanan setiap customer
+- Klik ikon reply pada bubble chat untuk membalas pesan tertentu. Dashboard akan menampilkan konteks pesan asal dan WhatsApp mengirimnya sebagai quoted reply.
 
 ### Tab: Follow Up
 | Kolom | Artinya |
@@ -245,8 +246,8 @@ Jika customer reply kapanpun → SEMUA follow-up pending DIBATALKAN otomatis
 ## 🛍️ STRATEGI HANDLING 2 PRODUK (DTF VS UV DTF) DALAM 1 AGEN
 
 Sistem kita dirancang agar **1 Nomor WhatsApp (1 Agent)** bisa melayani 2 produk sekaligus secara pintar:
-1. **DTF Label Nama** (Kain/Baju/Setrika - Rp 37.000,-)
-2. **DTF UV Label Nama** (Stiker Timbul Keras/Gelas/Helm - Rp 38.000,-)
+1. **DTF Label Nama** (Kain/Baju/Setrika - Rp 39.000,-)
+2. **DTF UV Label Nama** (Stiker Timbul Keras/Gelas/Helm - Rp 39.000,-)
 
 Berikut adalah panduan operasional agar bot Anda tidak bingung, tidak pelupa, dan menghasilkan closing yang tinggi.
 
@@ -255,8 +256,8 @@ Bot menggunakan taktik **Filter Awal**. Ketika pelanggan memulai chat atau menya
 > *"Rencana mau ditempel di baju/kain atau di botol/helm/buku, Kak?"*
 
 Berdasarkan jawaban pelanggan:
-* **Jika pelanggan menjawab kain/baju**: Bot mengidentifikasi sebagai **DTF Label Nama (Rp 37.000)** dan memicu pengiriman gambar catalog berlabel `katalog dtf`.
-* **Jika pelanggan menjawab botol/helm/buku**: Bot mengidentifikasi sebagai **DTF UV Label Nama (Rp 38.000)** dan memicu pengiriman gambar catalog berlabel `katalog uv`.
+* **Jika pelanggan menjawab kain/baju**: Bot mengidentifikasi sebagai **DTF Label Nama (Rp 39.000)** dan memicu pengiriman gambar catalog berlabel `katalog dtf`.
+* **Jika pelanggan menjawab botol/helm/buku**: Bot mengidentifikasi sebagai **DTF UV Label Nama (Rp 39.000)** dan memicu pengiriman gambar catalog berlabel `katalog uv`.
 
 ---
 
@@ -280,7 +281,7 @@ Sistem Follow-Up kita terhubung langsung dengan **Rekap Pembahasan (Structured M
 ### 4. Tips agar Bot "Tidak Ngawur, Tidak Pelupa, dan Tidak Membuat Marah"
 
 #### A. Agar Bot Tidak Ngawur (Konsisten Harga & Varian)
-* **Aturan Harga Ketat**: Di dalam **Product Knowledge**, harga dikunci dengan sangat jelas. Bot dilarang memberikan diskon atau mengubah harga paket di luar Rp 37.000 atau Rp 38.000 kecuali ada promo resmi tertulis di knowledge.
+* **Aturan Harga Ketat**: Di dalam **Product Knowledge**, harga dikunci dengan sangat jelas. Bot dilarang memberikan diskon atau mengubah harga paket di luar Rp 39.000 kecuali ada promo resmi tertulis di knowledge.
 * **Filter Output**: Sanitizer internal akan otomatis menghapus tautan eksternal fiktif atau karakter aneh sebelum sampai ke chat WA pelanggan.
 
 #### B. Agar Bot Tidak Pelupa (Structured Memory Core)

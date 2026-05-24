@@ -27,7 +27,7 @@
 - Semua konstanta konfigurasi (timeout, limit, delay) harus diberi nama dan komentar
 - Contoh yang BENAR:
 ```javascript
-const DEBOUNCE_MS = 3500; // 3.5 detik — sweet spot antara responsif dan anti-spam
+const DEBOUNCE_MS = 1200; // responsif, tetap menahan pesan beruntun singkat
 const MAX_CONCURRENCY = 3; // Maks 3 request AI serentak (balance speed vs cost)
 ```
 

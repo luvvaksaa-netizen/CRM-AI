@@ -74,6 +74,12 @@ function mergeStableContactIdentity(contactId, msg, identity, latestMsg) {
   };
 }
 
+function clipQuotedBody(value, maxLength = 700) {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+}
+
 function parseAdminUsers() {
   if (!process.env.ADMIN_USERS_JSON) {
     return [{ user: ADMIN_USER, pass: ADMIN_PASS, role: 'admin' }];
@@ -639,6 +645,9 @@ function initDashboard(port = 3000) {
       const { name, is_bot_active, agent_id } = req.body;
       const store = await Store.findOne({ where: { wa_id: req.params.storeId } });
       if (!store) return res.status(404).json({ success: false, message: 'Store tidak ditemukan.' });
+
+      // Simpan status bot SEBELUM update untuk deteksi transisi OFF→ON
+      const wasBotInactive = store.is_bot_active === false;
       
       const updateData = {};
       if (name !== undefined) updateData.name = name;
@@ -651,11 +660,29 @@ function initDashboard(port = 3000) {
       logger.info(`[Settings] ${req.params.storeId} updated: ${JSON.stringify(updateData)}`);
       res.json({ success: true, store: store.dataValues });
       if (io) io.emit('storeUpdated', { storeId: req.params.storeId });
+
+      // ── SMART BOT RE-ACTIVATION ──────────────────────────────────────────
+      // Ketika bot di-toggle dari OFF → ON: scan konteks percakapan background.
+      // Tidak perlu await — response sudah dikirim, ini berjalan di background.
+      const botJustActivated = wasBotInactive && is_bot_active === true;
+      if (botJustActivated) {
+        logger.info(`[Settings] Bot [${req.params.storeId}] dinyalakan — memulai smart re-activation scan...`);
+        try {
+          const { onBotActivated } = require('../services/bot_activation_service');
+          onBotActivated(req.params.storeId).catch(e => {
+            logger.warn(`[BotActivation] Background scan error: ${e.message}`);
+          });
+        } catch (activationErr) {
+          logger.warn(`[BotActivation] Gagal memulai scan: ${activationErr.message}`);
+        }
+      }
+
     } catch (error) {
       logger.error(`[Settings] Gagal update ${req.params.storeId}: ${error.message}`);
       res.status(500).json({ success: false, message: error.message });
     }
   });
+
 
   // ============================================================
   // CHAT APIs
@@ -726,17 +753,52 @@ function initDashboard(port = 3000) {
     }
   });
 
+  // DELETE: Hapus Semua Riwayat Chat Kontak (untuk testing / reset)
+  app.delete('/api/chat/:storeId/:contactId', authorize('admin'), async (req, res) => {
+    try {
+      const { storeId, contactId } = req.params;
+      const decodedContactId = decodeURIComponent(contactId);
+
+      const { ChatSummary } = require('../database/index');
+
+      const deletedMsgs = await ChatMessage.destroy({
+        where: { store_wa_id: storeId, contact_id: decodedContactId }
+      });
+      const deletedSummary = await ChatSummary.destroy({
+        where: { store_wa_id: storeId, contact_id: decodedContactId }
+      });
+
+      // Hapus dari PausedContact juga agar bot aktif kembali
+      const { PausedContact } = require('../database/index');
+      await PausedContact.destroy({ where: { store_wa_id: storeId, contact_id: decodedContactId } }).catch(() => {});
+
+      // Beritahu frontend via Socket.IO agar daftar kontak terupdate
+      if (io) io.emit('chatCleared', { storeId, contactId: decodedContactId });
+
+      logger.info(`[${storeId}] 🗑️ Riwayat chat [${decodedContactId}] dihapus: ${deletedMsgs} pesan, ${deletedSummary} summary.`);
+      res.json({ success: true, deletedMsgs, deletedSummary });
+    } catch (e) {
+      logger.error(`[ClearChat] Error: ${e.message}`);
+      res.status(500).json({ success: false, message: e.message });
+    }
+  });
+
   // POST: Kirim Pesan Manual
   app.post('/api/send', manualSendLimiter, authorize('operator'), async (req, res) => {
     try {
-      const { storeId, to, body } = req.body;
+      const { storeId, to, body, quotedMessageId, quotedBody, quotedFromMe, quotedSenderName } = req.body;
       if (!storeId || !to || !body) return res.status(400).json({ success: false, message: 'storeId, to, body wajib diisi.' });
       const target = normalizeWaChatId(to);
       if (!target.ok) return res.status(400).json({ success: false, message: target.error });
       if (String(body).trim().length > 4000) return res.status(400).json({ success: false, message: 'Pesan terlalu panjang (maks 4000 karakter).' });
 
       const whatsappService = require('../whatsapp_service');
-      await whatsappService.sendManualMessage(storeId, target.value, String(body).trim());
+      await whatsappService.sendManualMessage(storeId, target.value, String(body).trim(), {
+        quotedMessageId,
+        quotedBody,
+        quotedFromMe,
+        quotedSenderName
+      });
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -1069,6 +1131,15 @@ async function updateStorePhone(storeId, phone) {
 
 async function addToChatHistory(storeId, msg) {
   try {
+    // ═══ DEDUP GUARD ═══
+    // Jika pesan ini sudah ada di database (berdasarkan wa_message_id), skip.
+    // Ini mengatasi race condition antara _logBotReply dan message_create event.
+    const waMessageId = msg.wa_message_id || msg.id || null;
+    if (waMessageId) {
+      const existing = await ChatMessage.findOne({ where: { wa_message_id: waMessageId } });
+      if (existing) return; // Sudah ada, tidak perlu insert ulang
+    }
+
     const identity = msg.contactIdentity || buildContactIdentity(msg.from, msg.isMe ? {} : {
       name: msg.sender_name,
       number: msg.contact_phone
@@ -1083,10 +1154,17 @@ async function addToChatHistory(storeId, msg) {
       return item.contact_phone || firstStableDisplayName(item.contact_display_name, item.sender_name);
     }) || recentIdentityRows[0];
     const stableIdentity = mergeStableContactIdentity(msg.from, msg, identity, stableHistoryMsg);
+    const quotedMessageId = msg.quoted_message_id || msg.quotedMessageId || null;
+    let quotedRecord = null;
+    if (quotedMessageId) {
+      quotedRecord = await ChatMessage.findOne({
+        where: { store_wa_id: storeId, wa_message_id: quotedMessageId }
+      }).catch(() => null);
+    }
     const chatMsg = await ChatMessage.create({
       store_wa_id: storeId,
       contact_id:  msg.from,
-      wa_message_id: msg.wa_message_id || msg.id || null,
+      wa_message_id: waMessageId,
       sender_name: msg.isMe
         ? (msg.sender_name || 'CS Manual')
         : (firstStableDisplayName(msg.sender_name, stableIdentity.displayName) || stableIdentity.displayName),
@@ -1095,6 +1173,10 @@ async function addToChatHistory(storeId, msg) {
       contact_lid: stableIdentity.lid || null,
       contact_type: stableIdentity.type,
       contact_source: stableIdentity.source,
+      quoted_message_id: quotedMessageId,
+      quoted_body: clipQuotedBody(quotedRecord?.body || msg.quoted_body || msg.quotedBody),
+      quoted_from_me: msg.quoted_from_me ?? msg.quotedFromMe ?? quotedRecord?.is_from_me ?? null,
+      quoted_sender_name: msg.quoted_sender_name || msg.quotedSenderName || quotedRecord?.sender_name || null,
       body:        msg.body,
       is_from_me:  msg.isMe || false,
       type:        msg.type || 'chat',
@@ -1102,6 +1184,8 @@ async function addToChatHistory(storeId, msg) {
     });
     if (io) io.emit('newMessage', { storeId, msg: chatMsg.dataValues });
   } catch (err) {
+    // Tangkap UniqueConstraint error juga sebagai dedup fallback
+    if (err.name === 'SequelizeUniqueConstraintError') return;
     logger.error(`addToChatHistory error: ${err.message}`);
   }
 }
@@ -1163,6 +1247,16 @@ function emitQRSpec(storeId, qr) {
   if (io) io.emit('qrUpdate', { storeId, qr });
 }
 
+/**
+ * Emit event ke frontend ketika pesan dihapus dari WhatsApp (message_revoke_everyone).
+ * @param {string} storeId
+ * @param {string} waMessageId - ID pesan WA yang dihapus
+ * @param {string} contactId - Dari/ke siapa pesan tersebut
+ */
+function emitMessageRevoked(storeId, waMessageId, contactId) {
+  if (io) io.emit('messageRevoked', { storeId, waMessageId, contactId });
+}
+
 module.exports = {
   initDashboard,
   updateWAStatus,
@@ -1170,5 +1264,6 @@ module.exports = {
   emitQRSpec,
   addToChatHistory,
   emitTypingStatus,
+  emitMessageRevoked,
   updateContactPhoneIdentity
 };

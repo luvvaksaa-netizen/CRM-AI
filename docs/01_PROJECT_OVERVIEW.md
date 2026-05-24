@@ -57,7 +57,7 @@
 | **WhatsApp** | whatsapp-web.js | 1.26.0 | WA Web automation via Puppeteer |
 | **AI - Chat** | OpenAI GPT-4o-mini | API | Membalas percakapan pelanggan |
 | **AI - Vision** | OpenAI GPT-4o | API | Analisis foto produk & frame video |
-| **AI - Audio** | OpenAI Whisper-1 | API | Transkripsi voice note & narasi video |
+| **AI - Audio** | OpenAI Whisper-1 | API | Transkripsi voice note & narasi video; video diekstrak audio kecil via ffmpeg dulu |
 | **Database** | SQLite3 + Sequelize | 6.x | Penyimpanan data persisten |
 | **Web Server** | Express.js | 4.x | REST API + Dashboard |
 | **Real-time** | Socket.io | 4.x | Live update dashboard |
@@ -146,25 +146,27 @@ Pelanggan kirim WA
 [message_handler.js: handleMessage()]
   ├── Download media (timeout 20s)
   ├── Vision AI / Whisper jika ada media
+  ├── Quoted reply context disimpan agar dashboard tahu pesan asal yang dibalas
   ├── Simpan ke DB (ChatMessage)
   ├── Emit ke Dashboard via Socket.io
   │
   ├── Cek pausedContacts (Human Override)
   │
-  └── DEBOUNCER (3.5 detik tunggu)
+  └── DEBOUNCER (default 1.2 detik tunggu)
         │
         ▼
 [_processAIReply()]
   ├── Load Store + BotAgent dari DB
   ├── Cek keyword trigger (Autopilot)
-  ├── Load history 15 pesan terakhir
+  ├── Load history 30 pesan terakhir
   ├── Load ChatSummary (long-term memory)
   ├── Panggil getAIResponse()
   │     ├── Build system prompt (full context)
   │     ├── Tool: cek_ongkir_jne
-  │     └── Tool: kirim_media_katalog
-  ├── Typing delay (human-like)
-  ├── Reply ke WA (text / media)
+  │     ├── Tool: kirim_media_katalog
+  │     └── Tool: matikan_bot_kontak
+  ├── Typing pendek dekat momen kirim (hard-stop 7 detik)
+  ├── Reply ke WA lewat client aktif terbaru (text / media)
   ├── Log ke DB & Dashboard
   └── Update ChatSummary (background)
 ```

@@ -100,6 +100,10 @@ Stores (1) ──────────── (Many) ChatSummaries (per contac
 | `contact_lid` | STRING | null | Local part untuk kontak `@lid` |
 | `contact_type` | STRING | null | `phone`, `lid`, `broadcast`, `newsletter`, `group`, atau `unknown` |
 | `contact_source` | STRING | null | Sumber display name: `profile`, `phone`, `lid`, dll |
+| `quoted_message_id` | STRING | null | ID pesan WhatsApp yang sedang di-reply/di-quote |
+| `quoted_body` | TEXT | null | Cuplikan isi pesan asal untuk ditampilkan di dashboard |
+| `quoted_from_me` | BOOLEAN | null | `true` jika pesan asal dari admin/bot, `false` jika dari customer |
+| `quoted_sender_name` | STRING | null | Nama pengirim pesan asal |
 | `body` | TEXT | - | Isi pesan (bisa berisi tag `[MEDIA:...]`) |
 | `type` | STRING | 'chat' | Tipe pesan |
 | `is_from_me` | BOOLEAN | false | `true` = dari bot/admin, `false` = dari pelanggan |
@@ -147,6 +151,7 @@ Catatan identitas kontak:
 4. `backfillSummaryNames()` — isi `contact_name` yang kosong dari histori chat
 
 5. `backfillContactIdentity()` - membersihkan nama `@lid` lama yang sebelumnya tersimpan seperti nomor palsu dan mengisi kolom identitas kontak baru
+6. Kolom quoted reply (`quoted_message_id`, `quoted_body`, `quoted_from_me`, `quoted_sender_name`) ditambahkan agar dashboard tahu setiap balasan mengacu ke pesan mana.
 
 ### Mode WAL:
 ```sql

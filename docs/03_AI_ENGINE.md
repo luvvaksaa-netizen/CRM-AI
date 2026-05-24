@@ -37,6 +37,10 @@ const QUEUE_TIMEOUT_MS = 60000; // Request kadaluarsa setelah 1 menit
 - Slot dibebaskan via `Promise.finally()` → **tidak pernah deadlock**
 - Request yang menunggu > 1 menit otomatis digugurkan (mencegah balasan basi)
 
+### Coalescing Per Kontak
+
+Selain queue global, `message_handler.js` punya lock per kontak. Jika customer mengirim pesan lagi saat AI masih menyusun jawaban untuk kontak yang sama, batch baru tidak lagi membuat job tunggu serial. Pesan tersebut digabung ke `queuedAIReplyBatches` dan diproses sekali setelah jawaban aktif selesai. Ini mengurangi kasus balasan terasa 2-5 menit karena banyak batch kecil menunggu lock yang sama.
+
 ---
 
 ## Tool Calling
@@ -142,15 +146,23 @@ Aturan teknis terbaru tidak lagi memaksa satu pesan panjang. Untuk chat normal, 
 ## Typing Delay (Human Simulation)
 
 ```javascript
-function calculateTypingDelay(text, minCharDelay=18, maxDelay=650) {
-    const randomSpeed = random(18, 32); // ms per karakter
+function calculateTypingDelay(text, minCharDelay=12, maxDelay=300) {
+    const randomSpeed = random(12, 22); // ms per karakter
     const baseDelay = text.length * randomSpeed;
-    const humanOffset = random(80, 180); // noise manusia ringan
-    return Math.min(baseDelay + humanOffset, maxDelay); // cap 650ms
+    const humanOffset = random(50, 100); // noise manusia ringan
+    return Math.min(baseDelay + humanOffset, maxDelay); // cap pendek
 }
 ```
 
-Debounce balasan default sekarang `AI_REPLY_DEBOUNCE_MS=1400`. Typing WA-JS hanya dipakai jika `WPP` sudah ready; jika belum, sistem langsung fallback ke WWebJS supaya tidak menunggu injeksi ulang.
+Debounce balasan default sekarang `AI_REPLY_DEBOUNCE_MS=1200`. Typing WhatsApp tidak lagi dinyalakan sepanjang proses AI; indikator baru dimulai ketika respons sudah siap dikirim dan hard-stop default `WA_TYPING_HARD_STOP_MS=7000`. Ini menjaga POV customer: typing singkat, lalu pesan masuk, bukan typing panjang yang hilang.
+
+Pengiriman teks/media AI memakai client aktif terbaru lewat `waitForActiveClient()`. Jika Puppeteer melempar `detached Frame` saat kirim, sistem memulai recovery runtime dan mencoba ulang dengan client yang sudah siap.
+
+Tool internal baru:
+- `matikan_bot_kontak`: dipakai AI ketika prompt agent meminta eskalasi ke CS manusia, misalnya produk di luar scope atau komplain berat.
+- `tambahkan_label_chat`: tetap dipakai untuk label WA Business/CRM.
+
+First interaction tidak lagi hardcode DTF. Engine menginstruksikan model mengikuti opening flow agent aktif, sehingga Agent DTF memakai label `katalog dtf`/`video dtf`, sedangkan Agent UV memakai `katalog uv`/`video uv`.
 
 ---
 
@@ -192,6 +204,12 @@ Dikirim sebagai konteks ke AI (AI "mendengar" voice note)
     ▼
 File sementara DIHAPUS (anti-leak storage)
 ```
+
+## Video Upload Transcription
+
+Untuk video katalog, sistem tidak lagi mengirim file MP4 penuh langsung ke Whisper. `video_analysis_service.js` mengekstrak audio menjadi MP3 mono 16k/48kbps di `DATA_DIR/tmp`, lalu mengirim audio kecil itu ke Whisper dengan retry otomatis (`OPENAI_TRANSCRIPTION_RETRIES`). Ini membuat video 20MB/45 detik jauh lebih stabil karena payload transkripsi biasanya hanya ratusan KB.
+
+Video besar juga dioptimalkan untuk pengiriman WhatsApp setelah analisis selesai atau saat pertama kali dikirim. `media_service.js` membuat MP4 ringan (`*-wa.mp4`) jika ukuran video melebihi `MEDIA_VIDEO_OPTIMIZE_THRESHOLD_MB`, lalu `MediaAsset.filename` diarahkan ke file hasil optimasi agar bot tidak mengirim video asli yang terlalu berat.
 
 ---
 
@@ -246,4 +264,3 @@ Ini memastikan alur onboarding pelanggan lebih visual, premium, dan interaktif.
 
 ### 4. Dynamic Store Bot Names
 Meskipun menggunakan model Master Agent (otak tunggal) yang sama untuk melayani beberapa produk, nama CS/bot di-render secara dinamis menggunakan placeholder `{BOT_NAME}` yang digantikan dengan nilai `bot_name` dari tabel `Store` masing-masing perangkat.
-

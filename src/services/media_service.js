@@ -13,6 +13,12 @@ const { analyzeVideo } = require('./video_analysis_service');
 const logger = require('../utils/logger');
 const path = require('path');
 const fs = require('fs');
+const { execFile } = require('child_process');
+const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
+
+const VIDEO_OPTIMIZE_ENABLED = process.env.MEDIA_VIDEO_OPTIMIZE_ENABLED !== 'false';
+const VIDEO_OPTIMIZE_THRESHOLD_BYTES = Number(process.env.MEDIA_VIDEO_OPTIMIZE_THRESHOLD_MB || 12) * 1024 * 1024;
+const VIDEO_OPTIMIZE_TIMEOUT_MS = Number(process.env.MEDIA_VIDEO_OPTIMIZE_TIMEOUT_MS || 180000);
 
 // ============================================================
 // READ OPERATIONS
@@ -106,6 +112,65 @@ async function registerMedia(data, onAnalysisDone = null) {
   return asset;
 }
 
+async function optimizeVideoForWhatsApp(asset, filePath) {
+  if (!VIDEO_OPTIMIZE_ENABLED || asset.type !== 'video') return filePath;
+  if (!fs.existsSync(filePath)) return filePath;
+
+  const originalSize = fs.statSync(filePath).size;
+  if (originalSize <= VIDEO_OPTIMIZE_THRESHOLD_BYTES) return filePath;
+
+  const originalFilename = asset.filename;
+  const ext = path.extname(asset.filename);
+  const baseName = path.basename(asset.filename, ext);
+  const optimizedName = `${baseName}-wa.mp4`;
+  const optimizedPath = path.join(path.dirname(filePath), optimizedName);
+
+  if (fs.existsSync(optimizedPath) && fs.statSync(optimizedPath).size > 0) {
+    await asset.update({ filename: optimizedName });
+    return optimizedPath;
+  }
+
+  logger.info(`[Media] Mengoptimalkan video besar untuk pengiriman WA: ${asset.filename}`);
+  const args = [
+    '-nostdin',
+    '-i', filePath,
+    '-c:v', 'libx264',
+    '-preset', 'veryfast',
+    '-crf', '30',
+    '-maxrate', '900k',
+    '-bufsize', '1800k',
+    '-c:a', 'aac',
+    '-b:a', '64k',
+    '-movflags', '+faststart',
+    '-y',
+    optimizedPath
+  ];
+
+  await new Promise((resolve, reject) => {
+    execFile(ffmpegInstaller.path, args, { timeout: VIDEO_OPTIMIZE_TIMEOUT_MS }, (err) => {
+      if (err) return reject(err);
+      resolve();
+    });
+  });
+
+  if (!fs.existsSync(optimizedPath) || fs.statSync(optimizedPath).size === 0) {
+    throw new Error('Video hasil optimasi kosong.');
+  }
+
+  const optimizedSize = fs.statSync(optimizedPath).size;
+  if (optimizedSize >= originalSize) {
+    fs.unlinkSync(optimizedPath);
+    logger.warn(`[Media] Optimasi video dilewati karena hasil tidak lebih kecil: ${asset.filename}`);
+    return filePath;
+  }
+
+  await asset.update({ filename: optimizedName });
+  try { fs.unlinkSync(filePath); } catch (_) {}
+
+  logger.success(`[Media] Video dioptimalkan untuk WA: ${originalFilename} -> ${optimizedName} (${Math.round(originalSize / 1024 / 1024)}MB -> ${Math.round(optimizedSize / 1024 / 1024)}MB)`);
+  return optimizedPath;
+}
+
 /**
  * Proses analisis AI di latar belakang (non-blocking) dengan Konteks Otak Agen.
  * @private
@@ -138,6 +203,9 @@ async function _runAnalysisInBackground(asset, filePath, onAnalysisDone) {
       const { transcript, visualAnalysis } = await analyzeVideo(filePath, asset.label, agentContext);
       videoTranscript = transcript;
       aiAnalysis = visualAnalysis;
+      await optimizeVideoForWhatsApp(asset, filePath).catch(err => {
+        logger.warn(`[Media] Optimasi video dilewati: ${err.message}`);
+      });
     }
 
     await asset.update({
@@ -205,6 +273,7 @@ module.exports = {
   getKnowledgeMedia,
   findSendableMediaByKeyword,
   registerMedia,
+  optimizeVideoForWhatsApp,
   updateMediaDetails,
   deleteMedia
 };

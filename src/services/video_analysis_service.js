@@ -7,22 +7,36 @@
  */
 
 const OpenAI = require('openai');
-const ffmpeg = require('fluent-ffmpeg');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 const ffprobeInstaller = require('@ffprobe-installer/ffprobe');
-const fs = require('fs');
-const path = require('path');
-const logger = require('../utils/logger');
-const config = require('../config');
 
-// Set path ffmpeg & ffprobe otomatis dari installer
+// Set path ffmpeg & ffprobe via env vars (paling reliable untuk fluent-ffmpeg)
+process.env.FFMPEG_PATH = ffmpegInstaller.path;
+process.env.FFPROBE_PATH = ffprobeInstaller.path;
+
+const ffmpeg = require('fluent-ffmpeg');
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 ffmpeg.setFfprobePath(ffprobeInstaller.path);
 
-const openai = new OpenAI({ apiKey: config.OPENAI_API_KEY });
+const fs = require('fs');
+const path = require('path');
+const { execFile } = require('child_process');
+const logger = require('../utils/logger');
+const config = require('../config');
+
+const TRANSCRIPTION_TIMEOUT_MS = Number(process.env.OPENAI_TRANSCRIPTION_TIMEOUT_MS || 120000);
+const TRANSCRIPTION_RETRIES = Math.max(1, Number(process.env.OPENAI_TRANSCRIPTION_RETRIES || 3));
+const FFMPEG_AUDIO_EXTRACT_TIMEOUT_MS = Number(process.env.FFMPEG_AUDIO_EXTRACT_TIMEOUT_MS || 120000);
+
+const openai = new OpenAI({
+  apiKey: config.OPENAI_API_KEY,
+  timeout: TRANSCRIPTION_TIMEOUT_MS,
+  maxRetries: 0
+});
 
 // Format video yang didukung Whisper untuk transkripsi
 const WHISPER_SUPPORTED = ['.mp4', '.mov', '.avi', '.mkv', '.m4a', '.mp3', '.wav', '.webm', '.3gp'];
+const VIDEO_EXTENSIONS = ['.mp4', '.mov', '.avi', '.mkv', '.3gp'];
 
 // Format gambar untuk Vision AI
 const VISION_MIME_MAP = {
@@ -33,6 +47,94 @@ const VISION_MIME_MAP = {
 // ============================================================
 // FUNGSI 1: Transkripsi Audio/Narasi via Whisper API
 // ============================================================
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function formatFileSize(filePath) {
+  try {
+    const bytes = fs.statSync(filePath).size;
+    return `${(bytes / 1024 / 1024).toFixed(2)}MB`;
+  } catch (_) {
+    return 'unknown size';
+  }
+}
+
+function isRetryableTranscriptionError(err) {
+  const message = String(err?.message || '').toLowerCase();
+  return !err?.status || err.status >= 500 || message.includes('connection') || message.includes('timeout') || message.includes('econnreset');
+}
+
+function cleanupTempDir(tmpDir) {
+  if (!tmpDir || !fs.existsSync(tmpDir)) return;
+  try {
+    for (const file of fs.readdirSync(tmpDir)) {
+      fs.unlinkSync(path.join(tmpDir, file));
+    }
+    fs.rmdirSync(tmpDir);
+  } catch (_) { /* ignore cleanup errors */ }
+}
+
+function extractAudioForWhisper(videoPath) {
+  return new Promise((resolve, reject) => {
+    const tmpDir = fs.mkdtempSync(path.join(config.TMP_DIR, 'wa-audio-'));
+    const audioPath = path.join(tmpDir, `${path.basename(videoPath, path.extname(videoPath))}.mp3`);
+
+    const args = [
+      '-nostdin',
+      '-i', videoPath,
+      '-map', '0:a:0',
+      '-vn',
+      '-ac', '1',
+      '-ar', '16000',
+      '-b:a', '48k',
+      '-f', 'mp3',
+      '-y',
+      audioPath
+    ];
+
+    execFile(ffmpegInstaller.path, args, { timeout: FFMPEG_AUDIO_EXTRACT_TIMEOUT_MS }, (err) => {
+      if (err || !fs.existsSync(audioPath) || fs.statSync(audioPath).size === 0) {
+        cleanupTempDir(tmpDir);
+        return reject(err || new Error('Audio hasil ekstraksi kosong.'));
+      }
+
+      resolve({ audioPath, tmpDir });
+    });
+  });
+}
+
+async function transcribeFileWithRetry(filePath) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= TRANSCRIPTION_RETRIES; attempt++) {
+    try {
+      if (attempt > 1) {
+        logger.info(`[Whisper] Retry transkripsi ${attempt}/${TRANSCRIPTION_RETRIES}: ${path.basename(filePath)}`);
+      }
+
+      const transcription = await openai.audio.transcriptions.create({
+        file: fs.createReadStream(filePath),
+        model: 'whisper-1',
+        language: 'id',
+        response_format: 'text'
+      }, { timeout: TRANSCRIPTION_TIMEOUT_MS });
+
+      return typeof transcription === 'string'
+        ? transcription.trim()
+        : String(transcription?.text || '').trim();
+    } catch (err) {
+      lastError = err;
+      if (attempt >= TRANSCRIPTION_RETRIES || !isRetryableTranscriptionError(err)) {
+        throw err;
+      }
+      await sleep(800 * attempt);
+    }
+  }
+
+  throw lastError || new Error('Transkripsi gagal tanpa detail error.');
+}
 
 /**
  * Transkripsi narasi/suara dari file video menggunakan OpenAI Whisper.
@@ -46,18 +148,27 @@ async function transcribeAudio(videoPath) {
     return '';
   }
 
+  let extracted = null;
   try {
-    logger.info(`[Whisper] Memulai transkripsi audio dari: ${path.basename(videoPath)}`);
-    const fileStream = fs.createReadStream(videoPath);
+    logger.info(`[Whisper] Memulai transkripsi audio dari: ${path.basename(videoPath)} (${formatFileSize(videoPath)})`);
 
-    const transcription = await openai.audio.transcriptions.create({
-      file: fileStream,
-      model: 'whisper-1',
-      language: 'id', // Bahasa Indonesia (auto-detect jika campuran)
-      response_format: 'text'
-    });
+    let inputForWhisper = videoPath;
+    if (VIDEO_EXTENSIONS.includes(ext)) {
+      try {
+        extracted = await extractAudioForWhisper(videoPath);
+        inputForWhisper = extracted.audioPath;
+        logger.info(`[Whisper] Audio video diekstrak untuk transkripsi: ${formatFileSize(inputForWhisper)}`);
+      } catch (extractErr) {
+        const msg = String(extractErr?.message || '').toLowerCase();
+        if (msg.includes('matches no streams') || msg.includes('stream map') || msg.includes('audio')) {
+          logger.warn(`[Whisper] Video tidak memiliki audio yang bisa ditranskripsi.`);
+          return '';
+        }
+        throw extractErr;
+      }
+    }
 
-    const result = transcription?.trim() || '';
+    const result = await transcribeFileWithRetry(inputForWhisper);
     if (result) {
       logger.success(`[Whisper] Transkripsi selesai: "${result.substring(0, 80)}..."`);
     } else {
@@ -72,6 +183,8 @@ async function transcribeAudio(videoPath) {
       logger.warn(`[Whisper] Gagal transkripsi (non-fatal): ${err.message}`);
     }
     return '';
+  } finally {
+    cleanupTempDir(extracted?.tmpDir);
   }
 }
 
@@ -86,9 +199,8 @@ async function transcribeAudio(videoPath) {
  * @returns {Promise<string[]>} Array path file gambar frame
  */
 function extractFrames(videoPath, outputDir) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const frames = [];
-    let duration = 0;
 
     // Dapatkan durasi video terlebih dahulu
     ffmpeg.ffprobe(videoPath, (err, metadata) => {
@@ -97,7 +209,7 @@ function extractFrames(videoPath, outputDir) {
         return resolve([]); // Non-fatal, lanjutkan tanpa frame
       }
 
-      duration = metadata.format?.duration || 0;
+      const duration = metadata.format?.duration || 0;
       if (duration < 1) {
         logger.warn(`[ffprobe] Durasi video terlalu pendek untuk ekstrak frame.`);
         return resolve([]);
@@ -110,27 +222,37 @@ function extractFrames(videoPath, outputDir) {
         duration * 0.85
       ];
 
+      // Gunakan child_process.execFile LANGSUNG ke binary ffmpeg
+      // Ini menghindari bug fluent-ffmpeg yang tidak pass ffmpegPath ke child instance
+      const ffmpegBin = ffmpegInstaller.path;
+
       let processed = 0;
       const targetFrameCount = timestamps.length;
 
       timestamps.forEach((ts, idx) => {
         const framePath = path.join(outputDir, `frame_${idx + 1}.jpg`);
-        frames.push(framePath);
 
-        ffmpeg(videoPath)
-          .seekInput(ts)
-          .frames(1)
-          .output(framePath)
-          .on('end', () => {
-            processed++;
-            if (processed === targetFrameCount) resolve(frames);
-          })
-          .on('error', (frameErr) => {
-            logger.warn(`[ffmpeg] Gagal ekstrak frame ${idx + 1}: ${frameErr.message}`);
-            processed++;
-            if (processed === targetFrameCount) resolve(frames.filter(f => fs.existsSync(f)));
-          })
-          .run();
+        const args = [
+          '-nostdin',
+          '-ss', String(ts),
+          '-i', videoPath,
+          '-frames:v', '1',
+          '-q:v', '2',
+          '-y',
+          framePath
+        ];
+
+        execFile(ffmpegBin, args, { timeout: 30000 }, (execErr) => {
+          if (!execErr && fs.existsSync(framePath)) {
+            frames.push(framePath);
+          } else {
+            logger.warn(`[ffmpeg] Gagal ekstrak frame ${idx + 1}: ${execErr?.message || 'unknown'}`);
+          }
+          processed++;
+          if (processed === targetFrameCount) {
+            resolve(frames);
+          }
+        });
       });
     });
   });

@@ -190,11 +190,20 @@ Ambil semua rekap percakapan (long-term memory AI).
 ### POST `/api/send`
 Kirim pesan teks manual dari dashboard.
 ```json
-{ "storeId": "toko-a-1234", "to": "6281234567890@c.us", "body": "Halo kak!" }
+{
+  "storeId": "toko-a-1234",
+  "to": "6281234567890@c.us",
+  "body": "Halo kak!",
+  "quotedMessageId": "false_6281234567890@c.us_ABC123",
+  "quotedBody": "Pesan customer yang dibalas",
+  "quotedFromMe": false,
+  "quotedSenderName": "Customer"
+}
 ```
 Catatan:
 - `to` boleh berupa `628xxx`, `08xxx`, `628xxx@c.us`, `628xxx@s.whatsapp.net`, atau existing chat id `xxxxx@lid`.
 - Endpoint memakai rate limit 30 request/menit dan menolak pesan di atas 4000 karakter.
+- Field `quoted*` opsional. Jika `quotedMessageId` dikirim, WhatsApp akan mengirim pesan sebagai quoted reply dan CRM menyimpan konteks pesan asal.
 
 ### POST `/api/send-media`
 Kirim media katalog manual dari dashboard.

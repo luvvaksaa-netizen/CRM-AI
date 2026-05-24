@@ -27,6 +27,19 @@ LOG_MAX_FILES=5                    # Jumlah file rotasi app.log.N yang disimpan
 TEMP_CLEANUP_MAX_AGE_MS=3600000    # Umur file temp sebelum dibersihkan saat startup
 RAJAONGKIR_CACHE_TTL_MS=604800000  # TTL cache Komerce/RajaOngkir
 CLIENT_LAUNCH_TIMEOUT_MS=120000    # Timeout launch tiap sesi WA agar store lain tetap lanjut
+OPENAI_TRANSCRIPTION_TIMEOUT_MS=120000 # Timeout Whisper/video transcription
+OPENAI_TRANSCRIPTION_RETRIES=3      # Retry transient connection error saat transkripsi
+FFMPEG_AUDIO_EXTRACT_TIMEOUT_MS=120000 # Timeout ekstrak audio video untuk Whisper
+MEDIA_VIDEO_OPTIMIZE_ENABLED=true   # Kompres video besar untuk pengiriman WA
+MEDIA_VIDEO_OPTIMIZE_THRESHOLD_MB=12 # Video di atas ukuran ini dibuatkan MP4 ringan
+MEDIA_VIDEO_OPTIMIZE_TIMEOUT_MS=180000 # Timeout kompres video besar
+AI_BETWEEN_MEDIA_DELAY_MS=500       # Jeda antar-media saat AI mengirim katalog
+OPENAI_CHAT_TIMEOUT_MS=18000        # Timeout panggilan utama AI chat
+OPENAI_SECOND_CALL_TIMEOUT_MS=10000 # Timeout panggilan kedua AI setelah tool
+AI_MEDIA_FAST_REPLY_ENABLED=true    # Skip second AI call untuk tool media-only
+WA_SEND_READY_TIMEOUT_MS=45000      # Tunggu client WA siap sebelum kirim
+WA_TYPING_HARD_STOP_MS=7000         # Typing indicator maksimal sekitar 7 detik
+WA_TYPING_PULSE_MS=5000             # Refresh typing jika masih dalam window pendek
 ```
 
 ---
@@ -172,6 +185,8 @@ Jika Anda menggunakan satu akun WhatsApp yang sama di laptop development dan ser
 1. Status OpenAI API: https://status.openai.com
 2. AI Queue penuh (> 3 concurrent)? Cek log `[AI Queue] Antrean digugurkan`
 3. Network timeout ke OpenAI? Cek firewall VPS
+4. Jika log berulang "AI masih membalas ... Batch baru digabung", customer sedang mengirim beberapa pesan saat satu jawaban aktif. Sistem menggabungkan batch tersebut agar tidak antre serial.
+5. Jika opening mengirim video, pastikan upload video sudah selesai dianalisis dan log menunjukkan `Video dioptimalkan untuk WA`. Video asli 20MB bisa membuat upload WhatsApp terasa lama.
 
 ---
 
@@ -181,6 +196,14 @@ Jika Anda menggunakan satu akun WhatsApp yang sama di laptop development dan ser
 1. File tidak ada di `UPLOADS_DIR` → cek folder `data/uploads/`
 2. File corrupt → coba upload ulang
 3. Ukuran file melebihi batas (5MB untuk foto, 16MB untuk video)
+
+### Video upload: Whisper `Connection error`
+
+Sistem mengekstrak audio video ke MP3 kecil sebelum memanggil Whisper. Jika masih gagal:
+1. Cek log `[Whisper] Audio video diekstrak` untuk memastikan ffmpeg berhasil.
+2. Cek koneksi server ke OpenAI dan nilai `OPENAI_TRANSCRIPTION_TIMEOUT_MS`.
+3. Jika video tidak punya audio track, log akan menulis "Video tidak memiliki audio" dan analisis visual tetap berjalan.
+4. Untuk video katalog yang sering dikirim ke customer, jaga file hasil optimasi di bawah 8-12MB agar pengiriman WhatsApp cepat.
 
 ---
 
@@ -255,3 +278,13 @@ GET http://localhost:3000/api/system/wa-js
 ```
 
 Jika `injected: false`, sistem tetap berjalan dengan WWebJS. Cek `logs/app.log` untuk detail error injeksi.
+
+Catatan recovery:
+- Startup sync memakai `WPP.chat.list()` dan `WPP.chat.getMessages()` jika tersedia. Quoted metadata dibaca defensively; pesan yang bukan reply tidak boleh menyebabkan error `does not have a reply`.
+- Jika health check mendeteksi browser hang/detached, sistem melakukan restart runtime tanpa menghapus folder sesi `.wwebjs_auth`. Manual logout tetap memakai jalur `logoutClient()` dan memang membersihkan sesi.
+- Jika follow-up/manual/AI terkirim saat browser sedang recovery, pengirim akan menunggu `WA_SEND_READY_TIMEOUT_MS` sebelum gagal.
+
+Troubleshooting log umum:
+- `WA-JS addScriptTag belum berhasil... inline injection` masih normal selama akhirnya muncul `WA-JS aktif`.
+- `does not have a reply` pada sync harus hilang setelah update ini. Jika muncul lagi, cek versi `@wppconnect/wa-js` dan simpan contoh `wa_message_id`.
+- `Attempted to use detached Frame` yang muncul sekali akan memicu recovery. Jika berulang terus, restart proses Node dan cek RAM/CPU laptop server.

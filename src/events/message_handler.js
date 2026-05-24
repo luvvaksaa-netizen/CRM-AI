@@ -89,12 +89,16 @@ async function resumeBotForContact(storeWaId, contactId) {
 //  4. Timer berlalu tanpa pesan baru → Semua digabung: "Halo\nMau tanya\nHarganya?"
 //  5. AI memproses 1 kali saja → 1 balasan koheren.
 // ══════════════════════════════════════════════════════════════════
-const DEBOUNCE_MS = Number(process.env.AI_REPLY_DEBOUNCE_MS || 1400); // Responsif, tetap menahan chat beruntun singkat
+const DEBOUNCE_MS = Number(process.env.AI_REPLY_DEBOUNCE_MS || 1200); // Responsif, tetap menahan chat beruntun singkat
 const ACTIVE_REPLY_WAIT_MS = Number(process.env.AI_ACTIVE_REPLY_WAIT_MS || 600);
 const THINKING_DELAY_MIN_MS = Number(process.env.AI_THINKING_DELAY_MIN_MS || 80);
-const THINKING_DELAY_JITTER_MS = Number(process.env.AI_THINKING_DELAY_JITTER_MS || 220);
-const BETWEEN_BUBBLE_DELAY_MS = Number(process.env.AI_BETWEEN_BUBBLE_DELAY_MS || 350);
-const MEDIA_STABILITY_DELAY_MS = Number(process.env.WA_MEDIA_STABILITY_DELAY_MS || 450);
+const THINKING_DELAY_JITTER_MS = Number(process.env.AI_THINKING_DELAY_JITTER_MS || 200);
+const BETWEEN_BUBBLE_DELAY_MS = Number(process.env.AI_BETWEEN_BUBBLE_DELAY_MS || 200);
+const BETWEEN_MEDIA_DELAY_MS = Number(process.env.AI_BETWEEN_MEDIA_DELAY_MS || 500);
+const MEDIA_STABILITY_DELAY_MS = Number(process.env.WA_MEDIA_STABILITY_DELAY_MS || 250);
+const WA_TYPING_PULSE_MS = Number(process.env.WA_TYPING_PULSE_MS || 5000);
+const WA_TYPING_HARD_STOP_MS = Number(process.env.WA_TYPING_HARD_STOP_MS || 7000);
+const WA_SEND_RETRY_DELAY_MS = Number(process.env.WA_SEND_RETRY_DELAY_MS || 1200);
 const debounceTimers = new Map();      // Key: 'storeWaId_contactId' → timeoutId
 const pendingMessages = new Map();     // Key: 'storeWaId_contactId' → { messages: [], mediaContexts: [], tempPaths: [], senderName, message (last) }
 
@@ -105,6 +109,8 @@ const pendingMessages = new Map();     // Key: 'storeWaId_contactId' → { messa
  */
 const autoLabelCache = new Set();
 const activeAIReplies = new Set();
+const queuedAIReplyBatches = new Map();
+const coalescedReplyLogAt = new Map();
 
 function _scheduleAutoLabels(message, storeWaId, contactId, identity) {
     if (process.env.WAJS_AUTO_LABEL_ENABLED === 'false') return;
@@ -120,6 +126,68 @@ function _scheduleAutoLabels(message, storeWaId, contactId, identity) {
             safeAddLabelByName(message.client, contactId, 'Kontak LID', undefined, storeWaId);
         }
     }, 0);
+}
+
+function _mergeReplyBatches(existing, incoming) {
+    if (!existing) return incoming;
+    return {
+        messages: [...(existing.messages || []), ...(incoming.messages || [])],
+        mediaContexts: [...(existing.mediaContexts || []), ...(incoming.mediaContexts || [])],
+        tempPaths: [...(existing.tempPaths || []), ...(incoming.tempPaths || [])],
+        senderName: incoming.senderName || existing.senderName,
+        lastMessage: incoming.lastMessage || existing.lastMessage
+    };
+}
+
+function _getMessageId(message) {
+    return message?.id?._serialized || message?.id?.id || message?.quotedMsgId || message?.quoted_message_id || '';
+}
+
+function _clipQuoteBody(value, maxLength = 500) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!text) return '';
+    return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+}
+
+function _quoteContextFromMessage(message, fallbackSender = '') {
+    const quotedBody = _clipQuoteBody(message?.body || message?.caption || message?.quotedBody || message?.quoted_body || '');
+    return {
+        quoted_message_id: _getMessageId(message),
+        quoted_body: quotedBody || (message?.hasMedia ? '(Media)' : ''),
+        quoted_from_me: Boolean(message?.fromMe),
+        quoted_sender_name: fallbackSender || (message?.fromMe ? 'Admin/AI' : 'Pelanggan')
+    };
+}
+
+function _isVideoMediaAsset(mediaAsset = {}) {
+    const ext = path.extname(mediaAsset.filename || '').toLowerCase();
+    return mediaAsset.type === 'video' || ['.mp4', '.mov', '.avi', '.mkv', '.3gp'].includes(ext);
+}
+
+async function _extractQuotedContext(message, storeWaId) {
+    try {
+        const directQuotedId = message?.quotedMsgId || message?.quoted_message_id || message?._data?.quotedMsg?.id?._serialized || message?._data?.quotedMsgId?._serialized || message?._data?.quotedStanzaID;
+        const directQuotedBody = message?.quotedBody || message?.quoted_body || message?._data?.quotedMsg?.body || message?._data?.quotedMsg?.caption || '';
+
+        if (message?.hasQuotedMsg && typeof message.getQuotedMessage === 'function') {
+            const quoted = await message.getQuotedMessage();
+            if (quoted) {
+                return _quoteContextFromMessage(quoted, quoted.fromMe ? 'Admin/AI' : 'Pelanggan');
+            }
+        }
+
+        if (directQuotedId || directQuotedBody) {
+            return {
+                quoted_message_id: directQuotedId || null,
+                quoted_body: _clipQuoteBody(directQuotedBody),
+                quoted_from_me: message?.quotedFromMe ?? message?.quoted_from_me ?? null,
+                quoted_sender_name: message?.quotedSenderName || message?.quoted_sender_name || null
+            };
+        }
+    } catch (error) {
+        logger.warn(`[${storeWaId}] Gagal membaca konteks quoted reply: ${error.message}`);
+    }
+    return {};
 }
 
 async function handleMessage(message, storeWaId, shouldAIReply = true) {
@@ -185,12 +253,10 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
             customerMediaContext = `(Pelanggan Mengirim Stiker)`;
         }
 
-        if (customerMediaContext) {
-            safeSendReactionToMessage(message, '\uD83D\uDC4D', storeWaId);
-        }
-
         // ═══════════════════════════════════════════════════════
         // STEP 2: LOG PESAN KE DATABASE & DASHBOARD (SELALU)
+        // Blok ini SELALU dijalankan, terlepas dari status bot ON/OFF.
+        // Tujuan: pastikan SEMUA pesan customer tersimpan untuk CS manusia & audit.
         // ═══════════════════════════════════════════════════════
         const logBody = customerMediaContext 
             ? `${customerMediaContext}\n${body}`.trim()
@@ -250,6 +316,7 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
             number: resolvedPhone || contact.number
         });
         const senderName = identity.displayName;
+        const quotedContext = await _extractQuotedContext(message, storeWaId);
 
         await dashboard.addToChatHistory(storeWaId, {
             id: message.id?._serialized || message.id?.id,
@@ -258,15 +325,22 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
             isMe: false,
             timestamp: new Date(),
             sender_name: senderName,
-            contactIdentity: identity
+            contactIdentity: identity,
+            ...quotedContext
         });
         _scheduleAutoLabels(message, storeWaId, contactId, identity);
 
-        // Cancel pending follow-ups ketika customer merespons
+        // Cancel pending follow-ups ketika customer merespons (SELALU, terlepas bot ON/OFF)
         try {
             const { cancelPendingFollowUps } = require('../services/followup_service');
             await cancelPendingFollowUps(storeWaId, contactId, 'Customer merespons');
         } catch (e) { /* Non-critical: follow-up cancel failure */ }
+
+        // ── BACKGROUND SUMMARY UPDATE (SELALU — bot ON maupun OFF) ──────────────
+        // Rekap percakapan diperbarui setiap kali customer mengirim pesan,
+        // agar ketika bot dinyalakan kembali, AI langsung tau konteks terbarunya.
+        // Debounced 60 detik agar tidak membebani OpenAI saat customer kirim banyak pesan.
+        _triggerBackgroundSummaryIfNeeded(storeWaId, contactId, senderName);
 
         logger.info(`[${storeWaId}] Pesan masuk terdaftar: ${contactId}`);
 
@@ -280,7 +354,7 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
         }
 
         // ═══════════════════════════════════════════════════════
-        // FIREWALL 2: HUMAN OVERRIDE (Bot Dipause)
+        // FIREWALL 2: HUMAN OVERRIDE (Bot Dipause per-kontak)
         // ═══════════════════════════════════════════════════════
         if (pausedContacts.has(debounceKey)) {
             logger.info(`[${storeWaId}] Bot sedang dipause (Human Override) untuk: ${contactId}`);
@@ -289,7 +363,33 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
         }
 
         // ═══════════════════════════════════════════════════════
-        // STEP 3: DEBOUNCER — Tampung pesan, tunggu 3.5 detik
+        // FIREWALL 3: GLOBAL BOT OFF CHECK (Early DB Check)
+        // Cek is_bot_active SEBELUM masuk debouncer agar tidak buang CPU.
+        // Double-checked lagi di _processAIReplyUnlocked (defense-in-depth).
+        // ═══════════════════════════════════════════════════════
+        try {
+            const storeCheck = await Store.findOne({ where: { wa_id: storeWaId }, attributes: ['is_bot_active'] });
+            if (!storeCheck || storeCheck.is_bot_active === false) {
+                logger.info(`[${storeWaId}] Bot NON-AKTIF (FIREWALL 3). Pesan dicatat, AI tidak akan membalas.`);
+                // FIREWALL 3: Kirim reaction hanya saat bot aktif (tidak leaking presence ke customer)
+                if (customerMediaContext) {
+                    safeSendReactionToMessage(message, '\uD83D\uDC4D', storeWaId);
+                }
+                _cleanupTempFile(tempPath, storeWaId);
+                return;
+            }
+        } catch (fwErr) {
+            // Jika DB check gagal, lanjut ke layer berikutnya (defense-in-depth tetap aman)
+            logger.warn(`[${storeWaId}] FIREWALL 3 DB check gagal: ${fwErr.message}. Lanjut ke layer berikutnya.`);
+        }
+
+        // Reaction 👍 hanya dikirim jika bot AKTIF (tidak membingungkan customer di mode CS manual)
+        if (customerMediaContext) {
+            safeSendReactionToMessage(message, '\uD83D\uDC4D', storeWaId);
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // STEP 3: DEBOUNCER — Tampung pesan, tunggu singkat sesuai AI_REPLY_DEBOUNCE_MS
         // ═══════════════════════════════════════════════════════
         // Batalkan timer sebelumnya jika ada (pelanggan masih mengetik)
         if (debounceTimers.has(debounceKey)) {
@@ -314,7 +414,7 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
         buffer.senderName = senderName;
         buffer.lastMessage = message;
 
-        // Set timer baru: Proses AI hanya jika 3.5 detik tidak ada pesan baru
+        // Set timer baru: Proses AI hanya jika tidak ada pesan baru dalam window debounce
         const timerId = setTimeout(async () => {
             debounceTimers.delete(debounceKey);
             const batch = pendingMessages.get(debounceKey);
@@ -348,16 +448,49 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
  */
 async function _processAIReply(storeWaId, contactId, batch) {
     const replyKey = `${storeWaId}_${contactId}`;
+    if (activeAIReplies.has(replyKey)) {
+        queuedAIReplyBatches.set(replyKey, _mergeReplyBatches(queuedAIReplyBatches.get(replyKey), batch));
+        const now = Date.now();
+        const lastLogAt = coalescedReplyLogAt.get(replyKey) || 0;
+        if (now - lastLogAt > 5000) {
+            logger.info(`[${storeWaId}] AI masih membalas [${contactId}]. Batch baru digabung ke antrean lanjutan, bukan dibuat menunggu sendiri.`);
+            coalescedReplyLogAt.set(replyKey, now);
+        }
+        return;
+    }
+    const MAX_WAIT_MS = 180000; // 3 menit — prevent infinite spin jika AI sebelumnya hang
+    const startWait = Date.now();
+
     while (activeAIReplies.has(replyKey)) {
+        if (Date.now() - startWait > MAX_WAIT_MS) {
+            // Paksa hapus kunci yang stuck agar tidak blokir selamanya
+            logger.warn(`[${storeWaId}] Paksa hapus lock AI yang macet untuk [${contactId}] (timeout 3 menit).`);
+            activeAIReplies.delete(replyKey);
+            break;
+        }
         logger.info(`[${storeWaId}] AI reply untuk [${contactId}] masih berjalan. Menahan batch baru agar tidak spam.`);
         await new Promise(resolve => setTimeout(resolve, ACTIVE_REPLY_WAIT_MS));
     }
 
     activeAIReplies.add(replyKey);
     try {
-        return await _processAIReplyUnlocked(storeWaId, contactId, batch);
+        let currentBatch = batch;
+        while (currentBatch) {
+            try {
+                await _processAIReplyUnlocked(storeWaId, contactId, currentBatch);
+            } catch (err) {
+                logger.error(`[${storeWaId}] AI reply gagal untuk [${contactId}]: ${err.message}`);
+            }
+
+            currentBatch = queuedAIReplyBatches.get(replyKey);
+            queuedAIReplyBatches.delete(replyKey);
+            if (currentBatch) {
+                logger.info(`[${storeWaId}] Memproses batch lanjutan yang sudah digabung untuk [${contactId}].`);
+            }
+        }
     } finally {
         activeAIReplies.delete(replyKey);
+        coalescedReplyLogAt.delete(replyKey);
     }
 }
 
@@ -388,9 +521,15 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
         return;
     }
 
-    const chat = await lastMessage.getChat();
-    const stopTyping = _startTypingHeartbeat(chat, storeWaId, contactId, lastMessage.client);
+    let chat = null;
+    try {
+        chat = typeof lastMessage.getChat === 'function' ? await lastMessage.getChat() : null;
+    } catch (error) {
+        logger.warn(`[${storeWaId}] Gagal membaca chat aktif [${contactId}]: ${error.message}`);
+    }
+    let stopTyping = () => {};
 
+    try {
     // 2. Ambil Riwayat Chat & Rekapan Sebelumnya
     const recentHistory = await ChatMessage.findAll({
         where: { contact_id: contactId, store_wa_id: storeWaId },
@@ -448,7 +587,7 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
     await new Promise(r => setTimeout(r, Math.floor(Math.random() * THINKING_DELAY_JITTER_MS) + THINKING_DELAY_MIN_MS));
 
     // 5. Status Mengetik
-    await _markTyping(chat, storeWaId, contactId, lastMessage.client);
+    // Typing WA sengaja ditunda sampai respons siap dikirim, agar tidak muncul lama lalu hilang.
 
     // 6. PROSES AI (dengan pesan yang sudah digabung)
     const interactionCount = history.filter(h => !h.is_from_me).length + 1;
@@ -460,9 +599,9 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
     const outboundBubbles = prepareOutboundBubbles(fallbackContent);
     const primaryTextForDelay = outboundBubbles[0] || fallbackContent;
 
-    // 7. Jeda Mengetik (Natural Feel)
-    const typingDelay = calculateTypingDelay(primaryTextForDelay);
-    await new Promise(r => setTimeout(r, typingDelay));
+    // 7. Siapkan jeda mengetik singkat. Heartbeat dimulai nanti, tepat sebelum kirim.
+    // Hard cap 4500ms agar total waktu typing + kirim customer selalu < 7 detik
+    const typingDelay = Math.min(calculateTypingDelay(primaryTextForDelay), 4500);
 
     // 8. Eksekusi Tool Khusus Non-Pesan (misal: Auto-Label)
     if (aiResult.tool_calls && aiResult.tool_calls.length > 0) {
@@ -477,23 +616,44 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
                     logger.warn(`[${storeWaId}] AI gagal menambah label: ${e.message}`);
                 }
             }
+
+            if (tc.function.name === 'matikan_bot_kontak') {
+                try {
+                    const args = JSON.parse(tc.function.arguments || '{}');
+                    await pauseBotForContact(storeWaId, contactId);
+                    logger.info(`[${storeWaId}] AI mem-pause bot untuk [${contactId}]: ${args.reason || 'perlu CS manusia'}`);
+                } catch (e) {
+                    logger.warn(`[${storeWaId}] AI gagal mem-pause bot: ${e.message}`);
+                }
+            }
         }
     }
+
+    stopTyping = _startTypingHeartbeat(chat, storeWaId, contactId, lastMessage.client, Math.max(WA_TYPING_HARD_STOP_MS, typingDelay + 1000));
+    await new Promise(r => setTimeout(r, typingDelay));
 
     // 9. KIRIM RESPONS
     try {
         if (aiResult.type === RESPONSE_TYPE.MEDIA && aiResult.mediaList && aiResult.mediaList.length > 0) {
+            const hasVideo = aiResult.mediaList.some(item => _isVideoMediaAsset(item.media));
+            let textAlreadySent = false;
+
+            if (aiResult.content && hasVideo) {
+                await _sendTextBubbles(lastMessage, chat, storeWaId, contactId, outboundBubbles, agent.bot_name);
+                textAlreadySent = true;
+            }
+
             for (let i = 0; i < aiResult.mediaList.length; i++) {
                 const item = aiResult.mediaList[i];
                 await _markTyping(chat, storeWaId, contactId, lastMessage.client);
                 await _sendMediaToChat(lastMessage, item.media, item.caption || "", storeWaId, contactId, agent);
                 
                 if (i < aiResult.mediaList.length - 1) {
-                    await new Promise(r => setTimeout(r, 1500));
+                    await new Promise(r => setTimeout(r, BETWEEN_MEDIA_DELAY_MS));
                 }
             }
 
-            if (aiResult.content) {
+            if (aiResult.content && !textAlreadySent) {
                 await _sendTextBubbles(lastMessage, chat, storeWaId, contactId, outboundBubbles, agent.bot_name);
             }
         } else {
@@ -507,7 +667,9 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
     // TAHAP 4: Update Rekap Chat (Summary) & Jadwalkan Follow-Up secara background (Non-blocking)
     _updateConversationSummary(storeWaId, contactId, senderName);
 
-    stopTyping();
+    } finally {
+        stopTyping();
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -518,28 +680,63 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
  * Download media dengan timeout (Anti-Hang).
  * Jika pelanggan menghapus pesannya sebelum bot mengunduh, ini akan timeout dengan aman.
  */
+function _isDetachedFrameError(error) {
+    return /detached Frame|Execution context was destroyed|Target closed|Session closed|Cannot find context|Protocol error/i
+        .test(String(error?.message || error || ''));
+}
+
+async function _sendActiveMessage(storeWaId, contactId, payload, options = {}) {
+    const { waitForActiveClient, restartClientRuntime } = require('../whatsapp_service');
+    let lastError;
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+        const client = await waitForActiveClient(storeWaId);
+        try {
+            return await client.sendMessage(contactId, payload, options);
+        } catch (error) {
+            lastError = error;
+            if (!_isDetachedFrameError(error) || attempt === 2) {
+                throw error;
+            }
+            logger.warn(`[${storeWaId}] Client WA sempat detach saat kirim ke [${contactId}], mencoba ulang dengan client aktif...`);
+            restartClientRuntime(storeWaId, 'send-detached-frame').catch(() => {});
+            await new Promise(r => setTimeout(r, WA_SEND_RETRY_DELAY_MS));
+        }
+    }
+
+    throw lastError;
+}
+
 async function _markTyping(chat, storeWaId, contactId, client) {
     try {
+        const { isCurrentClient } = require('../whatsapp_service');
+        if (client && !isCurrentClient(storeWaId, client)) return false;
         const { safeMarkIsComposing } = require('../services/wajs_bridge');
         const markedByWajs = await safeMarkIsComposing(client, contactId, 6000, storeWaId);
         if (!markedByWajs && typeof chat?.sendStateTyping === 'function') {
             await chat.sendStateTyping();
         }
         dashboard.emitTypingStatus(storeWaId, contactId, true);
+        return true;
     } catch (e) {
+        // Detached frame = client sudah restart, skip typing DIAM tanpa warning spam
+        if (_isDetachedFrameError(e)) return false;
         logger.warn(`[${storeWaId}] Gagal menampilkan typing untuk [${contactId}]: ${e.message}`);
+        return false;
     }
 }
 
-function _startTypingHeartbeat(chat, storeWaId, contactId, client) {
+function _startTypingHeartbeat(chat, storeWaId, contactId, client, hardStopMs = WA_TYPING_HARD_STOP_MS) {
     let stopped = false;
-    const pulse = () => {
-        if (!stopped) _markTyping(chat, storeWaId, contactId, client);
+    const pulse = async () => {
+        if (stopped) return;
+        const ok = await _markTyping(chat, storeWaId, contactId, client);
+        if (!ok) stop();
     };
 
     pulse();
-    const interval = setInterval(pulse, 4500);
-    const hardStop = setTimeout(() => stop(), 90000);
+    const interval = setInterval(pulse, WA_TYPING_PULSE_MS);
+    const hardStop = setTimeout(() => stop(), hardStopMs);
 
     function stop() {
         if (stopped) return;
@@ -554,6 +751,9 @@ function _startTypingHeartbeat(chat, storeWaId, contactId, client) {
 
 async function _downloadMediaWithTimeout(message, timeoutMs = 20000) {
     try {
+        if (typeof message.downloadMedia !== 'function') {
+            return null; // Graceful fallback for WA-JS sync messages
+        }
         const timeoutPromise = new Promise((_, reject) => 
             setTimeout(() => reject(new Error('Media download timeout')), timeoutMs)
         );
@@ -581,16 +781,15 @@ async function _sendTextBubbles(message, chat, storeWaId, contactId, bubbles, bo
             await new Promise(r => setTimeout(r, BETWEEN_BUBBLE_DELAY_MS));
         }
 
-        let sentMsg;
-        if (i === 0 || typeof chat?.sendMessage !== 'function') {
-            sentMsg = await message.reply(bubble);
-        } else {
-            sentMsg = await chat.sendMessage(bubble);
-        }
+        const quotedMessageId = i === 0 ? _getMessageId(message) : '';
+        const sendOptions = quotedMessageId
+            ? { quotedMessageId, ignoreQuoteErrors: true }
+            : {};
+        const sentMsg = await _sendActiveMessage(storeWaId, contactId, bubble, sendOptions);
 
         // Capture WA message ID to prevent message_create event from double-logging
         const waMessageId = sentMsg?.id?._serialized || sentMsg?.id?.id || null;
-        await _logBotReply(storeWaId, contactId, bubble, botName, waMessageId);
+        await _logBotReply(storeWaId, contactId, bubble, botName, waMessageId, _quoteContextFromMessage(message, 'Pelanggan'));
     }
 }
 
@@ -599,30 +798,47 @@ async function _sendTextBubbles(message, chat, storeWaId, contactId, bubbles, bo
  */
 async function _sendMediaToChat(message, mediaAsset, caption, storeWaId, contactId, agent) {
     const { UPLOADS_DIR } = require('../config');
-    const mediaPath = path.join(UPLOADS_DIR, mediaAsset.filename);
+    let mediaPath = path.join(UPLOADS_DIR, mediaAsset.filename);
     
-    try {
-        if (!fs.existsSync(mediaPath)) throw new Error(`File tidak ditemukan: ${mediaAsset.filename}`);
-
-        // Berikan delay kecil untuk stabilitas pengiriman media di headless browser.
-        await new Promise(r => setTimeout(r, MEDIA_STABILITY_DELAY_MS));
-
-        const mediaMsg = MessageMedia.fromFilePath(mediaPath);
-        const sentMsg = await message.reply(mediaMsg, undefined, { caption: caption || "" });
-        const waMessageId = sentMsg?.id?._serialized || sentMsg?.id?.id || null;
-
-        const fileExt = mediaPath.split('.').pop().toLowerCase();
-        const tag = ['mp4', 'mov', 'avi'].includes(fileExt) ? '[VIDEO' : '[MEDIA';
-        
-        const logBody = `${tag}:/uploads/${mediaAsset.filename}] ${caption || `Katalog: ${mediaAsset.label}`}`;
-        await _logBotReply(storeWaId, contactId, logBody, agent?.bot_name, waMessageId);
-        
-        logger.success(`[${storeWaId}] Media [${mediaAsset.label}] dikirim ke [${contactId}]`);
-    } catch (mediaError) {
-        logger.error(`[${storeWaId}] Gagal kirim media: ${mediaError.message}`);
+    // Retry 1x jika gagal kirim media (network/puppeteer glitch)
+    for (let attempt = 1; attempt <= 2; attempt++) {
         try {
-            await message.reply(`Maaf kak, media gagal dikirim. Bisa saya bantu dengan cara lain?`);
-        } catch (e) { /* ignore reply failure */ }
+            if (!fs.existsSync(mediaPath)) throw new Error(`File tidak ditemukan: ${mediaAsset.filename}`);
+            if (_isVideoMediaAsset(mediaAsset)) {
+                const { optimizeVideoForWhatsApp } = require('../services/media_service');
+                mediaPath = await optimizeVideoForWhatsApp(mediaAsset, mediaPath);
+            }
+
+            // Berikan delay kecil untuk stabilitas pengiriman media di headless browser.
+            await new Promise(r => setTimeout(r, MEDIA_STABILITY_DELAY_MS));
+
+            const mediaMsg = MessageMedia.fromFilePath(mediaPath);
+            const quotedMessageId = _getMessageId(message);
+            const sendOptions = { caption: caption || "" };
+            if (quotedMessageId) {
+                sendOptions.quotedMessageId = quotedMessageId;
+                sendOptions.ignoreQuoteErrors = true;
+            }
+            const sentMsg = await _sendActiveMessage(storeWaId, contactId, mediaMsg, sendOptions);
+            const waMessageId = sentMsg?.id?._serialized || sentMsg?.id?.id || null;
+
+            const fileExt = mediaPath.split('.').pop().toLowerCase();
+            const tag = ['mp4', 'mov', 'avi'].includes(fileExt) ? '[VIDEO' : '[MEDIA';
+            const logBody = `${tag}:/uploads/${path.basename(mediaPath)}] ${caption || `Katalog: ${mediaAsset.label}`}`;
+            await _logBotReply(storeWaId, contactId, logBody, agent?.bot_name, waMessageId, _quoteContextFromMessage(message, 'Pelanggan'));
+            
+            logger.success(`[${storeWaId}] Media [${mediaAsset.label}] dikirim ke [${contactId}]`);
+            return; // Berhasil, keluar dari retry loop
+        } catch (mediaError) {
+            if (attempt < 2) {
+                logger.warn(`[${storeWaId}] Gagal kirim media (attempt ${attempt}), retry dalam 2 detik: ${mediaError.message}`);
+                await new Promise(r => setTimeout(r, 2000));
+            } else {
+                logger.error(`[${storeWaId}] Gagal kirim media [${mediaAsset.label}] setelah 2x: ${mediaError.message}`);
+                // Jangan kirim teks fallback yang membingungkan customer
+                // Cukup log error, AI sudah kirim teks secara terpisah
+            }
+        }
     }
 }
 
@@ -631,14 +847,23 @@ async function _sendMediaToChat(message, mediaAsset, caption, storeWaId, contact
  * @param {string} waMessageId - ID pesan WA yang dikirim (dari sentMsg.id._serialized)
  *                               Digunakan sebagai dedup key agar message_create event tidak re-log.
  */
-async function _logBotReply(storeWaId, contactId, body, botName, waMessageId = null) {
+async function _logBotReply(storeWaId, contactId, body, botName, waMessageId = null, quotedContext = {}) {
+    // Langsung daftarkan ID ke memory tracker agar message_create tidak menganggap ini pesan dari HP
+    if (waMessageId) {
+        try {
+            const { trackBotSentMessage } = require('../whatsapp_service');
+            trackBotSentMessage(waMessageId);
+        } catch (_) { /* non-critical */ }
+    }
+
     await dashboard.addToChatHistory(storeWaId, {
         id: waMessageId,         // Kunci dedup — message_create akan menemukan ini dan skip
         from: contactId,
         body: body,
         isMe: true,
         timestamp: new Date(),
-        sender_name: botName || 'AI Assistant'
+        sender_name: botName || 'AI Assistant',
+        ...quotedContext
     });
 }
 
@@ -727,9 +952,46 @@ async function _scheduleFollowUpIfNeeded(storeWaId, contactId, contactName, curr
 }
 
 
+// ══════════════════════════════════════════════════════════════════
+// BACKGROUND SUMMARY DEBOUNCER
+// Dipanggil setiap kali pesan customer masuk (bot ON maupun OFF).
+// Debounced 60 detik per kontak agar tidak boros API OpenAI.
+// ══════════════════════════════════════════════════════════════════
+const _bgSummaryDebounce = new Map();
+
+function _triggerBackgroundSummaryIfNeeded(storeWaId, contactId, senderName) {
+    const key = `${storeWaId}_${contactId}`;
+
+    // Reset timer jika customer masih mengetik (debounce)
+    if (_bgSummaryDebounce.has(key)) {
+        clearTimeout(_bgSummaryDebounce.get(key));
+    }
+
+    const timerId = setTimeout(async () => {
+        _bgSummaryDebounce.delete(key);
+        try {
+            // Hitung pesan dulu — minimum 3 pesan agar summary bermakna
+            const count = await ChatMessage.count({
+                where: { contact_id: contactId, store_wa_id: storeWaId }
+            });
+            if (count < 3) return;
+
+            // Gunakan fungsi _updateConversationSummary yang sudah ada
+            // (sudah include follow-up scheduling jika summary bukan closing)
+            await _updateConversationSummary(storeWaId, contactId, senderName);
+        } catch (e) {
+            // Non-critical: tidak perlu crash flow utama
+            logger.warn(`[${storeWaId}] Background summary update gagal [${contactId}]: ${e.message}`);
+        }
+    }, 60 * 1000); // 60 detik debounce
+
+    _bgSummaryDebounce.set(key, timerId);
+}
+
 module.exports = { 
     handleMessage,
     pauseBotForContact,
     resumeBotForContact,
-    pausedContacts
+    pausedContacts,
+    getActiveAIRepliesCount: () => activeAIReplies.size
 };

@@ -114,3 +114,82 @@ Jika `addToChatHistory()` gagal (DB error), pesan masuk tetap tidak tercatat tan
 | — | Akses Publik (crm.datasdm.com) | ✅ | **SOLVED** — Cloudflare Tunnel Docs |
 | — | AI Contextual Amnesia (Lupa Detail) | ✅ | **FIXED** — Draconian rules untuk Rekap, Tool Ongkir & Limit History 30 |
 | — | Marketing Autopilot Salah Pemicu | ✅ | **FIXED** — Regex `\bkw\b` + Integrasi kontekstual ke AI |
+| — | WA-JS Message Sync (waitForChatLoading) | ✅ | **FIXED 2026-05-23** — `WPP.chat.list()` + `getMessages` defensive quoted parsing |
+| — | AI tidak kirim media katalog (hanya teks) | ✅ | **FIXED 2026-05-23** — Tool `kirim_media_katalog` mendukung `label_names` |
+| — | Pesan dihapus tidak sinkron ke web | ✅ | **FIXED 2026-05-23** — `message_revoke_everyone` event + Socket.IO emit |
+| — | Bot balasan terlalu lambat | ✅ | **FIXED 2026-05-23** — Typing dekat momen kirim, hard-stop 7 detik, media-only tool bisa skip second AI call |
+| — | Media gambar/video tidak tampil di chat CRM | ✅ | **VERIFIED** — `parseMediaMsg()` merender `[MEDIA:/path]` dan `[VIDEO:/path]` sebagai tag HTML |
+| — | Pesan dobel di CRM (race condition dedup) | ✅ | **FIXED 2026-05-23** — Dedup guard di `addToChatHistory` + in-memory `botSentMessageIds` tracker |
+| — | AI reply deadlock (infinite spin loop) | ✅ | **FIXED 2026-05-23** — Timeout 3 menit di `_processAIReply` agar tidak stuck selamanya |
+| — | Hapus riwayat chat dari CRM | ✅ | **ADDED 2026-05-23** — `DELETE /api/chat/:store/:contact` + tombol 🗑️ di header + Socket chatCleared |
+| — | Label media matching terlalu strict | ✅ | **FIXED 2026-05-23** — Fuzzy contains match + error menampilkan label tersedia |
+| — | Opening flow bot salah (tanya nomor pesanan) | ✅ | **FIXED 2026-05-23** — System prompt cek `interactionCount === 1` dan mengikuti label media agent aktif, tidak hardcode DTF |
+ 
+## Update 2026-05-23 - Media, Latency, Reply Context
+
+| Issue | Status | Catatan |
+|---|---|---|
+| Whisper gagal transkripsi video 20MB karena upload MP4 penuh | Fixed | ffmpeg ekstrak audio MP3 16k/48kbps dulu + retry koneksi OpenAI. |
+| Opening lambat karena video katalog besar dikirim sebelum teks | Fixed | Video besar dikompresi untuk WA + teks dikirim lebih awal jika respons mengandung video. |
+| Batch AI per kontak antre serial sampai 2-5 menit | Fixed | Active reply lock diganti coalescing queue per kontak. |
+| Dashboard tidak tahu pesan reply mengacu ke chat yang mana | Fixed | ChatMessages menyimpan quoted context dan UI bisa manual quoted reply. |
+| WA-JS sync gagal pada pesan non-reply (`does not have a reply`) | Fixed | Adapter tidak lagi membaca `quotedMsg` langsung tanpa safe getter. |
+| Health check menghapus sesi ketika browser detached | Fixed | Recovery runtime sekarang destroy/relaunch browser tanpa clean slate `.wwebjs_auth`. |
+| Prompt meminta bot dimatikan tapi engine tidak punya tool pause | Fixed | Tool internal `matikan_bot_kontak` ditambahkan dan dieksekusi downstream. |
+
+## Update 2026-05-24 — Stability, Typing, Follow-Up & Media Reliability
+
+| Issue | Status | Catatan |
+|---|---|---|
+| Detached Frame error spam (18+ WARN) saat Health Check restart | ✅ Fixed | `_markTyping` sekarang diam (return false) jika frame detached, bukan log WARNING berulang |
+| Bot gagal kirim balasan setelah browser restart (detached Frame) | ✅ Fixed | `_sendActiveMessage` gunakan `waitForActiveClient` bukan client lama dari closure |
+| Health Check terlalu agresif (5 menit, timeout 30 detik) | ✅ Fixed | Interval 10 menit, timeout 10 detik; skip restart jika ada AI reply aktif (guard `getActiveAIRepliesCount`) |
+| Follow-up crash (`Cannot read null.evaluate`) setelah restart | ✅ Fixed | `executeFollowUp` retry 15 detik jika error restart; reschedule +5 menit daripada cancel |
+| Bot typing muncul lalu hilang (POV customer) | ✅ Fixed | Hard cap typing delay 4500ms agar total typing + kirim < 7 detik |
+| Media tidak terkirim meski AI "bilang" sudah kirim | ✅ Fixed | `_sendMediaToChat` retry 1x setelah 2 detik; hapus fallback teks membingungkan |
+| Log spam WARN WA-JS getMessages fallback (normal behavior) | ✅ Fixed | Downgrade ke `logger.info` untuk fallback yang expected |
+| Browser "already running" saat Health Check restart | ✅ Fixed | Tambah `sleep(3000)` + `sleep(2000)` setelah `client.destroy()` untuk release OS Chromium lock |
+
+## Update 2026-05-24 (Sesi 2) — Smart Bot Re-Activation & CS Manual Awareness
+
+| Issue | Status | Catatan |
+|---|---|---|
+| Bot ON setelah 1 hari OFF langsung spam follow-up ke semua kontak | ✅ Fixed | `onBotActivated()` scan summary per-kontak; skip closing, batalkan yang sudah dibalas CS |
+| AI tidak tau bahwa CS sudah balas customer saat bot OFF | ✅ Fixed | `message_create` trigger `triggerCsManualSummaryUpdate()` (debounced 30s) → OpenAI update rekap |
+| Follow-up terkirim meski percakapan sudah closing | ✅ Fixed | `executeFollowUp` cek `ChatSummary` terbaru sebelum kirim; batalkan jika `STATUS: closing` |
+| Follow-up terkirim meski CS sudah balas manual dari HP | ✅ Fixed | Guard baru: cek `sender_name = 'CS (dari HP)'` setelah `createdAt` follow-up → cancel |
+| Tidak ada rekap saat bot di-toggle ON | ✅ Fixed | `bot_activation_service.js` perbarui rekap kontak yang dibalas CS; hasilnya jadi konteks AI |
+| Reschedule follow-up saat bot ON tapi tidak tahu mana yang relevan | ✅ Fixed | Hanya jadwal ulang kontak yang customer-nya masih menunggu jawaban (belum dibalas) |
+
+### File Baru
+- `src/services/bot_activation_service.js` — Smart re-activation engine
+- `docs/18_BOT_TOGGLE_BEHAVIOR.md` — Dokumentasi lengkap behavior toggle
+
+## Update 2026-05-24 (Sesi 3) — Always-On Summary + Bulletproof Bot-OFF + Audit Konflik
+
+| Issue | Status | Catatan |
+|---|---|---|
+| Summary tidak diperbarui saat customer chat ketika bot OFF | ✅ Fixed | `_triggerBackgroundSummaryIfNeeded()` dipanggil setiap pesan masuk (debounced 60s) |
+| Bot tidak punya early check sebelum debouncer (buang CPU) | ✅ Fixed | FIREWALL 3 ditambah sebelum debouncer — cek `is_bot_active` dari DB lebih awal |
+| Reaction 👍 dikirim ke foto meski bot OFF (leaking bot presence) | ✅ Fixed | Reaction hanya dikirim setelah FIREWALL 3 lolos (bot aktif confirmed) |
+| Konflik antar komponen (summary update ganda, double-cancel, dsb) | ✅ Diaudit | Semua debounce terpisah, semua operasi idempotent — tidak ada konflik |
+| Bot OFF guarantee: hanya 3 layer (rentan edge case) | ✅ Upgraded | Kini ada **4 lapisan FIREWALL** — defense-in-depth yang tidak bisa dilewati |
+| Master Agent Prompt tidak diikuti (reaction, summary, context) | ✅ Aligned | System prompt + summary context + opening flow sesuai dokumen 17 |
+
+### Ringkasan Arsitektur Akhir Bot-OFF Safety
+
+```
+Customer kirim pesan
+  │
+  ├─ STEP 1: Download & analisis media (Vision/Whisper) — SELALU
+  ├─ STEP 2: Log ke DB + Dashboard — SELALU
+  ├─ Background: Cancel follow-up — SELALU
+  ├─ Background: Update summary (debounced 60s) — SELALU ← BARU
+  │
+  ├─ FIREWALL 1: shouldAIReply=false? → STOP
+  ├─ FIREWALL 2: Kontak dipause? → STOP
+  ├─ FIREWALL 3: is_bot_active=false? (DB check) → STOP ← BARU
+  ├─ FIREWALL 4: is_bot_active=false? (di AI reply) → STOP
+  │
+  └─ AI membalas (hanya jika semua 4 FIREWALL lolos)
+```
