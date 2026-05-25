@@ -91,13 +91,30 @@ function _autoInjectMedia(content, kind, sendableMedia) {
     const results = [];
     for (const targetLabel of targetLabels) {
         const [word1, word2] = targetLabel.split(' ');
-        const matched = sendableMedia.find(m => {
+        
+        // Temukan semua media yang cocok dengan keyword
+        const matchesForLabel = sendableMedia.filter(m => {
             if (!m.label) return false;
             const lbl = m.label.toLowerCase();
             return lbl.includes(word1) && (kind === 'generic' || (word2 && lbl.includes(word2)));
         });
-        if (matched && !results.find(r => r.id === matched.id)) {
-            results.push(matched);
+
+        const videos = matchesForLabel.filter(m => (m.type || '').startsWith('video'));
+        const images = matchesForLabel.filter(m => (m.type || '').startsWith('image'));
+
+        // Inject SEMUA foto/image yang cocok
+        images.forEach(img => {
+            if (!results.find(r => r.id === img.id)) {
+                results.push(img);
+            }
+        });
+
+        // Inject 1 RANDOM video jika ada lebih dari 1
+        if (videos.length > 0) {
+            const randomVideo = videos[Math.floor(Math.random() * videos.length)];
+            if (!results.find(r => r.id === randomVideo.id)) {
+                results.push(randomVideo);
+            }
         }
     }
 
@@ -578,16 +595,44 @@ ${sysPrompt}
                         }
                         
                         const sendableMedia = await getSendableMedia(agentId);
-                        const allowedMedia = sendableMedia.filter(m => 
-                            ids.includes(m.id) || 
-                            labels.some(l => {
-                                if (!m.label) return false;
-                                const mLbl = m.label.toLowerCase().trim();
-                                const qLbl = l.toLowerCase().trim();
-                                // Exact match ATAU contains match (fuzzy)
-                                return mLbl === qLbl || mLbl.includes(qLbl) || qLbl.includes(mLbl);
-                            })
-                        );
+                        const allowedMedia = [];
+
+                        // 1. Eksekusi via ID
+                        if (ids.length > 0) {
+                            allowedMedia.push(...sendableMedia.filter(m => ids.includes(m.id)));
+                        }
+
+                        // 2. Eksekusi via Label Names
+                        if (labels.length > 0) {
+                            for (const qLbl of labels) {
+                                const qLower = qLbl.toLowerCase().trim();
+                                
+                                // Kumpulkan semua media yang match
+                                const matchesForLabel = sendableMedia.filter(m => {
+                                    if (!m.label) return false;
+                                    const mLbl = m.label.toLowerCase().trim();
+                                    return mLbl === qLower || mLbl.includes(qLower) || qLower.includes(mLbl);
+                                });
+
+                                const videos = matchesForLabel.filter(m => (m.type || '').startsWith('video'));
+                                const images = matchesForLabel.filter(m => (m.type || '').startsWith('image'));
+
+                                // Tambahkan SEMUA image yang cocok (supaya jadi album)
+                                images.forEach(img => {
+                                    if (!allowedMedia.find(fm => fm.id === img.id)) {
+                                        allowedMedia.push(img);
+                                    }
+                                });
+
+                                // Pilih 1 video SECARA RANDOM
+                                if (videos.length > 0) {
+                                    const randomVideo = videos[Math.floor(Math.random() * videos.length)];
+                                    if (!allowedMedia.find(fm => fm.id === randomVideo.id)) {
+                                        allowedMedia.push(randomVideo);
+                                    }
+                                }
+                            }
+                        }
 
                         if (allowedMedia.length > 0) {
                             mediaResults.push(...allowedMedia.map(m => ({ media: m, caption: args.caption || "" })));
