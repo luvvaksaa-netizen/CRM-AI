@@ -320,6 +320,7 @@
             flex: 1; border: 2px solid #f1f5f9; border-radius: 22px;
             padding: 13px 22px; font-size: 0.9rem; outline: none;
             transition: var(--transition); font-family: inherit;
+            resize: none; min-height: 50px; max-height: 150px; overflow-y: auto; line-height: 1.4;
         }
         #replyInput:focus { border-color: var(--clr-primary); box-shadow: 0 0 0 4px rgba(91,94,244,0.1); }
         #btnSend {
@@ -601,7 +602,7 @@
 
             <div id="replyBar" class="d-flex align-items-center gap-2">
                 <button class="btn btn-light border" style="width:45px;height:45px;border-radius:12px;color:var(--slate-500);transition:0.2s;" onclick="openMediaSelector()" title="Sisipkan Katalog/Gambar"><i class="fas fa-paperclip"></i></button>
-                <input type="text" id="replyInput" class="form-ctrl m-0" placeholder="Ketik balasan manual (Enter untuk kirim)..." onkeydown="if(event.key==='Enter')sendManual()">
+                <textarea id="replyInput" class="form-ctrl m-0" placeholder="Ketik balasan manual (Enter kirim, Shift+Enter baris baru)..." oninput="this.style.height='';this.style.height=Math.min(this.scrollHeight, 150)+'px'" onkeydown="if(event.key==='Enter' && !event.shiftKey) { event.preventDefault(); sendManual(); }"></textarea>
                 <button id="btnSend" onclick="sendManual()"><i class="fas fa-paper-plane"></i></button>
             </div>
         </div>
@@ -2387,6 +2388,7 @@
             })
             if (res.ok) {
                 input.value = '';
+                input.style.height = ''; // Reset height after send
                 clearReplyContext();
                 // TAHAP 3: Jika manusia balas manual, UI Toggle otomatis berubah jadi "Dipause"
                 loadBotToggleState(); 
