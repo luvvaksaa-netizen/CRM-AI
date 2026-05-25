@@ -185,9 +185,24 @@ Response paginated:
 ```
 
 ### GET `/api/summaries`
-Ambil semua rekap percakapan (long-term memory AI).
+Ambil semua rekap percakapan (long-term memory AI). Bisa difilter per toko dengan query `?storeId=WA_ID` atau kata kunci status dengan `?status=keyword`.
 
-### POST `/api/send`
+```json
+// Response
+[
+  {
+    "store_wa_id": "dtf-1234",
+    "contact_id": "6281234567890@c.us",
+    "contact_name": "Budi",
+    "summary": "Status: tanya-tanya\\nBudi menanyakan harga DTF meteran.",
+    "last_updated": "2026-05-19T10:00:00Z",
+    "Store": {
+      "wa_id": "dtf-1234",
+      "name": "Agen DTF"
+    }
+  }
+]
+```### POST `/api/send`
 Kirim pesan teks manual dari dashboard.
 ```json
 {

@@ -615,9 +615,12 @@
                     <h2 class="fw-bold m-0" style="color:var(--clr-primary)"><i class="fas fa-list-check me-3"></i>Rekap Pembahasan</h2>
                     <p class="text-muted m-0">Ringkasan pembicaraan & status deal per pelanggan</p>
                 </div>
-                <div class="d-flex gap-2">
+                <div class="d-flex gap-2 align-items-center">
+                    <select id="summaryStoreFilter" class="form-select border shadow-sm" style="width: auto; min-width: 180px; font-weight: 500;" onchange="renderSummaries()">
+                        <option value="">🏷️ Semua Toko</option>
+                    </select>
                     <button class="btn btn-light border" onclick="openLabelManager()"><i class="fas fa-tags me-2"></i>Kelola Label</button>
-                    <button class="btn btn-primary" onclick="loadSummaries()"><i class="fas fa-sync-alt me-2"></i>Segarkan Rekap</button>
+                    <button class="btn btn-primary" onclick="loadSummaries()"><i class="fas fa-sync-alt me-2"></i>Segarkan</button>
                 </div>
             </div>
 
@@ -1382,47 +1385,83 @@
     // ============================================================
     // TAHAP 4: REKAP PEMBAHASAN UI (Live Insights)
     // ============================================================
+    let allSummaries = [];
+
     async function loadSummaries() {
         const grid = document.getElementById('summaryGrid');
         try {
             const res = await fetch('/api/summaries');
-            const summaries = await res.json();
-            renderSummaries(summaries);
+            allSummaries = await res.json();
+            populateSummaryStoreFilter();
+            renderSummaries();
         } catch (e) { grid.innerHTML = '<div class="text-danger p-4">Gagal memuat rekap.</div>'; }
     }
 
-    function renderSummaries(summaries) {
+    function populateSummaryStoreFilter() {
+        const filter = document.getElementById('summaryStoreFilter');
+        if (!filter) return;
+        const currentVal = filter.value;
+        filter.innerHTML = '<option value="">🏷️ Semua Toko</option>';
+        
+        const uniqueStores = {};
+        allSummaries.forEach(s => {
+            if (s.Store) {
+                uniqueStores[s.Store.wa_id] = s.Store.name;
+            }
+        });
+
+        Object.entries(uniqueStores).forEach(([wa_id, name]) => {
+            const opt = document.createElement('option');
+            opt.value = wa_id;
+            opt.innerText = name;
+            filter.appendChild(opt);
+        });
+        
+        if (uniqueStores[currentVal]) filter.value = currentVal;
+    }
+
+    function renderSummaries() {
         const grid = document.getElementById('summaryGrid');
+        const filterId = document.getElementById('summaryStoreFilter')?.value;
+        
+        let summaries = allSummaries;
+        if (filterId) {
+            summaries = summaries.filter(s => s.store_wa_id === filterId);
+        }
+
         if (!summaries || summaries.length === 0) {
-            grid.innerHTML = '<div class="empty-state m-auto p-5 text-center w-100" style="grid-column: 1 / -1;"><i class="fas fa-comment-slash"></i><p>Belum ada rekapan diskusi. Mulailah chat dengan pelanggan!</p></div>';
+            grid.innerHTML = '<div class="empty-state m-auto p-5 text-center w-100" style="grid-column: 1 / -1;"><i class="fas fa-comment-slash"></i><p>Belum ada rekapan diskusi sesuai filter.</p></div>';
             return;
         }
         grid.innerHTML = '';
         summaries.forEach(s => {
             const div = document.createElement('div');
             div.className = 'card-glass p-4';
+            div.style.position = 'relative';
             
             const displayName = getContactDisplayName(s.contact_id, s.contact_name, s);
             const initial = (displayName.replace(/[^a-z0-9]/gi, '').substring(0, 2) || 'WA').toUpperCase();
 
-            // Tampilkan nomor WA: gunakan contact_phone jika ada, fallback ke contact_id (strip @lid/@c.us)
+            // Tampilkan nomor WA
             let waNumber = '';
             if (s.contact_phone) {
-                waNumber = s.contact_phone.replace(/\D/g, ''); // strip non-digit
+                waNumber = s.contact_phone.replace(/\D/g, ''); 
             } else {
-                // Fallback: ambil dari contact_id (format: 628xxx@c.us atau @lid)
                 const rawId = (s.contact_id || '').split('@')[0];
                 if (/^\d{8,}$/.test(rawId)) waNumber = rawId;
             }
             const waDisplay = waNumber ? `+${waNumber}` : '(nomor belum terdeteksi)';
             const waLink = waNumber ? `https://wa.me/${waNumber}` : '#';
 
+            const storeBadge = s.Store ? `<div style="position:absolute; top:12px; right:12px; background:var(--clr-primary); color:white; padding:4px 10px; font-size:0.7rem; border-radius:10px; font-weight:600;"><i class="fas fa-store me-1"></i>${escapeHtml(s.Store.name)}</div>` : '';
+
             div.innerHTML = `
+                ${storeBadge}
                 <div class="d-flex justify-content-between align-items-start mb-3">
                     <div class="d-flex align-items-center">
                         <div class="conv-avatar me-3" style="background:var(--clr-primary); color:white">${escapeHtml(initial)}</div>
                         <div>
-                            <h6 class="fw-bold m-0">${escapeHtml(displayName)}</h6>
+                            <h6 class="fw-bold m-0 pe-4">${escapeHtml(displayName)}</h6>
                             <a href="${waLink}" target="_blank" rel="noopener" class="d-block text-decoration-none" style="font-size:0.78rem; color:#0ea5e9; font-weight:600; letter-spacing:0.02em;">
                                 <i class="fab fa-whatsapp me-1"></i>${escapeHtml(waDisplay)}
                             </a>

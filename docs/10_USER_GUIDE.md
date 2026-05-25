@@ -167,6 +167,8 @@ Ringkasan otomatis per pelanggan:
 - AI merangkum setiap percakapan menjadi 3-5 poin kunci
 - Contoh: *"Pelanggan tertarik sepatu Nike size 43, sudah tanya ongkir ke Jakarta, belum order."*
 - Diupdate otomatis setiap kali ada percakapan baru
+- **Filter Toko (Baru):** Gunakan *dropdown* **"🏷️ Semua Toko"** di pojok kanan atas untuk memfilter rekapan. Anda bisa memilih agen tertentu (Misal: Agent DTF) agar tampilan rekap lebih fokus dan tidak campur aduk.
+- Setiap kartu rekapan juga dilengkapi dengan **Badge Nama Toko** di sudut atas.
 
 ---
 

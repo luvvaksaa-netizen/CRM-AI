@@ -107,6 +107,10 @@ const ChatSummary = sequelize.define('ChatSummary', {
   last_updated: { type: DataTypes.DATE,   defaultValue: Sequelize.NOW }
 });
 
+// Relasi Store -> ChatSummary
+Store.hasMany(ChatSummary, { foreignKey: 'store_wa_id', sourceKey: 'wa_id' });
+ChatSummary.belongsTo(Store, { foreignKey: 'store_wa_id', targetKey: 'wa_id' });
+
 
 /**
  * Model: Paused Contact (Persistent Human Override)

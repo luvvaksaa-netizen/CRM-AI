@@ -409,14 +409,15 @@ function initDashboard(port = 3000) {
   // TAHAP 4: REKAP PEMBAHASAN API
   app.get('/api/summaries', async (req, res) => {
     try {
-      const { ChatSummary } = require('../database/index');
+      const { ChatSummary, Store } = require('../database/index');
       const { storeId, status } = req.query;
       const where = {};
       if (storeId) where.store_wa_id = storeId;
 
       const summaries = await ChatSummary.findAll({
         where,
-        order: [['last_updated', 'DESC']]
+        order: [['last_updated', 'DESC']],
+        include: [{ model: Store, attributes: ['name', 'wa_id'] }]
       });
 
       // Filter by status keyword if requested (e.g. ?status=closing)
