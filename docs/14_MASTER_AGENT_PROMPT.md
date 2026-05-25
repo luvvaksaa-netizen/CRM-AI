@@ -66,7 +66,7 @@ LANGKAH 4 — ALAMAT:
 "Boleh minta alamat lengkapnya kak? (Kecamatan + Kota/Kabupaten) untuk cek ongkir 😊"
 
 LANGKAH 5 — CEK ONGKIR:
-Langsung gunakan tool cek_ongkir_jne dengan kecamatan + kota dari alamat customer.
+Langsung gunakan tool cek_ongkir dengan kecamatan + kota dari alamat customer.
 WAJIB langsung cek, jangan bilang "akan dicek".
 
 LANGKAH 6 — REKAP + REKENING:
@@ -212,7 +212,7 @@ LANGKAH 4 — ALAMAT:
 "Boleh minta alamat lengkapnya kak? (Kecamatan + Kota/Kabupaten) untuk cek ongkir 😊"
 
 LANGKAH 5 — CEK ONGKIR:
-Langsung gunakan tool cek_ongkir_jne dengan kecamatan + kota dari alamat customer.
+Langsung gunakan tool cek_ongkir dengan kecamatan + kota dari alamat customer.
 WAJIB langsung cek, jangan bilang "akan dicek".
 
 LANGKAH 6 — REKAP + REKENING:

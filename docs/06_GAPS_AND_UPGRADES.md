@@ -9,6 +9,14 @@
 ### 1. ~~`double module.exports` di `video_analysis_service.js`~~ ✅ FIXED
 Diperbaiki — hanya satu `module.exports` sekarang.
 
+### UPDATE 25 MEI 2026: CRM ENTERPRISE UPGRADE ✅ FIXED
+Semua issue di bawah ini telah diselesaikan via update 25 Mei:
+1. **Smart Labeling Realtime:** Label 'Closing'/'Hot Lead' terpasang otomatis dari deteksi STATUS di `smart_label_service.js`.
+2. **Dashboard Label Visibility:** Label ditampilkan sebagai badge warna di frontend via kolom DB `wa_labels`.
+3. **Account Isolation (Follow-Up):** Dashboard Follow-Up sekarang punya filter dropdown per akun WA.
+4. **Live Analytics:** Endpoint `/api/analytics/overview` (trend, closing rate, AI vs CS) aktif di view "Analitik" dashboard.
+5. **Nominal Ongkir:** Prompt AI sudah update agar tidak sekadar menulis "sudah dicek", tapi menarik info nominal.
+
 ### 2. ~~Hardcoded `/api/login` Route Double Registration~~ ✅ FIXED
 Diperbaiki — hanya satu definisi `/api/login` dengan `loginLimiter` yang aktif.
 
@@ -193,3 +201,10 @@ Customer kirim pesan
   │
   └─ AI membalas (hanya jika semua 4 FIREWALL lolos)
 ```
+
+### Migrasi Cek Ongkir Mengantar (25 Mei 2026)
+- **FIXED**: Mengganti layanan Komerce/RajaOngkir dengan Mengantar untuk fitur cek ongkos kirim.
+- **FEATURE**: Menggunakan public API Mengantar untuk mendapatkan hasil harga khusus JNE dan J&T yang akurat dengan auto-markup.
+
+- **FIXED (Origin)**: Mengunci origin pencarian ongkir Mengantar secara absolut ke Kecamatan Pare (ID: 5fc633fef8f44b34aa4c4f47) sesuai alamat toko fisik Percetakan Jaya Sukses untuk sinkronisasi harga yang presisi.
+- **FEATURE**: Mempertahankan logika 'Harga Normal + Markup Rp 3.000' secara diam-diam (seamless) ke pelanggan, memisahkan harga asli/diskon (margin murni toko) dari harga penawaran AI.

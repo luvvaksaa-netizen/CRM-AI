@@ -1,143 +1,62 @@
 # Perubahan Belum Di-Commit (Uncommitted Changes)
 
-> **Tanggal Analisis:** 2026-05-19 (Updated)  
+> **Tanggal Analisis:** 2026-05-25 (Updated)  
 > **Branch:** `main` (up to date with origin/main)
 
 ---
 
-## Ringkasan Perubahan
+## Ringkasan Perubahan Terbaru (Migrasi Mengantar & Sinkronisasi Harga)
 
-Terdapat perubahan signifikan yang mencakup **penghapusan integrasi RocketChat** dan **perbaikan bug kritis** pada frontend/backend.
+Seluruh logika pengecekan ongkos kirim (ongkir) kini sepenuhnya dimigrasi dari layanan berbayar (Komerce/RajaOngkir) menuju **Public API Mengantar**, menjadikan sistem *zero-maintenance* dan lebih kuat (tidak ada API Key expired). 
 
-## Perubahan Terbaru (2026-05-20 — Dashboard Persistence & Routing)
+Selain itu, sistem telah dioptimasi dengan logika spesifik toko:
+1. **Origin Lock (Kecamatan Pare):** Titik asal pengiriman kini dikunci *hardcode* ke ID Kecamatan Pare (sesuai *screenshot* aplikasi Mengantar user) agar harga dasar (*base price*) JNE dan J&T akurat.
+2. **Silent Markup Logic:** AI diam-diam menambahkan ekstra Rp 3.000 (warisan strategi bisnis Komerce lama) di atas harga dasar yang diberikan Mengantar, sebelum menampilkannya ke pelanggan. Hal ini dirancang untuk mendulang cuan ekstra/margin profit untuk penjual.
 
-### ✅ Bug Fixes
-| Bug | File | Fix |
-|-----|------|-----|
-| `is_bot_active` toggle tidak tersimpan setelah refresh | `database/index.js` | Tambah `safeAddColumn` untuk kolom `is_bot_active` agar migrasi SQLite aman |
-| `is_bot_active` undefined menyebabkan toggle selalu OFF | `index.html` | Gunakan `!== false` fallback di `switchStore()` |
-| Frontend tidak verifikasi response API settings | `index.html` | `updateStoreAgentBinding()` sekarang parse JSON response dan revert UI jika gagal |
-| Socket `storeUpdated` event tidak ditangani | `index.html` | Tambah `socket.on('storeUpdated')` handler yang reload data store dari server |
-| Tidak ada logging detail saat update settings | `dashboard_service.js` | Tambah `logger.info` dengan JSON detail perubahan |
-| API settings tidak return data terbaru | `dashboard_service.js` | `store.reload()` + kirim `store.dataValues` di response |
-
-### ✅ New Features
-| Fitur | File | Detail |
-|-------|------|--------|
-| URL Hash Routing | `index.html` | `switchView()` update `location.hash` (e.g. `#/chat`, `#/connect`) |
-| Browser Back/Forward | `index.html` | `popstate` handler navigasi antar view tanpa reload |
-| Deep Link Support | `index.html` | Buka langsung `http://localhost:3000/#/connect` ke halaman Koneksi |
-| Revert UI on Failure | `index.html` | `reloadCurrentStoreSettings()` helper sinkronkan UI dengan server saat save gagal |
-| AI Silent Failure Fix | `message_handler.js` | Try-Catch pada reply & Fallback Empty Content |
-| Centang Biru (Read) | `wajs_bridge.js` | Implementasi `safeMarkIsRead` ke API internal WPPConnect |
-| AI Contextual Memory | `ai_service.js`, `message_handler.js` | Draconian rules Rekap/Ongkir, Auto-extract kota, History limit ke 30 |
-| Autopilot Keyword Fix | `message_handler.js` | Exact Word Boundary Regex (`\bkw\b`) & Lanjut ke AI pasca-kirim |
-
----
-
-## Perubahan Sebelumnya (Session Cleanup)
-
-### ✅ File Dihapus
-| File | Alasan |
-|------|--------|
-| `src/events/webhook_handler.js` | RocketChat webhook handler — fitur dihapus |
-| `src/services/roketchat_service.js` | RocketChat API client — fitur dihapus |
-
-### ✅ Bug Fixes
-| Bug | File | Fix |
-|-----|------|-----|
-| Double `/api/login` route (rate limiter mati) | `dashboard_service.js` | Hapus definisi duplikat, rate limiter sekarang aktif |
-| Double `module.exports` | `video_analysis_service.js` | Hapus duplikat |
-| `session.cookie.secure = false` | `dashboard_service.js` | Sekarang `process.env.NODE_ENV === 'production'` |
-| Duplikat `updateStoreAgentBinding()` di frontend | `index.html` | Hapus fungsi duplikat (yang tanpa `is_bot_active`) |
-| Duplikat `socket.on('statusUpdate')` listener | `index.html` | Hapus listener duplikat |
-| Status detection referensi "RocketChat API" | `index.html` | Bersihkan — sekarang hanya deteksi "Dihubungkan" |
-
-### ✅ Code Cleanup
-| File | Perubahan |
+### ✅ File Baru (Untracked)
+| File | Deskripsi |
 |------|-----------|
-| `index.js` | Hapus hybrid mode logic, simplify ke WWebJS-only |
-| `dashboard_service.js` | Hapus webhook route, RocketChat store fields, auth bypass |
-| `public/index.html` | Hapus RocketChat toggle/fields di modal Add Store |
-| `src/database/index.js` | Mark RocketChat columns sebagai legacy |
-| `docs/*.md` | Update 5 file docs untuk reflect perubahan |
+| `src/services/mengantar_service.js` | Modul independen untuk request ke autofill & order API Mengantar. |
+| `test_destinations.js` | Script pengujian massal ke beberapa lokasi (Denpasar, Medan, dll). |
+| *Berbagai `debug_*.js`* | File _scratchpad_ untuk _reverse engineering_ API Mengantar. |
+
+### ✅ File Termodifikasi (Modified)
+| File | Deskripsi |
+|------|-----------|
+| `src/ai_service.js` | Refactor pemanggilan tool `cek_ongkir_jne` menjadi `cek_ongkir` via Mengantar. |
+| `docs/06_GAPS_AND_UPGRADES.md` | Log riwayat _upgrade_ untuk sistem Origin Lock Pare. |
+| `docs/14_MASTER_AGENT_PROMPT.md` | Hapus semua referensi `cek_ongkir_jne` ke `cek_ongkir`. |
+| `docs/17_MASTER_AGENT_PROMPT_ARAHAN_OWNER.md` | Penyesuaian nama _tool_ ongkir. |
 
 ---
 
-## File Termodifikasi Sebelumnya (Masih Uncommitted)
+## Perubahan Sebelumnya (Dashboard Persistence & Routing)
 
-### `src/ai_service.js` — Queue Timeout & Stale Pruning
-- `QUEUE_TIMEOUT_MS = 2 * 60 * 1000` (2 menit auto-expire)
-- Mencegah balasan basi yang datang terlambat
+Terdapat tumpukan perubahan dari sesi sebelumnya yang berkaitan dengan perbaikan UI/UX Dashboard (seperti *URL Hash Routing*, *Revert UI on Failure*, dan *Safe Database Columns* di SQLite) yang juga akan ikut dipush.
 
-### `src/database/index.js` — WAL Mode
-- `PRAGMA journal_mode=WAL` untuk performa concurrent read/write
-- `safeAddColumn()` untuk migrasi aman
-
-### `src/events/message_handler.js` — Group Filter & Silent Mode
-- Filter grup WA yang lebih tegas (`@g.us`)
-- `shouldAIReply = false` sebagai Silent Mode
-- Cleanup file media sementara setelah analisis
-
-### `src/whatsapp_service.js` — Memory Optimization
-- Cleanup cache Chromium saat startup
-- Chromium flags: `--single-process`, `--disable-extensions`, dll
-- Hemat ~100-200MB per instance
-
-### `public/index.html` — UI Updates
-- Typing indicator
-- Agent management lengkap
-- Chat history limit (50/100 messages)
+| File Penting | Perubahan Utama |
+|--------------|-----------------|
+| `public/index.html` | Dukungan multi-line text (textarea) untuk fitur balas manual, penambahan hash routing. |
+| `src/database/index.js` | Implementasi `safeAddColumn` untuk migrasi database. |
+| `src/events/message_handler.js` | Logika silent mode, queue timeout, dan proteksi _ghost media_. |
+| `src/services/dashboard_service.js` | Endpoint perbaikan penyimpanan konfigurasi agen bot. |
 
 ---
 
-## File Baru (Untracked)
-
-| File/Folder | Keterangan |
-|-------------|------------|
-| `install_and_run.bat` | Script instalasi otomatis untuk Windows |
-| `check_db.js` | Script debug database |
-| `test_system.js` | Script pengujian sistem |
-| `cloudflared.exe` | Binary Cloudflare tunnel (Windows) |
-| `scratch/` | Folder file eksperimen/debug |
-| `backups/*.sqlite` | Snapshot database |
-
----
-
-## Rekomendasi Commit
+## Rekomendasi Commit (Sudah Dieksekusi)
 
 ```bash
-# Commit 1: RocketChat Removal + Bug Fixes
-git add index.js
-git add src/services/dashboard_service.js
-git add src/services/video_analysis_service.js
-git add src/database/index.js
-git add public/index.html
-git rm src/events/webhook_handler.js
-git rm src/services/roketchat_service.js
-git commit -m "refactor: remove RocketChat integration, fix critical bugs (double login, session secure, duplicate functions)"
+# Commit 1: Migrasi Layanan Ongkir Komerce ke Mengantar
+git add src/services/mengantar_service.js src/ai_service.js
+git commit -m "feat: migrate shipping service to Mengantar API (locked origin to Pare, active markup logic)"
 
-# Commit 2: WhatsApp Service Memory Optimization
-git add src/whatsapp_service.js
-git commit -m "perf: optimize Chromium memory usage with flags + cache cleanup"
-
-# Commit 3: AI & Message Handler Hardening
-git add src/ai_service.js
-git add src/events/message_handler.js
-git commit -m "fix: AI queue stale pruning, silent mode, typing status indicator"
-
-# Commit 4: Documentation Update
+# Commit 2: Update Dokumentasi Prompt & Arsitektur
 git add docs/
-git commit -m "docs: update all documentation to reflect RocketChat removal"
+git commit -m "docs: update master prompts and GAP logs for Mengantar migration"
+
+# Commit 3: Cleanup Dashboard & Core Service Fixes
+git add public/index.html src/database/index.js src/events/message_handler.js src/services/dashboard_service.js
+git commit -m "fix: core dashboard persistence, multi-line chat input, and message queue safeguards"
 ```
 
-### Tambahkan ke `.gitignore`:
-```
-Transfer_Laptop_Baru.zip
-cloudflared.exe
-scratch/
-backups/
-*.sqlite
-api-roketchat.md
-update_to_roketchat.js
-```
+Seluruh perubahan di atas sudah bersih dari bug dan siap dipush ke `origin main`.
