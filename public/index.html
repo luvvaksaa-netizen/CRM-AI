@@ -1828,6 +1828,13 @@
             }
         });
 
+        // BUGFIX: Jika pesan terakhir dari kita (bot/CS), reset unread badge jadi 0
+        Object.keys(map).forEach(c => {
+            if (map[c].is_from_me) {
+                unreadCounts[c] = 0;
+            }
+        });
+
         const showUnreadOnly = document.getElementById('checkUnreadOnly')?.checked;
 
         const contacts = Object.keys(map)

@@ -76,8 +76,8 @@ function _autoInjectMedia(content, kind, sendableMedia) {
 
     // Keyword yang menandakan AI ingin tunjukkan media tapi lupa panggil tool
     const VIDEO_REF     = ['videonya', 'video cara', 'cek video', 'tonton video', 'lihat video', 'video kami', 'kirim video', 'ada video'];
-    const KATALOG_REF   = ['katalognya', 'pilihan font', 'varian font', 'lihat pilihan', 'foto varian', 'lihat katalog', 'pilihan warna', 'cek katalog'];
-    const TESTIMONI_REF = ['testimoni', 'review customer', 'bukti nyata', 'foto testimoni', 'hasil pelanggan'];
+    const KATALOG_REF   = ['katalognya', 'pilihan font', 'varian font', 'lihat pilihan', 'foto varian', 'lihat katalog', 'pilihan warna', 'cek katalog', 'katalog kami', 'pilihan kami'];
+    const TESTIMONI_REF = ['testimoni', 'review customer', 'bukti nyata', 'foto testimoni', 'hasil pelanggan', 'hasil aslinya', 'ini hasilnya', 'contoh hasil', 'realpict', 'real pic'];
     const VALUE_REF     = ['keunggulan produk', 'nilai produk', 'kenapa pilih', 'premium lho', 'kualitas produk'];
 
     const targetLabels = [];
