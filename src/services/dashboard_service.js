@@ -693,7 +693,10 @@ function initDashboard(port = 3000) {
   app.get('/api/chat/:storeId', async (req, res) => {
     try {
       const { contactId, before, paginated } = req.query;
-      const limit = Math.min(Math.max(parseInt(req.query.limit || (contactId ? 50 : 100), 10) || 50, 1), 200);
+      // Perbaikan: Naikkan max limit menjadi 2000 saat memuat riwayat global agar tidak ada chat/kontak yang hilang di sidebar
+      const maxLimit = contactId ? 200 : 2000;
+      const defaultLimit = contactId ? 50 : 2000;
+      const limit = Math.min(Math.max(parseInt(req.query.limit || defaultLimit, 10) || 50, 1), maxLimit);
       const where = { store_wa_id: req.params.storeId };
       
       // Jika ada contactId, ambil history spesifik dengan limit lebih besar

@@ -513,7 +513,11 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
 
     // JIKA STORE TIDAK ADA atau BOT OFF: Berhenti
     if (!store || store.is_bot_active === false) {
-        logger.info(`[${storeWaId}] Bot NON-AKTIF untuk Toko ini.`);
+        logger.info(`[${storeWaId}] Bot NON-AKTIF untuk Toko ini. Mengirim sinyal pembaruan rekap secara background...`);
+        try {
+            const { triggerCsManualSummaryUpdate } = require('./services/bot_activation_service');
+            triggerCsManualSummaryUpdate(storeWaId, contactId, senderName);
+        } catch (e) { /* non-critical */ }
         return;
     }
 
