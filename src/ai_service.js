@@ -15,7 +15,7 @@ const fs = require('fs');
 const config = require('./config');
 const { ERRORS } = require('./constants');
 const logger = require('./utils/logger');
-const rajaOngkir = require('./services/rajaongkir_service');
+const mengantarService = require('./services/mengantar_service');
 const { getSendableMedia, getKnowledgeMedia } = require('./services/media_service');
 const { MediaAsset } = require('./database/index');
 
@@ -365,8 +365,8 @@ Kamu adalah CS yang sangat cerdas. Berikut panduan untuk menangani berbagai situ
             {
                 type: "function",
                 function: {
-                    name: "cek_ongkir_jne",
-                    description: "Mengecek biaya ongkos kirim JNE dari Kediri ke kota tujuan di Indonesia.",
+                    name: "cek_ongkir",
+                    description: "Mengecek biaya ongkos kirim JNE dan J&T dari Kediri ke kota tujuan di Indonesia.",
                     parameters: {
                         type: "object",
                         properties: {
@@ -468,7 +468,7 @@ Kamu adalah CS yang sangat cerdas. Berikut panduan untuk menangani berbagai situ
 2. DILARANG KERAS: Menulis karakter ![...](...) atau link http/example.com apapun di teks balasan. 
 3. DILARANG KERAS: Menulis ID Media, timestamp, atau informasi teknis apapun di dalam teks balasan. Pelanggan tidak boleh tahu sistem ID kita.
 4. DILARANG KERAS: Menulis [WAKTU:...] atau tanggal/jam apapun di teks balasan. Gunakan informasi waktu HANYA untuk konteks sapaan.
-5. PENGGUNAAN TOOL ONGKIR: Jika pelanggan sudah memberikan alamat lengkap (terutama Kecamatan dan Kabupaten/Kota), kamu WAJIB memanggil tool 'cek_ongkir_jne'. DILARANG merespons dengan kalimat "Ongkir akan dicek" atau membiarkannya kosong.
+5. PENGGUNAAN TOOL ONGKIR: Jika pelanggan sudah memberikan alamat lengkap (terutama Kecamatan dan Kabupaten/Kota), kamu WAJIB memanggil tool 'cek_ongkir'. DILARANG merespons dengan kalimat "Ongkir akan dicek" atau membiarkannya kosong.
 6. ATURAN REKAPITULASI (MEMORY): Saat memberikan Rekap Pesanan, kamu WAJIB menuliskan SEMUA data spesifik secara rinci (misalnya: Tuliskan kelima nama tersebut satu per satu). JANGAN PERNAH meringkas nama menjadi angka (misal "Nama: 5 nama").
 7. LOGIKA MATEMATIKA PESANAN: Pahami kelipatan paket. Jika 1 paket maksimal 2 nama, maka 2 paket = maksimal 4 nama, 3 paket = maksimal 6 nama. Jadi jika pelanggan pesan 2 paket untuk 3 nama, itu SANGAT DIPERBOLEHKAN karena 3 < 4.
 8. ⚠️ ANTI-LUPA: JANGAN PERNAH ulangi pertanyaan yang sudah dijawab customer. Lihat DATA CUSTOMER DI BAWAH — jika data sudah terisi, GUNAKAN langsung tanpa bertanya ulang. Customer MARAH jika ditanya ulang.
@@ -492,6 +492,15 @@ Kamu adalah CS yang sangat cerdas. Berikut panduan untuk menangani berbagai situ
     DILARANG KERAS menulis kalimat yang mereferensikan media tanpa benar-benar mengirimnya.
     Contoh SALAH: menulis "Cek videonya bun 😊" tanpa panggil kirim_media_katalog = PELANGGARAN.
     Contoh BENAR: panggil kirim_media_katalog(label_names=["video uv"]) lalu tulis teks pendamping.
+
+18. 🏷️ ATURAN LABEL OTOMATIS — WAJIB PATUH:
+    Saat percakapan mencapai milestone penting, WAJIB panggil tool "tambahkan_label_chat" dengan label yang sesuai:
+    - Customer konfirmasi pesanan / minta rekap → label: "Menunggu Rekap"
+    - Customer sudah memberikan alamat lengkap → label: "Menunggu Alamat" (jika belum dapat ongkir)
+    - Customer setuju harga, minta nomor rekening → label: "Menunggu Transfer"
+    - Customer konfirmasi sudah transfer → label: "Closing"
+    - Customer tanya-tanya dengan antusias, tapi belum order → label: "Hot Lead"
+    PENTING: Tool ini hanya memanggil label yang sudah dikonfigurasi di agen (lihat daftar LABEL OTOMATIS di atas).
 
 --- [KETERANGAN PENTING: KEPRIBADIAN & ATURAN UTAMA] ---
 ${sysPrompt}
@@ -563,10 +572,10 @@ ${sysPrompt}
 
             for (const toolCall of responseMessage.tool_calls) {
                 try {
-                    if (toolCall.function.name === 'cek_ongkir_jne') {
+                    if (toolCall.function.name === 'cek_ongkir') {
                         const args = JSON.parse(toolCall.function.arguments);
-                        const ongkirResult = await rajaOngkir.getJneOngkir(args.destinationCity, args.weightGrams || 1000);
-                        messages.push({ tool_call_id: toolCall.id, role: "tool", name: "cek_ongkir_jne", content: ongkirResult });
+                        const ongkirResult = await mengantarService.getShippingCost(args.destinationCity, args.weightGrams || 1000);
+                        messages.push({ tool_call_id: toolCall.id, role: "tool", name: "cek_ongkir", content: ongkirResult });
                         needsSecondCall = true;
                     }
 
@@ -759,12 +768,25 @@ JUMLAH: [jumlah paket atau pcs, atau "belum"]
 DETAIL PER NAMA: [pembagian jumlah per nama, misal "Andi 25, Budi 25" atau "belum"]
 ALAMAT: [alamat lengkap atau "belum"]
 HARGA: [sudah disebutkan / belum]
-ONGKIR: [sudah dicek / belum]
+ONGKIR: [Tulis NOMINAL aktual jika sudah ada di chat, contoh: "Rp 18.000 (JNE REG)" atau "belum dicek". JANGAN tulis hanya "sudah dicek".]
 METODE BAYAR: [Transfer / COD / belum]
 STATUS: [opening / gali kebutuhan / negosiasi / menunggu alamat / menunggu rekap / menunggu transfer / closing / selesai]
-UPSELLING_TERKIRIM: [ya / belum]
+UPSELLING_STATUS: [belum ditawarkan / sudah ditawarkan namun belum closing / sudah closing upsell]
 NEXT ACTION: [apa langkah selanjutnya yang perlu dilakukan bot]
-CATATAN: [info penting lain, keluhan, permintaan khusus]` },
+WA_LABELS: [Isi dengan label WA yang PALING relevan dari daftar ini berdasarkan STATUS: "Closing", "Hot Lead", "Menunggu Transfer", "Menunggu Rekap", "Menunggu Alamat", "AI Lead Aktif", "AI Lead Baru". Pilih hanya 1-2 yang paling tepat dan tulis dalam format array, misal: [Closing] atau [Hot Lead, Menunggu Rekap]]
+CATATAN: [info penting lain, keluhan, permintaan khusus]
+
+ATURAN PENTING untuk field ONGKIR:
+- Jika bot sudah membalas hasil cek ongkir di chat (ada nominal Rp), WAJIB tulis nominalnya. Contoh: "Rp 18.000 (JNE REG, 2-3 hari)"
+- Jika ongkir belum dicek, tulis "belum dicek"
+- JANGAN tulis hanya "sudah dicek" tanpa nominal
+
+ATURAN PENTING untuk field WA_LABELS:
+- STATUS closing/selesai → WA_LABELS: [Closing]
+- STATUS menunggu transfer → WA_LABELS: [Menunggu Transfer]
+- STATUS negosiasi → WA_LABELS: [Hot Lead]
+- STATUS gali kebutuhan → WA_LABELS: [AI Lead Aktif]
+- STATUS opening → WA_LABELS: [AI Lead Baru]` },
                 { role: "user", content: `Berikut riwayat chatnya, buatkan rekapannya:\n\n${historyText}` }
             ],
             temperature: 0.2 // Lebih stabil dan konsisten untuk format terstruktur
