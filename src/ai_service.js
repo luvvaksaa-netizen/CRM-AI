@@ -61,6 +61,49 @@ function inferAgentProductKind(agent = {}, mediaResults = []) {
     return 'generic';
 }
 
+/**
+ * Auto-inject media jika AI menyebut media dalam teks tapi TIDAK memanggil tool.
+ * Safety net: deteksi keyword referensi media → kirim media otomatis.
+ * @param {string} content  - Teks respons AI
+ * @param {string} kind     - 'dtf' | 'uv' | 'generic'
+ * @param {Array}  sendableMedia - Daftar media yang bisa dikirim dari DB
+ * @returns {Array|null} - Array media untuk dikirim, atau null jika tidak ada
+ */
+function _autoInjectMedia(content, kind, sendableMedia) {
+    if (!content || !sendableMedia || sendableMedia.length === 0) return null;
+
+    const lower = content.toLowerCase();
+
+    // Keyword yang menandakan AI ingin tunjukkan media tapi lupa panggil tool
+    const VIDEO_REF     = ['videonya', 'video cara', 'cek video', 'tonton video', 'lihat video', 'video kami', 'kirim video', 'ada video'];
+    const KATALOG_REF   = ['katalognya', 'pilihan font', 'varian font', 'lihat pilihan', 'foto varian', 'lihat katalog', 'pilihan warna', 'cek katalog'];
+    const TESTIMONI_REF = ['testimoni', 'review customer', 'bukti nyata', 'foto testimoni', 'hasil pelanggan'];
+    const VALUE_REF     = ['keunggulan produk', 'nilai produk', 'kenapa pilih', 'premium lho', 'kualitas produk'];
+
+    const targetLabels = [];
+    if (VIDEO_REF.some(kw     => lower.includes(kw))) targetLabels.push(kind === 'uv' ? 'video uv'     : 'video dtf');
+    if (KATALOG_REF.some(kw   => lower.includes(kw))) targetLabels.push(kind === 'uv' ? 'katalog uv'   : 'katalog dtf');
+    if (TESTIMONI_REF.some(kw => lower.includes(kw))) targetLabels.push(kind === 'uv' ? 'testimoni uv' : 'testimoni dtf');
+    if (VALUE_REF.some(kw     => lower.includes(kw))) targetLabels.push(kind === 'uv' ? 'value uv'     : 'value dtf');
+
+    if (targetLabels.length === 0) return null;
+
+    const results = [];
+    for (const targetLabel of targetLabels) {
+        const [word1, word2] = targetLabel.split(' ');
+        const matched = sendableMedia.find(m => {
+            if (!m.label) return false;
+            const lbl = m.label.toLowerCase();
+            return lbl.includes(word1) && (kind === 'generic' || (word2 && lbl.includes(word2)));
+        });
+        if (matched && !results.find(r => r.id === matched.id)) {
+            results.push(matched);
+        }
+    }
+
+    return results.length > 0 ? results : null;
+}
+
 function buildFastMediaReply(agent, mediaResults = [], interactionCount = 1) {
     const kind = inferAgentProductKind(agent, mediaResults);
     if (interactionCount === 1 && kind === 'uv') {
@@ -210,6 +253,9 @@ async function _processAIResponse(userMessage, history = [], store = null, agent
               ).join('\n')
             : '(Tidak ada media yang bisa dikirim)';
 
+        // Deteksi jenis produk agent (dtf/uv/generic) — dipakai auto-inject & fast reply
+        const kind = inferAgentProductKind(agent, sendableMedia.map(m => ({ media: m })));
+
         const labelSection = configuredLabels.length > 0
             ? configuredLabels.map(label => `- ${label}`).join('\n')
             : '(Belum ada label otomatis yang dikonfigurasi untuk agen ini)';
@@ -248,6 +294,14 @@ ${catalogSection}
 
 LABEL OTOMATIS YANG BOLEH DIPAKAI:
 ${labelSection}
+
+═══════════════════════════════════════════
+SAPAAN CUSTOMER — WAJIB "BUNDA" / "BUN":
+═══════════════════════════════════════════
+⚡ ATURAN MUTLAK: Gunakan sapaan "bun" atau "bunda" untuk SEMUA percakapan dengan customer.
+Contoh BENAR : "Baik bun 😊", "Iya bunda 😊", "Mau pesan berapa paket bun?", "Silakan bun 😊"
+Contoh SALAH : "Baik kak", "iya kak", "kak mau pesan berapa?" — ⛔ DILARANG
+Jika prompt agen menyebut "kak", GANTI dengan "bun" / "bunda" di setiap balasan.
 
 ═══════════════════════════════════════════
 STATUS PERCAKAPAN & INSTRUKSI KONTEKSTUAL:
@@ -412,6 +466,15 @@ Kamu adalah CS yang sangat cerdas. Berikut panduan untuk menangani berbagai situ
     b. Customer tanya "varian apa", "lihat katalog", "pilihan apa", "gambarnya": WAJIB panggil kirim_media_katalog, BUKAN hanya teks.
     c. DILARANG menulis kalimat "Berikut varian kami..." atau mendeskripsikan varian tanpa mengirim gambar.
     d. Jika media tidak ditemukan di katalog (list kosong): beritahu customer dan sarankan cek ulang ke admin.
+16. 🚨 SAPAAN WAJIB "BUNDA/BUN": Setiap balasan ke customer WAJIB pakai "bun" atau "bunda". JANGAN "kak".
+    Benar: "Baik bun", "Silakan bunda", "Mau pesan berapa paket bun?"
+    Salah: "Baik kak", "iya kak", "kak mau pesan?" — ini SALAH FATAL.
+17. 🚨 ANTI-GHOST MEDIA — LARANGAN MUTLAK:
+    Jika ingin menunjukkan video/katalog/foto ke customer (misal dalam kalimat seperti "cek videonya",
+    "bahannya premium lho", "lihat katalog kami"), WAJIB panggil tool kirim_media_katalog LEBIH DULU.
+    DILARANG KERAS menulis kalimat yang mereferensikan media tanpa benar-benar mengirimnya.
+    Contoh SALAH: menulis "Cek videonya bun 😊" tanpa panggil kirim_media_katalog = PELANGGARAN.
+    Contoh BENAR: panggil kirim_media_katalog(label_names=["video uv"]) lalu tulis teks pendamping.
 
 --- [KETERANGAN PENTING: KEPRIBADIAN & ATURAN UTAMA] ---
 ${sysPrompt}
@@ -455,6 +518,25 @@ ${sysPrompt}
 
         let responseMessage = response.choices[0].message;
         const downstreamToolCalls = responseMessage.tool_calls || [];
+
+        // ══════════════════════════════════════════════════════════════════
+        // 🔧 AUTO-INJECT MEDIA SAFETY NET
+        // Jika AI menulis teks yang mereferensikan video/foto/katalog TANPA
+        // memanggil tool, sistem otomatis deteksi & inject media yang relevan.
+        // Mencegah "ghost media" — bot bilang "cek videonya" tapi tidak kirim.
+        // ══════════════════════════════════════════════════════════════════
+        if ((!responseMessage.tool_calls || responseMessage.tool_calls.length === 0) && responseMessage.content) {
+            const autoMedia = _autoInjectMedia(responseMessage.content, kind, sendableMedia);
+            if (autoMedia && autoMedia.length > 0) {
+                logger.warn(`[AI] 🔧 Ghost-media dicegah! AI menyebut media dalam teks tanpa call tool. Auto-inject: ${autoMedia.map(m => m.label).join(', ')}`);
+                return {
+                    type: RESPONSE_TYPE.MEDIA,
+                    content: sanitizeTextOutput(responseMessage.content),
+                    mediaList: autoMedia.map(m => ({ media: m, caption: '' })),
+                    tool_calls: []
+                };
+            }
+        }
 
         // === TOOL CALLING HANDLER ===
         if (responseMessage.tool_calls) {
