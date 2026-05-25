@@ -208,3 +208,5 @@ Customer kirim pesan
 
 - **FIXED (Origin)**: Mengunci origin pencarian ongkir Mengantar secara absolut ke Kecamatan Pare (ID: 5fc633fef8f44b34aa4c4f47) sesuai alamat toko fisik Percetakan Jaya Sukses untuk sinkronisasi harga yang presisi.
 - **FEATURE**: Mempertahankan logika 'Harga Normal + Markup Rp 3.000' secara diam-diam (seamless) ke pelanggan, memisahkan harga asli/diskon (margin murni toko) dari harga penawaran AI.
+
+- **FEATURE (Cheapest Option Only)**: AI kini hanya memilih dan menampilkan satu ekspedisi termurah (di antara JNE dan J&T) ke pelanggan untuk mencegah kebingungan dan mempermudah closing, sambil tetap menyembunyikan markup harga.

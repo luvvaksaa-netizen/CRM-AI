@@ -111,14 +111,13 @@ async function getShippingCost(destinationCity, weight = 1) {
         }
 
         // 3. Susun Jawaban Natural
-        let reply = `Hore! Ini dia hasil cek ongkir dari Kediri ke ${destData.label} (${estWeight}kg):\n\n`;
-        let foundAny = false;
-
-        // Ambil khusus JNE dan JT
+        // 3. Cari Harga Termurah dari JNE dan J&T
         const couriers = [
             { key: 'JNE', name: 'JNE Reguler' },
             { key: 'JT', name: 'J&T Express' }
         ];
+
+        let availableCouriers = [];
 
         couriers.forEach(c => {
             if (pricingData[c.key]) {
@@ -127,17 +126,22 @@ async function getShippingCost(destinationCity, weight = 1) {
                 if (basePrice > 0) {
                     const price = basePrice + 3000; // Markup Rp 3000
                     const etd = service.estimate_delivery || service.estimatedDate || '-';
-                    reply += `✅ ${c.name}\n   Harga: Rp ${price.toLocaleString('id-ID')}\n   Estimasi: ${etd}\n\n`;
-                    foundAny = true;
+                    availableCouriers.push({ name: c.name, price: price, etd: etd });
                 }
             }
         });
 
-        if (!foundAny) {
-            return `Wah, maaf banget Kak. Ternyata untuk JNE dan J&T belum tersedia ke ${destData.label}. 🙏`;
+        if (availableCouriers.length === 0) {
+            return `Wah, maaf banget Kak. Ternyata untuk layanan reguler belum tersedia ke ${destData.label}. 🙏`;
         }
 
-        reply += "Gimana Kak, mau pilih ekspedisi yang mana? 😊";
+        // Urutkan dari harga terendah
+        availableCouriers.sort((a, b) => a.price - b.price);
+        const cheapest = availableCouriers[0];
+
+        let reply = `Hore! Ini dia hasil cek ongkir terbaik dari Kediri ke ${destData.label} (${estWeight}kg):\n\n`;
+        reply += `✅ ${cheapest.name}\n   Harga: Rp ${cheapest.price.toLocaleString('id-ID')}\n   Estimasi: ${cheapest.etd}\n\n`;
+        reply += "Bisa dibantu konfirmasi untuk lanjut pesanannya Kak? 😊";
         return reply;
 
     } catch (error) {
