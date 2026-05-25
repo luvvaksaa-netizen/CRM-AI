@@ -313,7 +313,15 @@ async function _triggerSummaryUpdate(storeWaId, contactId, senderName) {
                 await record.save();
             }
 
-            logger.info(`[BotActivation] Rekap [${contactId}] diperbarui (CS manual context).`);
+            let display = contactId;
+            try {
+                const { ChatSummary } = require('../database/index');
+                const summary = await ChatSummary.findOne({ where: { store_wa_id: storeWaId, contact_id: contactId } });
+                if (summary && summary.contact_name) {
+                    display = `[${summary.contact_name}${summary.contact_phone ? ' | +' + summary.contact_phone : ''}] (${contactId})`;
+                }
+            } catch (e) { /* ignore */ }
+            logger.info(`[BotActivation] Rekap ${display} diperbarui (CS manual context).`);
         } catch (e) {
             logger.warn(`[BotActivation] Gagal update rekap [${contactId}]: ${e.message}`);
         }

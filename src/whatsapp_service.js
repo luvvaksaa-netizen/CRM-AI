@@ -409,7 +409,16 @@ function setupEventListeners(client, storeWaId) {
                 sender_name: 'CS (dari HP)',
                 ...quotedContext
             });
-            logger.info(`[${storeWaId}] Pesan keluar dari HP tercatat: ke [${message.to}]`);
+            // Ambil info kontak untuk log yang lebih terbaca
+            let logDisplay = `[${message.to}]`;
+            try {
+                const contact = await message.getContact();
+                const { buildContactIdentity } = require('./utils/contact_identity');
+                const identity = buildContactIdentity(message.to, contact);
+                logDisplay = `[${identity.displayName || ''}${identity.phone ? ' | +' + identity.phone : ''}] (${message.to})`;
+            } catch (e) { /* ignore */ }
+
+            logger.info(`[${storeWaId}] Pesan keluar dari HP tercatat: ke ${logDisplay}`);
 
             // ── CS MANUAL AWARENESS (background, non-blocking) ──────────────────
             // 1. Cancel follow-up pending: CS sudah handle manual, tidak perlu bot follow-up

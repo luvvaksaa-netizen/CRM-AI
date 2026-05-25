@@ -460,7 +460,16 @@ async function cancelPendingFollowUps(storeWaId, contactId, reason = 'Customer m
         );
 
         if (updated > 0) {
-            logger.info(`[FollowUp] ${updated} follow-up dibatalkan untuk [${contactId}]: ${reason}`);
+            let display = contactId;
+            try {
+                const { ChatSummary } = require('../database/index');
+                const summary = await ChatSummary.findOne({ where: { store_wa_id: storeWaId, contact_id: contactId } });
+                if (summary && summary.contact_name) {
+                    display = `[${summary.contact_name}${summary.contact_phone ? ' | +' + summary.contact_phone : ''}] (${contactId})`;
+                }
+            } catch (e) { /* ignore */ }
+            
+            logger.info(`[FollowUp] ${updated} follow-up dibatalkan untuk ${display}: ${reason}`);
             emitFollowUpUpdate(storeWaId);
         }
         return updated;

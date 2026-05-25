@@ -263,7 +263,8 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
             : body;
 
         if (!logBody) {
-            logger.info(`[${storeWaId}] Pesan kosong dari [${contactId}] diabaikan.`);
+            const logDisplay = `[${identity.displayName || ''}${identity.phone ? ' | +' + identity.phone : ''}] (${contactId})`;
+            logger.info(`[${storeWaId}] Pesan kosong dari ${logDisplay} diabaikan.`);
             _cleanupTempFile(tempPath, storeWaId);
             return;
         }
@@ -342,7 +343,8 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
         // Debounced 60 detik agar tidak membebani OpenAI saat customer kirim banyak pesan.
         _triggerBackgroundSummaryIfNeeded(storeWaId, contactId, senderName);
 
-        logger.info(`[${storeWaId}] Pesan masuk terdaftar: ${contactId}`);
+        const logDisplay = `[${identity.displayName || ''}${identity.phone ? ' | +' + identity.phone : ''}] (${contactId})`;
+        logger.info(`[${storeWaId}] Pesan masuk terdaftar: ${logDisplay}`);
 
         // ═══════════════════════════════════════════════════════
         // FIREWALL 1: MODE SINKRONISASI (Tanpa AI Reply)
@@ -357,7 +359,7 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
         // FIREWALL 2: HUMAN OVERRIDE (Bot Dipause per-kontak)
         // ═══════════════════════════════════════════════════════
         if (pausedContacts.has(debounceKey)) {
-            logger.info(`[${storeWaId}] Bot sedang dipause (Human Override) untuk: ${contactId}`);
+            logger.info(`[${storeWaId}] Bot sedang dipause (Human Override) untuk: ${logDisplay}`);
             _cleanupTempFile(tempPath, storeWaId);
             return;
         }
@@ -370,7 +372,7 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
         try {
             const storeCheck = await Store.findOne({ where: { wa_id: storeWaId }, attributes: ['is_bot_active'] });
             if (!storeCheck || storeCheck.is_bot_active === false) {
-                logger.info(`[${storeWaId}] Bot NON-AKTIF (FIREWALL 3). Pesan dicatat, AI tidak akan membalas.`);
+                logger.info(`[${storeWaId}] Bot NON-AKTIF (FIREWALL 3). Pesan dari ${logDisplay} dicatat, AI tidak membalas.`);
                 // FIREWALL 3: Kirim reaction hanya saat bot aktif (tidak leaking presence ke customer)
                 if (customerMediaContext) {
                     safeSendReactionToMessage(message, '\uD83D\uDC4D', storeWaId);
