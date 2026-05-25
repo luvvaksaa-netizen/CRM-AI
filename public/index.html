@@ -540,6 +540,10 @@
     <div class="nav-btn" onclick="switchView('followups')" id="nav-followups">
         <i class="fas fa-history"></i><span>Follow Up</span>
     </div>
+    <!-- ANALYTICS DASHBOARD -->
+    <div class="nav-btn" onclick="switchView('analytics')" id="nav-analytics">
+        <i class="fas fa-chart-line"></i><span>Analitik</span>
+    </div>
     <div class="nav-btn" onclick="switchView('connect')" id="nav-connect">
         <i class="fas fa-qrcode"></i><span>Koneksi</span>
     </div>
@@ -643,8 +647,11 @@
                     <h2 class="fw-bold m-0" style="color:var(--clr-primary)"><i class="fas fa-history me-3"></i>Follow-Up Otomatis</h2>
                     <p class="text-muted m-0">Antrian pesan re-engagement berkala untuk customer yang belum closing</p>
                 </div>
-                <div class="d-flex gap-2">
-                    <button class="btn btn-primary" onclick="loadFollowUps()"><i class="fas fa-sync-alt me-2"></i>Segarkan Antrian</button>
+                <div class="d-flex gap-2 align-items-center">
+                    <select id="followupStoreFilter" class="form-select border shadow-sm" style="width:auto;min-width:160px;font-weight:500;" onchange="loadFollowUps()">
+                        <option value="">🏪 Semua Akun WA</option>
+                    </select>
+                    <button class="btn btn-primary" onclick="loadFollowUps()"><i class="fas fa-sync-alt me-2"></i>Segarkan</button>
                 </div>
             </div>
 
@@ -792,9 +799,113 @@
         </div>
     </div>
 
+    <!-- === VIEW: ANALYTICS DASHBOARD (NEW) === -->
+    <div class="view" id="view-analytics">
+        <div class="page-view">
+            <div class="page-header d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h2 class="fw-bold m-0" style="color:var(--clr-primary)"><i class="fas fa-chart-line me-3"></i>Analytics Dashboard</h2>
+                    <p class="text-muted m-0">Live CRM Performance & Intelligence Metrics</p>
+                </div>
+                <div class="d-flex gap-2">
+                    <select id="analyticsStoreFilter" class="form-select border shadow-sm" style="width: auto; min-width: 180px;" onchange="loadAnalytics()">
+                        <option value="">🏪 Semua Toko</option>
+                    </select>
+                    <button class="btn btn-primary" onclick="loadAnalytics()"><i class="fas fa-sync-alt me-2"></i>Refresh</button>
+                </div>
+            </div>
+
+            <!-- KPI Cards -->
+            <div class="row g-4 mb-4">
+                <div class="col-md-3">
+                    <div class="card-glass p-3 text-center h-100 d-flex flex-column justify-content-center">
+                        <small class="text-muted text-uppercase fw-bold" style="font-size:0.7rem;letter-spacing:1px">Total Leads Aktif</small>
+                        <h2 class="fw-bold text-dark m-0 mt-2" id="kpi-total-leads">0</h2>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card-glass p-3 text-center h-100 d-flex flex-column justify-content-center" style="border-bottom: 4px solid var(--clr-accent);">
+                        <small class="text-muted text-uppercase fw-bold" style="font-size:0.7rem;letter-spacing:1px">Closing Rate</small>
+                        <h2 class="fw-bold text-success m-0 mt-2" id="kpi-closing-rate">0%</h2>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card-glass p-3 text-center h-100 d-flex flex-column justify-content-center" style="border-bottom: 4px solid var(--clr-primary);">
+                        <small class="text-muted text-uppercase fw-bold" style="font-size:0.7rem;letter-spacing:1px">AI Handling Rate</small>
+                        <h2 class="fw-bold text-primary m-0 mt-2" id="kpi-ai-handling">0%</h2>
+                        <div class="text-muted mt-1" style="font-size:0.7rem" id="kpi-ai-vs-cs">AI 0 | CS 0</div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card-glass p-3 text-center h-100 d-flex flex-column justify-content-center">
+                        <small class="text-muted text-uppercase fw-bold" style="font-size:0.7rem;letter-spacing:1px">Menunggu Transfer</small>
+                        <h2 class="fw-bold text-warning m-0 mt-2" id="kpi-transfer-pending">0</h2>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-4">
+                <!-- Status Funnel (CSS Bars) -->
+                <div class="col-md-5">
+                    <div class="card-glass p-4 h-100">
+                        <h6 class="fw-bold mb-4 text-secondary"><i class="fas fa-filter me-2"></i>Sales Funnel Status</h6>
+                        <div id="statusFunnelBars" class="d-flex flex-column gap-3">
+                            <div class="text-center p-3 text-muted"><i class="fas fa-spinner fa-spin"></i> Memuat...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 30-Day Trend (Simple CSS Chart) -->
+                <div class="col-md-7">
+                    <div class="card-glass p-4 h-100">
+                        <h6 class="fw-bold mb-4 text-secondary"><i class="fas fa-chart-area me-2"></i>Trend Leads & Closing (30 Hari)</h6>
+                        <div id="trendChartContainer" style="height:250px; display:flex; align-items:flex-end; gap:4px; padding-top:20px; overflow-x:auto;">
+                            <div class="text-center p-3 text-muted w-100"><i class="fas fa-spinner fa-spin"></i> Memuat...</div>
+                        </div>
+                        <div class="d-flex justify-content-center gap-4 mt-3" style="font-size:0.8rem">
+                            <div><span style="display:inline-block;width:12px;height:12px;background:#e2e8f0;border-radius:3px;margin-right:5px"></span> Total Leads</div>
+                            <div><span style="display:inline-block;width:12px;height:12px;background:var(--clr-accent);border-radius:3px;margin-right:5px"></span> Closing</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Per-Store Breakdown Table -->
+            <div class="row mt-4" id="perStoreAnalyticsContainer">
+                <div class="col-12">
+                    <div class="card-glass p-4">
+                        <h6 class="fw-bold mb-4 text-secondary"><i class="fas fa-store me-2"></i>Kinerja Per Akun WA</h6>
+                        <div class="table-responsive">
+                            <table class="table table-hover align-middle">
+                                <thead>
+                                    <tr>
+                                        <th class="text-muted text-uppercase" style="font-size:0.75rem; letter-spacing:0.5px">Nama Toko</th>
+                                        <th class="text-muted text-uppercase text-center" style="font-size:0.75rem; letter-spacing:0.5px">Total Leads</th>
+                                        <th class="text-muted text-uppercase text-center" style="font-size:0.75rem; letter-spacing:0.5px">Closing</th>
+                                        <th class="text-muted text-uppercase text-center" style="font-size:0.75rem; letter-spacing:0.5px">Win Rate</th>
+                                        <th class="text-muted text-uppercase text-center" style="font-size:0.75rem; letter-spacing:0.5px">Balasan AI</th>
+                                        <th class="text-muted text-uppercase text-center" style="font-size:0.75rem; letter-spacing:0.5px">Balasan CS</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="analyticsStoreTableBody">
+                                    <tr><td colspan="6" class="text-center text-muted p-3">Memuat data...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="text-end text-muted mt-3" style="font-size:0.75rem">
+                <i class="fas fa-info-circle me-1"></i> Data diperbarui secara real-time. Terakhir update: <span id="analyticsLastUpdate">-</span>
+            </div>
+        </div>
+    </div>
+
     <!-- === VIEW 5: WHATSAPP CONNECTION & BINDING === -->
     <div class="view" id="view-connect">
         <div class="page-view d-flex flex-column align-items-center justify-content-center">
+
             <div class="connect-card card-glass text-center" style="max-width: 450px;">
                 <h4 class="fw-bold mb-2">WhatsApp Device Status</h4>
                 <p class="text-muted mb-2" id="connectStoreName">Pilih Perangkat di Sidebar</p>
@@ -1452,30 +1563,60 @@
                 if (/^\d{8,}$/.test(rawId)) waNumber = rawId;
             }
             const waDisplay = waNumber ? `+${waNumber}` : '(nomor belum terdeteksi)';
-            const waLink = waNumber ? `https://wa.me/${waNumber}` : '#';
+            
+            // Generate Label Badges dari DB (jika ada)
+            let labelsHtml = '';
+            try {
+                const labels = s.wa_labels ? JSON.parse(s.wa_labels) : [];
+                if (labels.length > 0) {
+                    labelsHtml = '<div class="d-flex flex-wrap gap-1 mt-2 mb-3">';
+                    labels.forEach(lbl => {
+                        let bg = 'bg-secondary';
+                        if (lbl.toLowerCase().includes('closing') || lbl.toLowerCase().includes('selesai')) bg = 'bg-success';
+                        else if (lbl.toLowerCase().includes('hot lead')) bg = 'bg-danger';
+                        else if (lbl.toLowerCase().includes('transfer')) bg = 'bg-warning text-dark';
+                        else if (lbl.toLowerCase().includes('menunggu')) bg = 'bg-info text-dark';
+                        else if (lbl.toLowerCase().includes('ai')) bg = 'bg-primary';
+                        labelsHtml += `<span class="badge ${bg} rounded-pill fw-normal" style="font-size:0.7rem;letter-spacing:0.5px"><i class="fas fa-tag me-1"></i>${escapeHtml(lbl)}</span>`;
+                    });
+                    labelsHtml += '</div>';
+                }
+            } catch(e) {}
 
             const storeBadge = s.Store ? `<div style="position:absolute; top:12px; right:12px; background:var(--clr-primary); color:white; padding:4px 10px; font-size:0.7rem; border-radius:10px; font-weight:600;"><i class="fas fa-store me-1"></i>${escapeHtml(s.Store.name)}</div>` : '';
 
             div.innerHTML = `
                 ${storeBadge}
-                <div class="d-flex justify-content-between align-items-start mb-3">
+                <div class="d-flex justify-content-between align-items-start ${labelsHtml ? 'mb-1' : 'mb-3'}">
                     <div class="d-flex align-items-center">
                         <div class="conv-avatar me-3" style="background:var(--clr-primary); color:white">${escapeHtml(initial)}</div>
                         <div>
                             <h6 class="fw-bold m-0 pe-4">${escapeHtml(displayName)}</h6>
-                            <a href="${waLink}" target="_blank" rel="noopener" class="d-block text-decoration-none" style="font-size:0.78rem; color:#0ea5e9; font-weight:600; letter-spacing:0.02em;">
+                            <div class="text-muted" style="font-size:0.75rem; letter-spacing:0.02em;">
                                 <i class="fab fa-whatsapp me-1"></i>${escapeHtml(waDisplay)}
-                            </a>
+                            </div>
                             <small class="text-muted"><i class="fas fa-clock me-1"></i>Update: ${moment(s.last_updated).fromNow()}</small>
                         </div>
                     </div>
                 </div>
-                <div class="bg-light p-3 rounded-3 border" style="font-size:0.9rem; color:#334155; line-height:1.6; white-space:pre-wrap; border-left:4px solid var(--clr-primary) !important;">
-                    ${escapeHtml(s.summary)}
-                </div>
+                ${labelsHtml}
+                <div class="bg-light p-3 rounded-3 border mb-3" style="font-size:0.9rem; color:#334155; line-height:1.6; white-space:pre-wrap; border-left:4px solid var(--clr-primary) !important;">${escapeHtml(s.summary)}</div>
+                <button class="btn btn-sm btn-outline-primary w-100" onclick="deepLinkToChat('${s.store_wa_id}', '${s.contact_id}')">
+                    <i class="fas fa-external-link-alt me-1"></i> Buka Chat
+                </button>
             `;
             grid.appendChild(div);
         });
+    }
+
+    // Fungsi navigasi langsung dari Rekap ke halaman Chat
+    async function deepLinkToChat(storeWaId, contactId) {
+        if (currentStoreId !== storeWaId) {
+            await switchStore(storeWaId);
+        }
+        currentContactId = contactId;
+        switchView('chat');
+        loadContactMessages(contactId);
     }
 
     function populateAgentDropdowns() {
@@ -2905,7 +3046,20 @@
         if (id === 'agents') loadAgents();
         if (id === 'media')  loadMedia();
         if (id === 'summaries') loadSummaries();
-        if (id === 'followups') loadFollowUps();
+        if (id === 'analytics') loadAnalytics();
+        if (id === 'followups') {
+            // Populate store filter untuk followup jika belum
+            const selFilter = document.getElementById('followupStoreFilter');
+            if (selFilter && selFilter.options.length <= 1) {
+                stores.forEach(s => {
+                    const opt = document.createElement('option');
+                    opt.value = s.wa_id;
+                    opt.innerText = s.name;
+                    selFilter.appendChild(opt);
+                });
+            }
+            loadFollowUps();
+        }
         if (id === 'system') {
             const el = document.getElementById('sysLogContainer');
             if (el) el.scrollTop = el.scrollHeight;
@@ -3004,29 +3158,139 @@
         _skipPushState = false;
     });
 
-    async function loadBackups() {
+    // ============================================================
+    // ANALYTICS JS (NEW)
+    // ============================================================
+    async function loadAnalytics() {
+        const filterId = document.getElementById('analyticsStoreFilter').value;
+        const query = filterId ? `?store_wa_id=${filterId}` : '';
+        
         try {
-            const res = await fetch('/api/system/backups');
-            const backups = await res.json();
-            const body = document.getElementById('backupTableBody');
-            body.innerHTML = backups.length ? '' : '<tr><td colspan="4" class="text-center p-3 opacity-50">Belum ada backup.</td></tr>';
+            const res = await fetch(`/api/analytics/overview${query}`);
+            const data = await res.json();
             
-            backups.forEach(b => {
-                const tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td><code>${b.name}</code></td>
-                    <td>${b.size} KB</td>
-                    <td>${moment(b.time).format('DD MMM YYYY, HH:mm')}</td>
-                    <td class="text-end">
-                        <a href="/api/system/backups/${b.name}" class="btn btn-sm btn-primary">
-                            <i class="fas fa-download"></i>
-                        </a>
-                    </td>
-                `;
-                body.appendChild(tr);
-            });
-        } catch (e) { toast('Gagal memuat daftar backup.', 'error'); }
+            // KPI Cards
+            document.getElementById('kpi-total-leads').innerText = data.summary.totalLeads.toLocaleString();
+            document.getElementById('kpi-closing-rate').innerText = `${data.summary.closingRate}%`;
+            document.getElementById('kpi-ai-handling').innerText = `${data.summary.aiHandlingRate}%`;
+            document.getElementById('kpi-ai-vs-cs').innerText = `AI ${data.summary.aiReplies.toLocaleString()} | CS ${data.summary.csReplies.toLocaleString()}`;
+            document.getElementById('kpi-transfer-pending').innerText = (data.statusBreakdown.menunggu_transfer || 0).toLocaleString();
+            
+            document.getElementById('analyticsLastUpdate').innerText = moment(data.generatedAt).format('HH:mm:ss');
+            
+            // Status Funnel (CSS Bars)
+            renderStatusFunnel(data.statusBreakdown, data.summary.totalLeads);
+            
+            // Trend 30 Hari (CSS Chart)
+            renderTrendChart(data.trend);
+            
+            // Per-Store Stats (Tampilkan jika filter tidak spesifik ke 1 toko)
+            const storeContainer = document.getElementById('perStoreAnalyticsContainer');
+            if (filterId) {
+                storeContainer.style.display = 'none';
+            } else {
+                storeContainer.style.display = 'flex';
+                renderStoreAnalyticsTable(data.perStore);
+            }
+            
+            // Populate dropdown filter stores jika belum terisi
+            const selFilter = document.getElementById('analyticsStoreFilter');
+            if (selFilter.options.length <= 1) {
+                stores.forEach(s => {
+                    const opt = document.createElement('option');
+                    opt.value = s.wa_id;
+                    opt.innerText = s.name;
+                    selFilter.appendChild(opt);
+                });
+            }
+        } catch (e) {
+            toast('Gagal memuat data Analytics.', 'error');
+            console.error(e);
+        }
     }
+
+    function renderStatusFunnel(statusData, total) {
+        const container = document.getElementById('statusFunnelBars');
+        container.innerHTML = '';
+        
+        const sortedStatus = [
+            { key: 'closing', label: 'Closing / Selesai', color: 'var(--clr-success)' },
+            { key: 'menunggu_transfer', label: 'Menunggu Transfer', color: 'var(--clr-warning)' },
+            { key: 'negosiasi', label: 'Hot Lead / Negosiasi', color: '#f43f5e' },
+            { key: 'menunggu_rekap', label: 'Menunggu Rekap/Alamat', color: '#0ea5e9' },
+            { key: 'gali_kebutuhan', label: 'Tanya-tanya (Aktif)', color: 'var(--clr-primary)' },
+            { key: 'opening', label: 'Baru Masuk', color: '#64748b' }
+        ];
+
+        sortedStatus.forEach(s => {
+            const count = statusData[s.key] || 0;
+            // Gabung rekap dan alamat jadi satu secara visual agar rapi
+            if (s.key === 'menunggu_rekap') count += (statusData['menunggu_alamat'] || 0);
+            
+            const pct = total > 0 ? (count / total) * 100 : 0;
+            
+            div = document.createElement('div');
+            div.innerHTML = `
+                <div class="d-flex justify-content-between mb-1" style="font-size:0.8rem">
+                    <span class="fw-bold">${s.label}</span>
+                    <span class="text-muted">${count} (${pct.toFixed(1)}%)</span>
+                </div>
+                <div class="progress" style="height: 10px; background:#f1f5f9; border-radius:5px">
+                    <div class="progress-bar" style="width: ${pct}%; background-color:${s.color}; border-radius:5px"></div>
+                </div>
+            `;
+            container.appendChild(div);
+        });
+    }
+
+    function renderTrendChart(trendData) {
+        const container = document.getElementById('trendChartContainer');
+        container.innerHTML = '';
+        
+        // Cari max value untuk normalisasi tinggi chart
+        let maxVal = 1;
+        trendData.forEach(d => { if (d.leads > maxVal) maxVal = d.leads; });
+        
+        trendData.forEach(d => {
+            const hLeads = Math.max((d.leads / maxVal) * 100, 2);
+            const hClosing = d.leads > 0 ? (d.closing / d.leads) * 100 : 0; // Closing sebagai persentase dari Leads bar
+            
+            const col = document.createElement('div');
+            col.className = 'd-flex flex-column align-items-center justify-content-end';
+            col.style = 'flex: 1; min-width:18px; height: 100%; position:relative;';
+            col.title = `${moment(d.date).format('DD MMM')}\nLeads: ${d.leads}\nClosing: ${d.closing}`;
+            
+            // Bar Leads (Abu-abu)
+            const leadsBar = `<div style="width: 70%; height: ${hLeads}%; background: #e2e8f0; border-radius:3px 3px 0 0; position:relative; overflow:hidden;">
+                <!-- Bar Closing (Accent) menimpa Leads -->
+                <div style="width:100%; height: ${hClosing}%; background: var(--clr-accent); position:absolute; bottom:0;"></div>
+            </div>`;
+            
+            const dateLabel = `<div class="text-muted mt-1" style="font-size: 0.55rem; transform: rotate(-45deg); white-space:nowrap; transform-origin: top left;">${moment(d.date).format('DD')}</div>`;
+            
+            col.innerHTML = leadsBar + dateLabel;
+            container.appendChild(col);
+        });
+    }
+
+    function renderStoreAnalyticsTable(stores) {
+        const tbody = document.getElementById('analyticsStoreTableBody');
+        tbody.innerHTML = '';
+        
+        stores.sort((a,b) => b.closing - a.closing).forEach(s => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td class="fw-bold" style="color:var(--clr-primary)"><i class="fas fa-store me-2"></i>${escapeHtml(s.name)}</td>
+                <td class="text-center">${s.totalLeads.toLocaleString()}</td>
+                <td class="text-center fw-bold text-success">${s.closing.toLocaleString()}</td>
+                <td class="text-center"><span class="badge ${s.closingRate > 20 ? 'bg-success' : 'bg-secondary'}">${s.closingRate}%</span></td>
+                <td class="text-center" style="color:var(--clr-primary)">${s.aiReplies.toLocaleString()}</td>
+                <td class="text-center text-muted">${s.csReplies.toLocaleString()}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+    }
+
 
     function selectPurpose(el) {
         document.querySelectorAll('.purpose-option').forEach(o => o.classList.remove('active'));
@@ -3051,7 +3315,7 @@
     // ============================================================
     // Restore view dari URL hash saat pertama kali load (deep link support)
     const _initHash = location.hash.replace('#/', '').trim();
-    const _validViews = ['chat', 'agents', 'bot', 'media', 'summaries', 'followups', 'connect', 'system'];
+    const _validViews = ['chat', 'agents', 'bot', 'media', 'summaries', 'analytics', 'followups', 'connect', 'system'];
     if (_initHash && _validViews.includes(_initHash) && _initHash !== 'chat') {
         // Tunda agar init() selesai load data terlebih dahulu
         setTimeout(() => switchView(_initHash), 300);

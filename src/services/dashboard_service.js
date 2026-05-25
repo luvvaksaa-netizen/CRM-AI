@@ -485,6 +485,163 @@ function initDashboard(port = 3000) {
   });
 
   // ============================================================
+  // ANALYTICS API — Real-time Lead Intelligence Dashboard
+  // ============================================================
+
+  /**
+   * GET /api/analytics/overview
+   * Aggregasi: AI vs CS Manual, breakdown status, trend 30 hari, per-store.
+   * Query params: ?store_wa_id=xxx (opsional, default = semua store)
+   */
+  app.get('/api/analytics/overview', async (req, res) => {
+    try {
+      const { ChatSummary, ChatMessage, Store } = require('../database/index');
+      const { store_wa_id } = req.query;
+
+      const summaryWhere = {};
+      const msgWhere = {};
+      if (store_wa_id) {
+        summaryWhere.store_wa_id = store_wa_id;
+        msgWhere.store_wa_id    = store_wa_id;
+      }
+
+      const allSummaries = await ChatSummary.findAll({ where: summaryWhere });
+
+      // Status breakdown patterns
+      const STATUS_PATTERNS = {
+        closing:           /status:\s*(closing|selesai)/i,
+        menunggu_transfer: /status:\s*menunggu\s*transfer/i,
+        menunggu_rekap:    /status:\s*menunggu\s*rekap/i,
+        menunggu_alamat:   /status:\s*menunggu\s*alamat/i,
+        negosiasi:         /status:\s*negosiasi/i,
+        gali_kebutuhan:    /status:\s*gali\s*kebutuhan/i,
+        opening:           /status:\s*opening/i,
+      };
+
+      const statusCounts = Object.fromEntries(Object.keys(STATUS_PATTERNS).map(k => [k, 0]));
+      const totalLeads = allSummaries.length;
+
+      for (const s of allSummaries) {
+        const txt = s.summary || '';
+        for (const [key, re] of Object.entries(STATUS_PATTERNS)) {
+          if (re.test(txt)) { statusCounts[key]++; break; }
+        }
+      }
+
+      const closingRate = totalLeads > 0
+        ? Math.round((statusCounts.closing / totalLeads) * 100) : 0;
+
+      // AI vs CS Manual reply counts
+      const aiReplyCount = await ChatMessage.count({
+        where: { ...msgWhere, is_from_me: true, sender_name: { [Op.not]: 'CS (dari HP)' } }
+      });
+      const csManualCount = await ChatMessage.count({
+        where: { ...msgWhere, is_from_me: true, sender_name: 'CS (dari HP)' }
+      });
+      const totalOut = aiReplyCount + csManualCount;
+      const aiHandlingRate = totalOut > 0 ? Math.round((aiReplyCount / totalOut) * 100) : 0;
+
+      // Trend 30 hari — kontak baru + closing per hari
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      thirtyDaysAgo.setHours(0, 0, 0, 0);
+
+      const trendMap = {};
+      for (let i = 29; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        const key = d.toISOString().slice(0, 10);
+        trendMap[key] = { date: key, leads: 0, closing: 0 };
+      }
+      for (const s of allSummaries) {
+        const key = new Date(s.createdAt).toISOString().slice(0, 10);
+        if (trendMap[key]) {
+          trendMap[key].leads++;
+          if (STATUS_PATTERNS.closing.test(s.summary || '')) trendMap[key].closing++;
+        }
+      }
+      const trend = Object.values(trendMap);
+
+      // Per-store breakdown (hanya jika tidak difilter)
+      let perStore = [];
+      if (!store_wa_id) {
+        const stores = await Store.findAll({ attributes: ['wa_id', 'name'] });
+        for (const store of stores) {
+          const storeSum = allSummaries.filter(s => s.store_wa_id === store.wa_id);
+          const storeClosing = storeSum.filter(s => STATUS_PATTERNS.closing.test(s.summary || '')).length;
+          const [storeAi, storeCs] = await Promise.all([
+            ChatMessage.count({ where: { store_wa_id: store.wa_id, is_from_me: true, sender_name: { [Op.not]: 'CS (dari HP)' } } }),
+            ChatMessage.count({ where: { store_wa_id: store.wa_id, is_from_me: true, sender_name: 'CS (dari HP)' } })
+          ]);
+          perStore.push({
+            wa_id: store.wa_id,
+            name: store.name,
+            totalLeads: storeSum.length,
+            closing: storeClosing,
+            closingRate: storeSum.length > 0 ? Math.round((storeClosing / storeSum.length) * 100) : 0,
+            aiReplies: storeAi,
+            csReplies: storeCs
+          });
+        }
+      }
+
+      // Top 10 kontak closing terbaru
+      const topClosing = allSummaries
+        .filter(s => STATUS_PATTERNS.closing.test(s.summary || ''))
+        .sort((a, b) => new Date(b.last_updated) - new Date(a.last_updated))
+        .slice(0, 10)
+        .map(s => ({
+          store_wa_id: s.store_wa_id,
+          contact_id: s.contact_id,
+          contact_name: s.contact_name || 'Pelanggan',
+          last_updated: s.last_updated,
+          wa_labels: (() => { try { return JSON.parse(s.wa_labels || '[]'); } catch (_) { return []; } })()
+        }));
+
+      res.json({
+        generatedAt: new Date().toISOString(),
+        summary: { totalLeads, closingRate, aiHandlingRate, aiReplies: aiReplyCount, csReplies: csManualCount },
+        statusBreakdown: statusCounts,
+        trend,
+        perStore,
+        topClosing
+      });
+
+    } catch (e) {
+      logger.error(`[Analytics] Error: ${e.message}`);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/analytics/followups
+   * Follow-up stats semua store, dengan filter opsional per ?store_wa_id=xxx
+   */
+  app.get('/api/analytics/followups', async (req, res) => {
+    try {
+      const { FollowUp, Store } = require('../database/index');
+      const { store_wa_id } = req.query;
+      const stores = await Store.findAll({ attributes: ['wa_id', 'name'] });
+      const result = [];
+
+      for (const store of stores) {
+        if (store_wa_id && store.wa_id !== store_wa_id) continue;
+        const [pending, sent, replied, cancelled] = await Promise.all([
+          FollowUp.count({ where: { store_wa_id: store.wa_id, status: 'pending' } }),
+          FollowUp.count({ where: { store_wa_id: store.wa_id, status: 'sent' } }),
+          FollowUp.count({ where: { store_wa_id: store.wa_id, status: 'replied' } }),
+          FollowUp.count({ where: { store_wa_id: store.wa_id, status: 'cancelled' } })
+        ]);
+        result.push({ wa_id: store.wa_id, name: store.name, pending, sent, replied, cancelled, total: pending + sent + replied + cancelled });
+      }
+
+      res.json(result);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============================================================
   // FOLLOW-UP APIs
   // ============================================================
 

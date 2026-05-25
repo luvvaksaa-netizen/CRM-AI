@@ -104,6 +104,9 @@ const ChatSummary = sequelize.define('ChatSummary', {
   contact_phone:{ type: DataTypes.STRING, defaultValue: null, allowNull: true }, // Nomor HP customer (e.g. 6281234567890)
   contact_lid:  { type: DataTypes.STRING, defaultValue: null, allowNull: true }, // WA LID jika tersedia
   summary:      { type: DataTypes.TEXT,   defaultValue: 'Belum ada rekapan.' },
+  // Label WA aktif yang terpasang ke kontak ini (JSON string array, e.g. '["Closing","Hot Lead"]')
+  // Diperbarui oleh smart_label_service setiap kali rekap diupdate.
+  wa_labels:    { type: DataTypes.TEXT,   defaultValue: '[]' },
   last_updated: { type: DataTypes.DATE,   defaultValue: Sequelize.NOW }
 });
 
@@ -326,6 +329,10 @@ async function initDB() {
     // Follow-Up System
     await safeAddColumn('FollowUps', 'sent_at', { type: DataTypes.DATE, allowNull: true });
     await safeAddColumn('FollowUps', 'cancel_reason', { type: DataTypes.STRING, allowNull: true });
+
+    // Smart Label System (2026-05-25)
+    // Menyimpan label WA aktif per kontak sebagai JSON array untuk visibilitas dashboard
+    await safeAddColumn('ChatSummaries', 'wa_labels', { type: DataTypes.TEXT, defaultValue: '[]' });
 
     // RocketChat Hybrid Mode Columns
     await safeAddColumn('Stores', 'connection_mode', { type: DataTypes.STRING, defaultValue: 'wwebjs' });

@@ -936,6 +936,24 @@ async function _updateConversationSummary(storeWaId, contactId, senderName) {
         
         logger.info(`[${storeWaId}] Rekap Chat [${name}${stablePhone ? ' | ' + stablePhone : ''}] Berhasil Diperbarui.`);
 
+        // ── SMART LABEL ENGINE (Non-blocking) ──────────────────────────────
+        // Deteksi STATUS dari rekap → terapkan label WA Business + simpan ke DB
+        try {
+            const { applyLabelsFromSummary } = require('./services/smart_label_service');
+            // Ambil WA client aktif untuk apply label ke WA real
+            let waClient = null;
+            try {
+                const { getActiveClient } = require('./whatsapp_service');
+                waClient = getActiveClient(storeWaId);
+            } catch (_) { /* client mungkin sedang restart — label tetap disimpan di DB */ }
+            // Non-blocking: error di sini tidak boleh ganggu flow utama
+            applyLabelsFromSummary(storeWaId, contactId, summaryText, waClient).catch(e =>
+                logger.warn(`[${storeWaId}] Smart label non-critical error: ${e.message}`)
+            );
+        } catch (labelErr) {
+            logger.warn(`[${storeWaId}] Smart label setup error: ${labelErr.message}`);
+        }
+
         // TAHAP 5: Jadwalkan Follow-Up jika belum closing (setelah rekap terupdate)
         await _scheduleFollowUpIfNeeded(storeWaId, contactId, name, summaryText);
     } catch (e) {
