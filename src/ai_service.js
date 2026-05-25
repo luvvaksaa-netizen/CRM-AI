@@ -254,8 +254,24 @@ STATUS PERCAKAPAN & INSTRUKSI KONTEKSTUAL:
 ═══════════════════════════════════════════
 INTERAKSI KE-${interactionCount} DENGAN PELANGGAN INI.
 ${interactionCount === 1
-  ? `⚠️ INI PESAN PERTAMA PELANGGAN INI! WAJIB LAKUKAN OPENING FLOW SESUAI AGENT INI:\n1. Ikuti label media yang tertulis di prompt/knowledge agent dan tersedia di katalog.\n2. Agent DTF kain biasanya memakai ["katalog dtf", "video dtf"]. Agent UV/stiker keras biasanya memakai ["katalog uv", "video uv"].\n3. Jangan memakai katalog/video produk lain.\n4. Kirim teks pendek sesuai opening agent setelah media dipilih.\nJANGAN bertanya nomor pesanan atau data apapun sebelum langkah opening selesai!`
-  : `REKAP PEMBAHASAN SEBELUMNYA (Long-Term Memory):\n${conversationSummary || 'Percakapan sedang berlangsung.'}`
+  ? `🚨 INI PESAN PERTAMA — WAJIB JALANKAN OPENING FLOW SEKARANG JUGA:
+
+LANGKAH WAJIB (TIDAK BOLEH DILEWATI):
+1. PANGGIL TOOL kirim_media_katalog SEKARANG dengan label_names sesuai agent:
+   - Agent DTF (label baju/kain/setrika): label_names = ["katalog dtf", "video dtf"]
+   - Agent UV (stiker keras/botol/helm): label_names = ["katalog uv", "video uv"]
+2. Setelah tool dipanggil, kirim teks sambutan singkat (≤10 kata per bubble).
+3. Akhiri dengan pertanyaan mau varian yang mana.
+
+⛔ DILARANG: Menjawab hanya teks tanpa memanggil kirim_media_katalog.
+⛔ DILARANG: Bertanya data apapun (nama/jumlah/alamat) sebelum opening selesai.
+✅ WAJIB: Tool kirim_media_katalog HARUS dipanggil di respons pertama ini.`
+  : `REKAP PEMBAHASAN SEBELUMNYA (Long-Term Memory):\n${conversationSummary || 'Percakapan sedang berlangsung.'}
+
+📌 ATURAN SAAT CUSTOMER TANYA VARIAN/KATALOG (MID-CONVERSATION):
+Jika customer bertanya "varian apa aja", "ada pilihan apa", "lihat katalog", "gambarnya mana", atau sejenisnya:
+→ WAJIB panggil kirim_media_katalog dengan label katalog sesuai agent (katalog dtf / katalog uv).
+→ DILARANG menjawab hanya teks "berikut pilihannya" tanpa mengirim gambar katalog.`
 }
 
 ═══════════════════════════════════════════
@@ -391,10 +407,16 @@ Kamu adalah CS yang sangat cerdas. Berikut panduan untuk menangani berbagai situ
 12. Jika prompt agen berisi FLOW WAJIB/opening/media, ikuti urutannya. Untuk gambar/katalog/varian, gunakan tool "kirim_media_katalog" dengan label media yang paling sesuai.
 13. Jika prompt agen melarang jawab harga terlalu cepat, jangan jawab harga sebelum syarat interaksi pada prompt terpenuhi.
 14. Jika prompt agen meminta bot dimatikan/dialihkan ke CS manusia, gunakan tool "matikan_bot_kontak" dan tetap kirim jawaban sopan terakhir.
+15. 🚨 ATURAN MEDIA KATALOG — WAJIB PATUH:
+    a. Interaksi ke-1 (PESAN PERTAMA): WAJIB panggil tool kirim_media_katalog. Tidak boleh hanya teks.
+    b. Customer tanya "varian apa", "lihat katalog", "pilihan apa", "gambarnya": WAJIB panggil kirim_media_katalog, BUKAN hanya teks.
+    c. DILARANG menulis kalimat "Berikut varian kami..." atau mendeskripsikan varian tanpa mengirim gambar.
+    d. Jika media tidak ditemukan di katalog (list kosong): beritahu customer dan sarankan cek ulang ke admin.
 
 --- [KETERANGAN PENTING: KEPRIBADIAN & ATURAN UTAMA] ---
 ${sysPrompt}
 ---`.trim();
+
 
         let messages = [
             { role: "system", content: fullSystemInstruction },

@@ -1405,13 +1405,28 @@
             const displayName = getContactDisplayName(s.contact_id, s.contact_name, s);
             const initial = (displayName.replace(/[^a-z0-9]/gi, '').substring(0, 2) || 'WA').toUpperCase();
 
+            // Tampilkan nomor WA: gunakan contact_phone jika ada, fallback ke contact_id (strip @lid/@c.us)
+            let waNumber = '';
+            if (s.contact_phone) {
+                waNumber = s.contact_phone.replace(/\D/g, ''); // strip non-digit
+            } else {
+                // Fallback: ambil dari contact_id (format: 628xxx@c.us atau @lid)
+                const rawId = (s.contact_id || '').split('@')[0];
+                if (/^\d{8,}$/.test(rawId)) waNumber = rawId;
+            }
+            const waDisplay = waNumber ? `+${waNumber}` : '(nomor belum terdeteksi)';
+            const waLink = waNumber ? `https://wa.me/${waNumber}` : '#';
+
             div.innerHTML = `
                 <div class="d-flex justify-content-between align-items-start mb-3">
                     <div class="d-flex align-items-center">
                         <div class="conv-avatar me-3" style="background:var(--clr-primary); color:white">${escapeHtml(initial)}</div>
                         <div>
                             <h6 class="fw-bold m-0">${escapeHtml(displayName)}</h6>
-                            <small class="text-muted"><i class="fas fa-clock me-1"></i> Update: ${moment(s.last_updated).fromNow()}</small>
+                            <a href="${waLink}" target="_blank" rel="noopener" class="d-block text-decoration-none" style="font-size:0.78rem; color:#0ea5e9; font-weight:600; letter-spacing:0.02em;">
+                                <i class="fab fa-whatsapp me-1"></i>${escapeHtml(waDisplay)}
+                            </a>
+                            <small class="text-muted"><i class="fas fa-clock me-1"></i>Update: ${moment(s.last_updated).fromNow()}</small>
                         </div>
                     </div>
                 </div>

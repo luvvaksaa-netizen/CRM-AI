@@ -98,12 +98,15 @@ const ChatMessage = sequelize.define('ChatMessage', {
  * Model: Chat Summary (Rekap Pembahasan per Customer)
  */
 const ChatSummary = sequelize.define('ChatSummary', {
-  store_wa_id: { type: DataTypes.STRING, primaryKey: true, allowNull: false },
-  contact_id:  { type: DataTypes.STRING, primaryKey: true, allowNull: false },
-  contact_name:{ type: DataTypes.STRING, defaultValue: '' },
-  summary:     { type: DataTypes.TEXT,   defaultValue: 'Belum ada rekapan.' },
-  last_updated:{ type: DataTypes.DATE,   defaultValue: Sequelize.NOW }
+  store_wa_id:  { type: DataTypes.STRING, primaryKey: true, allowNull: false },
+  contact_id:   { type: DataTypes.STRING, primaryKey: true, allowNull: false },
+  contact_name: { type: DataTypes.STRING, defaultValue: '' },
+  contact_phone:{ type: DataTypes.STRING, defaultValue: null, allowNull: true }, // Nomor HP customer (e.g. 6281234567890)
+  contact_lid:  { type: DataTypes.STRING, defaultValue: null, allowNull: true }, // WA LID jika tersedia
+  summary:      { type: DataTypes.TEXT,   defaultValue: 'Belum ada rekapan.' },
+  last_updated: { type: DataTypes.DATE,   defaultValue: Sequelize.NOW }
 });
+
 
 /**
  * Model: Paused Contact (Persistent Human Override)
@@ -226,13 +229,39 @@ async function backfillContactIdentity() {
     for (const record of summaries) {
       const identity = buildContactIdentity(record.contact_id, { name: record.contact_name });
       const generatedName = isGeneratedNameForId(record.contact_name, record.contact_id);
-      const needsUpdate = !record.contact_name
+      const needsNameUpdate = !record.contact_name
         || generatedName
         || (identity.type === 'lid' && /^\+?\d/.test(String(record.contact_name || '')));
 
-      if (!needsUpdate) continue;
+      // Backfill contact_phone dari ChatMessages terbaru yang punya contact_phone
+      const needsPhoneUpdate = !record.contact_phone;
 
-      record.contact_name = identity.displayName;
+      if (!needsNameUpdate && !needsPhoneUpdate) continue;
+
+      if (needsNameUpdate) {
+        record.contact_name = identity.displayName;
+      }
+
+      if (needsPhoneUpdate) {
+        // Ambil nomor HP dari ChatMessages untuk kontak ini
+        const { Op } = require('sequelize');
+        const phoneMsg = await ChatMessage.findOne({
+          where: {
+            store_wa_id: record.store_wa_id,
+            contact_id:  record.contact_id,
+            contact_phone: { [Op.not]: null }
+          },
+          order: [['timestamp', 'DESC']]
+        });
+        if (phoneMsg?.contact_phone) {
+          record.contact_phone = phoneMsg.contact_phone;
+        }
+        // Isi contact_lid jika format LID
+        if (!record.contact_lid && record.contact_id.endsWith('@lid')) {
+          record.contact_lid = record.contact_id;
+        }
+      }
+
       await record.save();
       changedSummaries++;
     }
@@ -275,6 +304,8 @@ async function initDB() {
     await safeAddColumn('Stores', 'bot_phone', { type: DataTypes.STRING, allowNull: true });
     await safeAddColumn('MediaAssets', 'agent_id', { type: DataTypes.INTEGER, allowNull: true });
     await safeAddColumn('ChatSummaries', 'contact_name', { type: DataTypes.STRING, defaultValue: '' });
+    await safeAddColumn('ChatSummaries', 'contact_phone', { type: DataTypes.STRING, allowNull: true });
+    await safeAddColumn('ChatSummaries', 'contact_lid',   { type: DataTypes.STRING, allowNull: true });
     await safeAddColumn('ChatMessages', 'wa_message_id', { type: DataTypes.STRING, allowNull: true });
     await safeAddColumn('ChatMessages', 'contact_display_name', { type: DataTypes.STRING, allowNull: true });
     await safeAddColumn('ChatMessages', 'contact_phone', { type: DataTypes.STRING, allowNull: true });

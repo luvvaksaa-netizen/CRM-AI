@@ -902,11 +902,19 @@ async function _updateConversationSummary(storeWaId, contactId, senderName) {
         ].map(v => String(v || '').trim()).find(v => v && !/^Kontak WA #\d+$/.test(v) && v !== 'Kontak WA Privat' && v !== 'Kontak WhatsApp');
         const name = stableName || buildContactIdentity(contactId, { phone: latestIdentity.contact_phone }).displayName || formatWaNumber(contactId);
 
+        // Ambil nomor HP dari history terbaru yang punya contact_phone
+        const phoneSource = [...history].reverse().find(h => h.contact_phone);
+        const stablePhone = phoneSource?.contact_phone || null;
+        // Deteksi apakah contact_id ini adalah LID format
+        const stableLid = contactId.endsWith('@lid') ? contactId : null;
+
         const [summary, created] = await ChatSummary.findOrCreate({
             where: { store_wa_id: storeWaId, contact_id: contactId },
             defaults: { 
                 summary: summaryText, 
                 contact_name: name,
+                contact_phone: stablePhone,
+                contact_lid: stableLid,
                 last_updated: new Date() 
             }
         });
@@ -914,11 +922,13 @@ async function _updateConversationSummary(storeWaId, contactId, senderName) {
         if (!created) {
             summary.summary = summaryText;
             summary.contact_name = name;
+            if (stablePhone) summary.contact_phone = stablePhone;  // Update hanya jika ada
+            if (stableLid)   summary.contact_lid   = stableLid;
             summary.last_updated = new Date();
             await summary.save();
         }
         
-        logger.info(`[${storeWaId}] Rekap Chat [${name}] Berhasil Diperbarui.`);
+        logger.info(`[${storeWaId}] Rekap Chat [${name}${stablePhone ? ' | ' + stablePhone : ''}] Berhasil Diperbarui.`);
 
         // TAHAP 5: Jadwalkan Follow-Up jika belum closing (setelah rekap terupdate)
         await _scheduleFollowUpIfNeeded(storeWaId, contactId, name, summaryText);
