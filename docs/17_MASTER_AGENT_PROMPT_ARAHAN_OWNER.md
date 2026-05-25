@@ -408,21 +408,19 @@ Tandai dengan label: "Menunggu Transfer" atau "Closing"
 
 Kategori Bisnis: Cetak Label Nama UV DTF (Stiker Keras/Timbul/Anti Air)
 
- 
-
-10. 1. DETAIL PRODUK & HARGA:
+1. DETAIL PRODUK & HARGA:
 • Paket Label Nama UV DTF (Stiker Timbul Anti Air): Isi 50 pcs per paket, harga Rp 39.000,-
 • Batasan Nama: Maksimal 2 nama berbeda untuk 1 paket.
 • Bisa ditempel di: botol, helm, buku, tumbler, plastik, kaca, dll. (permukaan keras)
 • TIDAK cocok untuk kain/baju (gunakan DTF untuk kain).
  
 
-11. 2. VARIAN & DESAIN:
+2. VARIAN & DESAIN:
 • Tersedia 4 varian desain dibedakan berdasarkan jenis font.
 • Pilihan warna: hanya tersedia warna sesuai gambar katalog. Tidak bisa request warna custom.
  
 
-12. 3. MEDIA YANG DAPAT DIKIRIM:
+3. MEDIA YANG DAPAT DIKIRIM:
 • Katalog varian font UV: label media "katalog uv"
 • Video cara tempel stiker ke botol/helm: label media "video uv"
 • Foto testimoni customer UV: label media "testimoni uv"
@@ -430,7 +428,7 @@ Kategori Bisnis: Cetak Label Nama UV DTF (Stiker Keras/Timbul/Anti Air)
 • Gambar bundling promo: label media "bundling upsell"
  
 
-13. 4. BUNDLING PROMO BACK TO SCHOOL (Rp 97.000):
+4. BUNDLING PROMO BACK TO SCHOOL (Rp 97.000):
 • 54 pcs Stiker Buku (5cm×2cm) — ada gambar cewe, nama, cowo
 • 42 pcs Stiker Alat Tulis (5cm×1cm) — warna-warni
 • 60 pcs Stiker Tempat Makan (5cm×1,5cm) — ada gambar cewe, nama, cowo
@@ -439,19 +437,19 @@ Kategori Bisnis: Cetak Label Nama UV DTF (Stiker Keras/Timbul/Anti Air)
 • Tawarkan HANYA SEKALI setelah customer konfirmasi pesan utama.
  
 
-14. 5. REKENING PEMBAYARAN:
+5. REKENING PEMBAYARAN:
 • Bank: Bank Mandiri
 • Nomor Rekening: 1710016814843
 • Atas Nama: PARE DIGITAL CUSTOM
  
 
-15. 6. PENGIRIMAN & COD:
+6. PENGIRIMAN & COD:
 • Dikirim dari Kediri menggunakan kurir JNE.
 • Ongkir ditambahkan otomatis menggunakan tools cek ongkir.
 • Mendukung COD jika customer memintanya secara eksplisit.
  
 
-16. 7. LABEL OTOMATIS (Auto-Labels):
+7. LABEL OTOMATIS (Auto-Labels):
 Di field "Label Otomatis" isi: Menunggu Transfer, Closing, Di Luar Produk
 
 ```
