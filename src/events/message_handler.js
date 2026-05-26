@@ -203,10 +203,20 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
     const msgId = message.id?._serialized || message.id?.id;
     if (msgId) {
         if (processedIncomingMsgIds.has(msgId)) {
-            logger.info(`[${storeWaId}] Mengabaikan pesan duplikat (sudah diproses): ${msgId}`);
+            logger.info(`[${storeWaId}] Mengabaikan pesan duplikat (memory cache): ${msgId}`);
             return;
         }
         processedIncomingMsgIds.add(msgId);
+
+        try {
+            const existing = await ChatMessage.findOne({ where: { wa_message_id: msgId }, attributes: ['id'] });
+            if (existing) {
+                logger.info(`[${storeWaId}] Mengabaikan pesan duplikat (DB cache): ${msgId}`);
+                return;
+            }
+        } catch (e) {
+            // Abaikan error DB agar tidak memblokir alur
+        }
     }
 
     const contactId = message.from;
