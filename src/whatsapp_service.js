@@ -812,6 +812,7 @@ function cleanupFailedClient(storeWaId) {
 
 module.exports = {
     createWhatsAppClient,
+    trackBotSentMessage,
     setupEventListeners,
     getClients,
     sendManualMessage,
