@@ -207,7 +207,7 @@ Kategori Bisnis: Cetak Label Nama DTF (Baju/Kain/Setrika)
 • Mendukung COD jika customer memintanya secara eksplisit.
 
 7. LABEL OTOMATIS (Auto-Labels):
-Di field "Label Otomatis" isi: Menunggu Transfer, Closing, Di Luar Produk
+Di field "Label Otomatis" isi: COD, Menunggu Transfer, Closing, Di Luar Produk
 
 ```
 
@@ -413,5 +413,5 @@ Kategori Bisnis: Cetak Label Nama UV DTF (Stiker Keras/Timbul/Anti Air)
  
 
 7. LABEL OTOMATIS (Auto-Labels):
-Di field "Label Otomatis" isi: Menunggu Transfer, Closing, Di Luar Produk
+Di field "Label Otomatis" isi: COD, Menunggu Transfer, Closing, Di Luar Produk
 ```
