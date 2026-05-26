@@ -322,6 +322,23 @@ async function _triggerSummaryUpdate(storeWaId, contactId, senderName) {
                 }
             } catch (e) { /* ignore */ }
             logger.info(`[BotActivation] Rekap ${display} diperbarui (CS manual context).`);
+
+            // ── SMART LABEL ENGINE (Non-blocking) ──────────────────────────────
+            // Terapkan label WA Business + simpan ke DB dari rekap manual CS
+            try {
+                const { applyLabelsFromSummary } = require('./smart_label_service');
+                let waClient = null;
+                try {
+                    const { getActiveClient } = require('../whatsapp_service');
+                    waClient = getActiveClient(storeWaId);
+                } catch (_) {}
+                applyLabelsFromSummary(storeWaId, contactId, summaryText, waClient).catch(e =>
+                    logger.warn(`[BotActivation] Smart label manual update error: ${e.message}`)
+                );
+            } catch (labelErr) {
+                logger.warn(`[BotActivation] Smart label setup manual error: ${labelErr.message}`);
+            }
+
         } catch (e) {
             logger.warn(`[BotActivation] Gagal update rekap [${contactId}]: ${e.message}`);
         }

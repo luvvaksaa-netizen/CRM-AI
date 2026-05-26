@@ -107,6 +107,8 @@ const ChatSummary = sequelize.define('ChatSummary', {
   // Label WA aktif yang terpasang ke kontak ini (JSON string array, e.g. '["Closing","Hot Lead"]')
   // Diperbarui oleh smart_label_service setiap kali rekap diupdate.
   wa_labels:    { type: DataTypes.TEXT,   defaultValue: '[]' },
+  // Timestamps saat label diaplikasikan (JSON map: {"Closing": 1700000000})
+  label_timestamps: { type: DataTypes.TEXT, defaultValue: '{}' },
   last_updated: { type: DataTypes.DATE,   defaultValue: Sequelize.NOW }
 });
 
@@ -311,8 +313,10 @@ async function initDB() {
     await safeAddColumn('Stores', 'bot_phone', { type: DataTypes.STRING, allowNull: true });
     await safeAddColumn('MediaAssets', 'agent_id', { type: DataTypes.INTEGER, allowNull: true });
     await safeAddColumn('ChatSummaries', 'contact_name', { type: DataTypes.STRING, defaultValue: '' });
-    await safeAddColumn('ChatSummaries', 'contact_phone', { type: DataTypes.STRING, allowNull: true });
-    await safeAddColumn('ChatSummaries', 'contact_lid',   { type: DataTypes.STRING, allowNull: true });
+    await safeAddColumn('ChatSummaries', 'contact_phone', { type: DataTypes.STRING, defaultValue: null, allowNull: true });
+    await safeAddColumn('ChatSummaries', 'contact_lid', { type: DataTypes.STRING, defaultValue: null, allowNull: true });
+    await safeAddColumn('ChatSummaries', 'wa_labels', { type: DataTypes.TEXT, defaultValue: '[]' });
+    await safeAddColumn('ChatSummaries', 'label_timestamps', { type: DataTypes.TEXT, defaultValue: '{}' });
     await safeAddColumn('ChatMessages', 'wa_message_id', { type: DataTypes.STRING, allowNull: true });
     await safeAddColumn('ChatMessages', 'contact_display_name', { type: DataTypes.STRING, allowNull: true });
     await safeAddColumn('ChatMessages', 'contact_phone', { type: DataTypes.STRING, allowNull: true });
