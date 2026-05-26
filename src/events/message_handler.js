@@ -942,7 +942,7 @@ async function _updateConversationSummary(storeWaId, contactId, senderName) {
         // ── SMART LABEL ENGINE (Non-blocking) ──────────────────────────────
         // Deteksi STATUS dari rekap → terapkan label WA Business + simpan ke DB
         try {
-            const { applyLabelsFromSummary } = require('./services/smart_label_service');
+            const { applyLabelsFromSummary } = require('../services/smart_label_service');
             // Ambil WA client aktif untuk apply label ke WA real
             let waClient = null;
             try {
