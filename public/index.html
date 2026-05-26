@@ -563,6 +563,16 @@
                 <p>Live CRM Dashboard</p>
             </div>
             <div id="convSearch"><input type="text" placeholder="🔍  Cari pelanggan..." oninput="filterConv(this.value)"></div>
+            <div id="convFilter" class="d-flex w-100 p-2 border-bottom" style="background: #f8fafc; gap: 4px;">
+                <input type="radio" class="btn-check" name="chatFilter" id="filterAll" autocomplete="off" value="all" checked onchange="applyChatFilter()">
+                <label class="btn btn-sm btn-outline-secondary flex-fill rounded-pill" for="filterAll" style="font-size: 0.75rem;">Semua</label>
+                
+                <input type="radio" class="btn-check" name="chatFilter" id="filterCs" autocomplete="off" value="cs" onchange="applyChatFilter()">
+                <label class="btn btn-sm btn-outline-secondary flex-fill rounded-pill" for="filterCs" style="font-size: 0.75rem;">Ditangani CS</label>
+
+                <input type="radio" class="btn-check" name="chatFilter" id="filterBot" autocomplete="off" value="bot" onchange="applyChatFilter()">
+                <label class="btn btn-sm btn-outline-secondary flex-fill rounded-pill" for="filterBot" style="font-size: 0.75rem;">Ditangani Bot</label>
+            </div>
             <div id="convList"></div>
         </div>
 
@@ -1957,7 +1967,16 @@
         return m.format('DD MMM');
     }
 
-    function filterConv(q) { renderConvList(q); }
+    let currentChatFilter = 'all';
+
+    function applyChatFilter() {
+        const filterVal = document.querySelector('input[name="chatFilter"]:checked').value;
+        currentChatFilter = filterVal;
+        const searchVal = document.querySelector('#convSearch input').value;
+        filterConv(searchVal);
+    }
+
+    function filterConv(q) { renderConvList(q.trim()); }
 
     function renderConvList(filter = '') {
         const list = document.getElementById('convList');
@@ -1989,6 +2008,16 @@
         const contacts = Object.keys(map)
             .filter(c => {
                 if (showUnreadOnly && !unreadCounts[c]) return false;
+                
+                // --- CUSTOM FILTER LOGIC (Semua, CS, Bot) ---
+                if (currentChatFilter === 'cs') {
+                    // Hanya tampilkan jika kontak ini ada di pausedContacts (Toggle Bot = OFF)
+                    if (!pausedContacts.includes(c)) return false;
+                } else if (currentChatFilter === 'bot') {
+                    // Hanya tampilkan jika kontak ini TIDAK ada di pausedContacts (Toggle Bot = ON)
+                    if (pausedContacts.includes(c)) return false;
+                }
+
                 const last = map[c];
                 const name = getContactDisplayName(c, nameMap[c], last);
                 const searchText = [

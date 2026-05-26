@@ -669,6 +669,13 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
 
     // 9. KIRIM RESPONS
     try {
+        // TAHAP AKHIR: Cek status toggle satu kali lagi SEBELUM benar-benar mengirim.
+        // Jika CS mematikan toggle selama masa "delay mengetik" atau pemrosesan AI, BATALKAN PENGIRIMAN.
+        if (pausedContacts.has(`${storeWaId}_${contactId}`)) {
+            logger.warn(`[${storeWaId}] HARD STOP: Pengiriman pesan AI digugurkan karena Toggle dimatikan secara manual oleh CS untuk [${contactId}]`);
+            return;
+        }
+
         if (aiResult.type === RESPONSE_TYPE.MEDIA && aiResult.mediaList && aiResult.mediaList.length > 0) {
             const hasVideo = aiResult.mediaList.some(item => _isVideoMediaAsset(item.media));
             let textAlreadySent = false;
@@ -679,6 +686,11 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
             }
 
             for (let i = 0; i < aiResult.mediaList.length; i++) {
+                // Cek lagi tiap loop media (jika ada jeda)
+                if (pausedContacts.has(`${storeWaId}_${contactId}`)) {
+                    logger.warn(`[${storeWaId}] HARD STOP: Pengiriman media AI digugurkan di tengah jalan.`);
+                    return;
+                }
                 const item = aiResult.mediaList[i];
                 await _markTyping(chat, storeWaId, contactId, lastMessage.client);
                 await _sendMediaToChat(lastMessage, item.media, item.caption || "", storeWaId, contactId, agent);
@@ -689,9 +701,11 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
             }
 
             if (aiResult.content && !textAlreadySent) {
+                if (pausedContacts.has(`${storeWaId}_${contactId}`)) return;
                 await _sendTextBubbles(lastMessage, chat, storeWaId, contactId, outboundBubbles, agent.bot_name);
             }
         } else {
+            if (pausedContacts.has(`${storeWaId}_${contactId}`)) return;
             await _sendTextBubbles(lastMessage, chat, storeWaId, contactId, outboundBubbles, agent.bot_name);
         }
         logger.success(`[${storeWaId}] Sesi [${contactId}] — Dibalas via AI (${messages.length} pesan digabung).`);
