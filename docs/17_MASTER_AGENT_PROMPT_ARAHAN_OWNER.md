@@ -115,7 +115,7 @@ Nama Cetak : [Nama 1] | [Nama 2]
 Varian : [Varian yang dipilih]
 Jumlah : [Z] Paket
 Harga Produk : Rp 39.000
-Ongkir JNE ke [Kota] : Rp [Ongkir]
+Ongkir ke [Kota] : Rp [Ongkir]
 Total Yang Harus Dibayar : Rp [Total]
 Catatan : [Kosong / Catatan khusus]
 
@@ -202,7 +202,7 @@ Kategori Bisnis: Cetak Label Nama DTF (Baju/Kain/Setrika)
 • Atas Nama: PARE DIGITAL CUSTOM
 
 6. PENGIRIMAN & COD:
-• Dikirim dari Kediri menggunakan kurir JNE.
+• Dikirim dari Kediri menggunakan kurir Reguler (JNE / J&T - dipilihkan otomatis yang termurah).
 • Ongkir ditambahkan otomatis menggunakan tools cek ongkir.
 • Mendukung COD jika customer memintanya secara eksplisit.
 
@@ -315,7 +315,7 @@ Nama Cetak : [Nama 1] | [Nama 2]
 Varian : [Varian yang dipilih]
 Jumlah : [Z] Paket
 Harga Produk : Rp 39.000
-Ongkir JNE ke [Kota] : Rp [Ongkir]
+Ongkir ke [Kota] : Rp [Ongkir]
 Total Yang Harus Dibayar : Rp [Total]
 Catatan : [Kosong / Catatan khusus]
 
@@ -407,7 +407,7 @@ Kategori Bisnis: Cetak Label Nama UV DTF (Stiker Keras/Timbul/Anti Air)
  
 
 6. PENGIRIMAN & COD:
-• Dikirim dari Kediri menggunakan kurir JNE.
+• Dikirim dari Kediri menggunakan kurir Reguler (JNE / J&T - dipilihkan otomatis yang termurah).
 • Ongkir ditambahkan otomatis menggunakan tools cek ongkir.
 • Mendukung COD jika customer memintanya secara eksplisit.
  
