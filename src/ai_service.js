@@ -666,9 +666,8 @@ ${sysPrompt}
             }
 
             const toolNames = responseMessage.tool_calls.map(tc => tc.function.name);
-            const canFastReturnMedia = AI_MEDIA_FAST_REPLY_ENABLED &&
-                mediaResults.length > 0 &&
-                toolNames.every(name => name === 'kirim_media_katalog');
+            // Disable fast return media so AI always generates natural follow-up text after sending catalogs
+            const canFastReturnMedia = false;
             let finalContent = sanitizeTextOutput(responseMessage.content || "");
 
             if (needsSecondCall && !canFastReturnMedia) {
