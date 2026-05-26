@@ -112,6 +112,11 @@ const activeAIReplies = new Set();
 const queuedAIReplyBatches = new Map();
 const coalescedReplyLogAt = new Map();
 
+// In-memory cache to prevent processing the same WWebJS message multiple times
+const processedIncomingMsgIds = new Set();
+setInterval(() => processedIncomingMsgIds.clear(), 3600000); // Clear every hour
+
+
 function _scheduleAutoLabels(message, storeWaId, contactId, identity) {
     if (process.env.WAJS_AUTO_LABEL_ENABLED === 'false') return;
     if (!message?.client) return;
@@ -192,6 +197,17 @@ async function _extractQuotedContext(message, storeWaId) {
 
 async function handleMessage(message, storeWaId, shouldAIReply = true) {
     if (message.isStatus || shouldIgnoreIncomingChat(message.from)) return;
+
+    // FIREWALL 0: Duplicate Message Prevention
+    // WWebJS sometimes emits unread messages again upon reconnection.
+    const msgId = message.id?._serialized || message.id?.id;
+    if (msgId) {
+        if (processedIncomingMsgIds.has(msgId)) {
+            logger.info(`[${storeWaId}] Mengabaikan pesan duplikat (sudah diproses): ${msgId}`);
+            return;
+        }
+        processedIncomingMsgIds.add(msgId);
+    }
 
     const contactId = message.from;
     const body = message.body || "";
