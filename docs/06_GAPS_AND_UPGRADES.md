@@ -210,3 +210,5 @@ Customer kirim pesan
 - **FEATURE**: Mempertahankan logika 'Harga Normal + Markup Rp 3.000' secara diam-diam (seamless) ke pelanggan, memisahkan harga asli/diskon (margin murni toko) dari harga penawaran AI.
 
 - **FEATURE (Cheapest Option Only)**: AI kini hanya memilih dan menampilkan satu ekspedisi termurah (di antara JNE dan J&T) ke pelanggan untuk mencegah kebingungan dan mempermudah closing, sambil tetap menyembunyikan markup harga.
+
+- **FEATURE (Hidden Courier & Smart ETD)**: Menyembunyikan nama ekspedisi (menjadi 'Ekspedisi Reguler') untuk menyederhanakan komunikasi dengan pelanggan. Menyematkan aturan estimasi waktu khusus (ETD) untuk J&T berdasarkan region (Jawa: 3-4 hari, Bali: 4-5 hari, Sulawesi/Kalimantan: 1 minggu lebih).

@@ -12,7 +12,8 @@ Seluruh logika pengecekan ongkos kirim (ongkir) kini sepenuhnya dimigrasi dari l
 Selain itu, sistem telah dioptimasi dengan logika spesifik toko:
 1. **Origin Lock (Kecamatan Pare):** Titik asal pengiriman kini dikunci *hardcode* ke ID Kecamatan Pare (sesuai *screenshot* aplikasi Mengantar user) agar harga dasar (*base price*) JNE dan J&T akurat.
 2. **Silent Markup Logic:** AI diam-diam menambahkan ekstra Rp 3.000 (warisan strategi bisnis Komerce lama) di atas harga dasar yang diberikan Mengantar, sebelum menampilkannya ke pelanggan. Hal ini dirancang untuk mendulang cuan ekstra/margin profit untuk penjual.
-3. **Smart Cheapest Courier Filter:** Sistem kini secara otomatis membandingkan harga antara JNE dan J&T, lalu **hanya menampilkan 1 opsi ekspedisi termurah** ke *customer*. Ini mempermudah pengambilan keputusan bagi pelanggan (*less friction*) dan mempercepat proses *closing*.
+3. **Smart Cheapest Courier Filter:** Sistem kini secara otomatis membandingkan harga antara JNE dan J&T, lalu **hanya menampilkan 1 opsi ekspedisi termurah** ke *customer* dan menyembunyikan nama kurirnya (hanya disebut "Ekspedisi Reguler"). Ini mempermudah pengambilan keputusan bagi pelanggan (*less friction*) dan mempercepat proses *closing*.
+4. **Dynamic ETD Rules (Khusus J&T):** Mengingat API Mengantar tidak mengembalikan estimasi waktu (ETD) untuk J&T, sistem kini menyematkan aturan cerdas: Jawa (3-4 hari kerja), Bali (4-5 hari kerja), Sulawesi/Kalimantan (1 minggu lebih), dan rute lain (4-6 hari kerja).
 
 ### ✅ File Baru (Untracked)
 | File | Deskripsi |

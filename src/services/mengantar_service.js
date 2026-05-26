@@ -66,7 +66,8 @@ async function getDestinationId(keyword) {
         
         return {
             id: first._id,
-            label: label
+            label: label,
+            province: first.PROVINCE_NAME
         };
     } catch (error) {
         logger.error(`Error Mengantar Destination [${keyword}]: ${error.message}`);
@@ -125,7 +126,22 @@ async function getShippingCost(destinationCity, weight = 1) {
                 const basePrice = service.estimatedPrice || service.price || 0;
                 if (basePrice > 0) {
                     const price = basePrice + 3000; // Markup Rp 3000
-                    const etd = service.estimate_delivery || service.estimatedDate || '-';
+                    let etd = service.estimate_delivery || service.estimatedDate || '-';
+                    
+                    // Kustomisasi estimasi untuk J&T jika kosong/strip
+                    if (c.key === 'JT' && (etd === '-' || !etd)) {
+                        const prov = (destData.province || '').toUpperCase();
+                        if (prov.includes('JAWA') || prov.includes('DKI') || prov.includes('BANTEN') || prov.includes('YOGYAKARTA')) {
+                            etd = '3 - 4 hari kerja';
+                        } else if (prov.includes('BALI')) {
+                            etd = '4 - 5 hari kerja';
+                        } else if (prov.includes('SULAWESI') || prov.includes('KALIMANTAN')) {
+                            etd = '1 minggu lebih';
+                        } else {
+                            etd = '4 - 6 hari kerja';
+                        }
+                    }
+
                     availableCouriers.push({ name: c.name, price: price, etd: etd });
                 }
             }
@@ -140,7 +156,7 @@ async function getShippingCost(destinationCity, weight = 1) {
         const cheapest = availableCouriers[0];
 
         let reply = `Hore! Ini dia hasil cek ongkir terbaik dari Kediri ke ${destData.label} (${estWeight}kg):\n\n`;
-        reply += `✅ ${cheapest.name}\n   Harga: Rp ${cheapest.price.toLocaleString('id-ID')}\n   Estimasi: ${cheapest.etd}\n\n`;
+        reply += `✅ Ekspedisi Reguler\n   Harga: Rp ${cheapest.price.toLocaleString('id-ID')}\n   Estimasi: ${cheapest.etd}\n\n`;
         reply += "Bisa dibantu konfirmasi untuk lanjut pesanannya Kak? 😊";
         return reply;
 
