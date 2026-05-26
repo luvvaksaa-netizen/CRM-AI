@@ -1377,6 +1377,27 @@ function initDashboard(port = 3000) {
   // ============================================================
   // HUMAN OVERRIDE (Pause/Resume AI per Contact)
   // ============================================================
+
+  /**
+   * GET /api/stores/:storeId/paused-contacts
+   * Mengembalikan daftar semua contact_id yang di-pause di store ini.
+   * Digunakan oleh frontend untuk populasi pausedContactsSet agar filter CS/Bot akurat.
+   */
+  app.get('/api/stores/:storeId/paused-contacts', async (req, res) => {
+    try {
+      const { PausedContact } = require('../database/index');
+      const records = await PausedContact.findAll({
+        where: { store_wa_id: req.params.storeId },
+        attributes: ['contact_id']
+      });
+      // Kembalikan array sederhana: ["id1@c.us", "id2@lid", ...]
+      res.json(records.map(r => r.contact_id));
+    } catch (e) {
+      logger.error(`[Paused-Contacts API] ${e.message}`);
+      res.json([]); // Fallback aman: array kosong
+    }
+  });
+
   app.get('/api/stores/:storeId/contacts/:contactId/pause', async (req, res) => {
     try {
       const { PausedContact } = require('../database/index');

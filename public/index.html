@@ -1259,6 +1259,8 @@
     let selectedPurpose = 'both';
     let waLabels = [];
     let selectedReplyContext = null;
+    // Set kontak yang bot-nya dimatikan manual (di-pause) — diisi dari API saat switchStore
+    let pausedContactsSet = new Set();
 
     // ============================================================
     // INIT
@@ -1382,6 +1384,7 @@
 
         // Load data
         await loadChatHistory();
+        loadAllPausedContacts(); // Isi pausedContactsSet agar filter CS/Bot langsung akurat
         if (currentAgentId) loadMedia(); 
         else renderMediaGrid([]); // Clear if no agent
     }
@@ -2011,11 +2014,11 @@
                 
                 // --- CUSTOM FILTER LOGIC (Semua, CS, Bot) ---
                 if (currentChatFilter === 'cs') {
-                    // Hanya tampilkan jika kontak ini ada di pausedContacts (Toggle Bot = OFF)
-                    if (!pausedContacts.includes(c)) return false;
+                    // Hanya tampilkan jika kontak ini ada di pausedContactsSet (Toggle Bot = OFF)
+                    if (!pausedContactsSet.has(c)) return false;
                 } else if (currentChatFilter === 'bot') {
-                    // Hanya tampilkan jika kontak ini TIDAK ada di pausedContacts (Toggle Bot = ON)
-                    if (pausedContacts.includes(c)) return false;
+                    // Hanya tampilkan jika kontak ini TIDAK ada di pausedContactsSet (Toggle Bot = ON)
+                    if (pausedContactsSet.has(c)) return false;
                 }
 
                 const last = map[c];
@@ -2116,6 +2119,23 @@
     }
 
     // TAHAP 3: HUMAN OVERRIDE LOGIC
+    /**
+     * Ambil semua kontak yang di-pause untuk store aktif.
+     * Dipanggil saat switchStore dan setelah toggle berubah.
+     */
+    async function loadAllPausedContacts() {
+        if (!currentStoreId) return;
+        try {
+            const res = await fetch(`/api/stores/${currentStoreId}/paused-contacts`);
+            if (!res.ok) return;
+            const data = await res.json(); // Array of contact_id strings
+            pausedContactsSet = new Set(data);
+            renderConvList(); // Refresh filter UI
+        } catch (e) {
+            console.warn('[Filter] Gagal memuat daftar kontak yang dipause:', e.message);
+        }
+    }
+
     async function loadBotToggleState() {
         if (!currentStoreId || !currentContactId) return;
         try {
@@ -2151,8 +2171,15 @@
                 body: JSON.stringify({ isPaused })
             });
             if (res.ok) {
+                // Update pausedContactsSet secara optimistis agar filter langsung berubah
+                if (isPaused) {
+                    pausedContactsSet.add(currentContactId);
+                } else {
+                    pausedContactsSet.delete(currentContactId);
+                }
                 toast(isPaused ? 'AI ditidurkan. Silakan membalas.' : 'AI Aktif kembali memantau chat ini.', 'success');
-                loadBotToggleState(); // Refresh UI
+                loadBotToggleState(); // Refresh UI label
+                renderConvList();    // Refresh filter agar posisi chat berubah
             }
         } catch (e) {
             toast('Gagal mengatur status AI.', 'error');
