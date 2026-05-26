@@ -616,8 +616,11 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
                 try {
                     const args = JSON.parse(tc.function.arguments);
                     const { safeAddLabelByName } = require('../services/wajs_bridge');
-                    await safeAddLabelByName(lastMessage.client, contactId, args.label_name, undefined, storeWaId);
-                    logger.success(`[${storeWaId}] AI otomatis melabeli '${args.label_name}' untuk [${contactId}]`);
+                    const labelNames = args.label_names || [];
+                    for (const labelName of labelNames) {
+                        await safeAddLabelByName(lastMessage.client, contactId, labelName, undefined, storeWaId);
+                        logger.success(`[${storeWaId}] AI otomatis melabeli '${labelName}' untuk [${contactId}]`);
+                    }
                 } catch (e) {
                     logger.warn(`[${storeWaId}] AI gagal menambah label: ${e.message}`);
                 }

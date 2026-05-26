@@ -14,6 +14,9 @@ Selain itu, sistem telah dioptimasi dengan logika spesifik toko:
 2. **Silent Markup Logic:** AI diam-diam menambahkan ekstra Rp 3.000 (warisan strategi bisnis Komerce lama) di atas harga dasar yang diberikan Mengantar, sebelum menampilkannya ke pelanggan. Hal ini dirancang untuk mendulang cuan ekstra/margin profit untuk penjual.
 3. **Smart Cheapest Courier Filter:** Sistem kini secara otomatis membandingkan harga antara JNE dan J&T, lalu **hanya menampilkan 1 opsi ekspedisi termurah** ke *customer* dan menyembunyikan nama kurirnya (hanya disebut "Ekspedisi Reguler"). Ini mempermudah pengambilan keputusan bagi pelanggan (*less friction*) dan mempercepat proses *closing*.
 4. **Dynamic ETD Rules (Khusus J&T):** Mengingat API Mengantar tidak mengembalikan estimasi waktu (ETD) untuk J&T, sistem kini menyematkan aturan cerdas: Jawa (3-4 hari kerja), Bali (4-5 hari kerja), Sulawesi/Kalimantan (1 minggu lebih), dan rute lain (4-6 hari kerja).
+5. **Smart Rekap & Rigid Form**: AI sekarang menuntut form alamat yang sangat lengkap (RT/RW, Kode Pos) sebelum berani mengeluarkan rekap. Aturan karakter nama diperketat menjadi maksimal 8 karakter.
+6. **Multi-Label WA Support**: Tool internal `tambahkan_label_chat` di-upgrade untuk mendukung parameter array `label_names` sehingga AI bisa menyematkan banyak label sekaligus di UI Chat (contoh: "COD" dan "Closing").
+7. **COD Flow & Auto-Kill**: AI telah diinstruksikan bahwa COD adalah transaksi final. Sistem tidak akan lagi meminta "Menunggu Transfer". Setelah memberikan upsell *Paket Bundling Back to School*, AI otomatis akan mengeksekusi *tool* untuk mematikan dirinya sendiri guna menghindari follow-up yang tidak perlu.
 
 ### ✅ File Baru (Untracked)
 | File | Deskripsi |

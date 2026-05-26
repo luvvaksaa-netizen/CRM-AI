@@ -212,3 +212,5 @@ Customer kirim pesan
 - **FEATURE (Cheapest Option Only)**: AI kini hanya memilih dan menampilkan satu ekspedisi termurah (di antara JNE dan J&T) ke pelanggan untuk mencegah kebingungan dan mempermudah closing, sambil tetap menyembunyikan markup harga.
 
 - **FEATURE (Hidden Courier & Smart ETD)**: Menyembunyikan nama ekspedisi (menjadi 'Ekspedisi Reguler') untuk menyederhanakan komunikasi dengan pelanggan. Menyematkan aturan estimasi waktu khusus (ETD) untuk J&T berdasarkan region (Jawa: 3-4 hari, Bali: 4-5 hari, Sulawesi/Kalimantan: 1 minggu lebih).
+
+- **FEATURE (Smart Rekap & Multi-Label)**: AI diubah kebijakannya untuk memaksa meminta Kode Pos sebelum merekap. Aturan limitasi karakter nama di-enforce (Maks 8 huruf untuk DTF & UV). Alur COD diubah menjadi CLEAR (tidak bertanya transfer). Tool \	ambahkan_label_chat\ di-upgrade untuk mendukung multi-label array \label_names\. Fitur Auto-Kill diaktifkan setelah penawaran upsell selesai.

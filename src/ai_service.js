@@ -428,13 +428,16 @@ Kamu adalah CS yang sangat cerdas. Berikut panduan untuk menangani berbagai situ
                     parameters: {
                         type: "object",
                         properties: {
-                            label_name: {
-                                type: "string",
-                                enum: configuredLabels,
-                                description: "Nama label persis dari daftar label otomatis agen."
+                            label_names: {
+                                type: "array",
+                                items: {
+                                    type: "string",
+                                    enum: configuredLabels
+                                },
+                                description: "Daftar nama label persis dari konfigurasi agen (bisa lebih dari satu)."
                             }
                         },
-                        required: ["label_name"]
+                        required: ["label_names"]
                     }
                 }
             });
@@ -581,7 +584,7 @@ ${sysPrompt}
 
                     if (toolCall.function.name === 'tambahkan_label_chat') {
                         const args = JSON.parse(toolCall.function.arguments);
-                        messages.push({ tool_call_id: toolCall.id, role: "tool", name: "tambahkan_label_chat", content: `Label '${args.label_name}' diteruskan ke sistem.` });
+                        messages.push({ tool_call_id: toolCall.id, role: "tool", name: "tambahkan_label_chat", content: `Label '${args.label_names.join(', ')}' diteruskan ke sistem.` });
                         // Execution of the actual label happens downstream (in message_handler)
                         needsSecondCall = true;
                     }
