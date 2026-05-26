@@ -664,7 +664,7 @@ ${sysPrompt}
                         }
 
                         if (allowedMedia.length > 0) {
-                            mediaResults.push(...allowedMedia.map(m => ({ media: m, caption: args.caption || "" })));
+                            mediaResults.push(...allowedMedia.map((m, idx) => ({ media: m, caption: idx === 0 ? (args.caption || "") : "" })));
                             messages.push({ tool_call_id: toolCall.id, role: "tool", name: "kirim_media_katalog", content: `${allowedMedia.length} media berhasil dikirim.` });
                             needsSecondCall = true;
                         } else {
@@ -790,7 +790,7 @@ async function generateChatSummary(history = []) {
         ).join('\n');
 
         const payload = {
-            model: 'llama3-8b-8192', // Gunakan model 8B untuk summary agar tidak terkena limit TPM 6000 (Free Tier 70B)
+            model: 'llama-3.1-8b-instant', // Gunakan model 8B terbaru agar terhindar dari limit TPM 6000 (Free Tier 70B)
             messages: [
                 { role: "system", content: `Tugasmu membuat REKAP DATA CUSTOMER dalam format KEY-VALUE yang terstruktur.
 Ekstrak SEMUA informasi yang sudah disebutkan customer.
