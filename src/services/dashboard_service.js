@@ -760,7 +760,10 @@ function initDashboard(port = 3000) {
   });
 
   /**
-et('/api/analytics/followups', async (req, res) => {
+   * GET /api/analytics/followups
+   * Follow-up stats semua store, dengan filter opsional per ?store_wa_id=xxx
+   */
+  app.get('/api/analytics/followups', async (req, res) => {
     try {
       const { FollowUp, Store } = require('../database/index');
       const { store_wa_id } = req.query;
