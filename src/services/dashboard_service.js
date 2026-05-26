@@ -612,32 +612,39 @@ function initDashboard(port = 3000) {
 
       // Per-store breakdown
       let perStore = [];
-      if (!store_wa_id) {
-        const stores = await Store.findAll({ attributes: ['wa_id', 'name'] });
-        for (const store of stores) {
-          const storeSum = allSummaries.filter(s => s.store_wa_id === store.wa_id);
-          let storeTotalLeads = 0, storeClosing = 0;
-          for (const s of storeSum) {
-            if (new Date(s.createdAt).getTime() >= sDateMs && new Date(s.createdAt).getTime() <= eDateMs) storeTotalLeads++;
-            const status = detectStatus(s);
-            if (status === 'closing') {
-              let ts = {};
-              try { ts = JSON.parse(s.label_timestamps || '{}'); } catch(_){}
-              const lt = ts['Closing'] || new Date(s.last_updated || s.createdAt).getTime();
-              if (lt >= sDateMs && lt <= eDateMs) storeClosing++;
-            }
+      const storesToProcess = store_wa_id 
+        ? await Store.findAll({ where: { wa_id: store_wa_id }, attributes: ['wa_id', 'name'] })
+        : await Store.findAll({ attributes: ['wa_id', 'name'] });
+
+      for (const store of storesToProcess) {
+        // If a specific store is filtered, allSummaries already contains only that store's summaries
+        const storeSum = store_wa_id ? allSummaries : allSummaries.filter(s => s.store_wa_id === store.wa_id);
+        let storeTotalLeads = 0, storeClosing = 0;
+        for (const s of storeSum) {
+          if (new Date(s.createdAt).getTime() >= sDateMs && new Date(s.createdAt).getTime() <= eDateMs) storeTotalLeads++;
+          const status = detectStatus(s);
+          if (status === 'closing') {
+            let ts = {};
+            try { ts = JSON.parse(s.label_timestamps || '{}'); } catch(_){}
+            const lt = ts['Closing'] || new Date(s.last_updated || s.createdAt).getTime();
+            if (lt >= sDateMs && lt <= eDateMs) storeClosing++;
           }
-          const [storeAi, storeCs] = await Promise.all([
-            ChatMessage.count({ where: { store_wa_id: store.wa_id, is_from_me: true, sender_name: { [Op.not]: 'CS (dari HP)' }, ...msgWhere } }),
-            ChatMessage.count({ where: { store_wa_id: store.wa_id, is_from_me: true, sender_name: 'CS (dari HP)', ...msgWhere } })
-          ]);
-          perStore.push({
-            wa_id: store.wa_id, name: store.name,
-            totalLeads: storeTotalLeads, closing: storeClosing,
-            closingRate: storeTotalLeads > 0 ? Math.round((storeClosing / storeTotalLeads) * 100) : 0,
-            aiReplies: storeAi, csReplies: storeCs
-          });
         }
+        
+        // Count messages for this store within the date range
+        const storeAi = await ChatMessage.count({ 
+            where: { store_wa_id: store.wa_id, is_from_me: true, sender_name: { [Op.not]: 'CS (dari HP)' }, ...msgWhere } 
+        });
+        const storeCs = await ChatMessage.count({ 
+            where: { store_wa_id: store.wa_id, is_from_me: true, sender_name: 'CS (dari HP)', ...msgWhere } 
+        });
+
+        perStore.push({
+          wa_id: store.wa_id, name: store.name,
+          totalLeads: storeTotalLeads, closing: storeClosing,
+          closingRate: storeTotalLeads > 0 ? Math.round((storeClosing / storeTotalLeads) * 100) : 0,
+          aiReplies: storeAi, csReplies: storeCs
+        });
       }
 
       // Top 10 closing terbaru

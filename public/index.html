@@ -3354,17 +3354,21 @@
         }, 300);
     }
 
+    // qs disimpan sebagai variabel module-level — JANGAN embed di onclick HTML (& akan rusak)
+    let _currentAnalyticsQs = '';
+
     function renderFunnel(statusCounts, totalLeads, qs) {
+        _currentAnalyticsQs = qs; // Simpan untuk dipakai saat klik funnel
         const container = document.getElementById('statusFunnelBars');
         container.innerHTML = '';
 
         const stages = [
-            { id: 'closing', label: 'Closing / Selesai', count: statusCounts.closing || 0, color: '#10b981' },
-            { id: 'menunggu_transfer', label: 'Menunggu Transfer', count: statusCounts.menunggu_transfer || 0, color: '#f59e0b' },
-            { id: 'negosiasi', label: 'Hot Lead / Negosiasi', count: statusCounts.negosiasi || 0, color: '#ef4444' },
-            { id: 'menunggu_rekap', label: 'Menunggu Rekap/Alamat', count: (statusCounts.menunggu_rekap || 0) + (statusCounts.menunggu_alamat || 0), color: '#3b82f6' },
-            { id: 'gali_kebutuhan', label: 'Tanya-tanya (Aktif)', count: statusCounts.gali_kebutuhan || 0, color: '#6366f1' },
-            { id: 'baru_masuk', label: 'Baru Masuk', count: totalLeads, color: '#94a3b8' }
+            { id: 'closing',            label: 'Closing / Selesai',       count: statusCounts.closing || 0, color: '#10b981' },
+            { id: 'menunggu_transfer',  label: 'Menunggu Transfer',        count: statusCounts.menunggu_transfer || 0, color: '#f59e0b' },
+            { id: 'negosiasi',          label: 'Hot Lead / Negosiasi',     count: statusCounts.negosiasi || 0, color: '#ef4444' },
+            { id: 'menunggu_rekap',     label: 'Menunggu Rekap/Alamat',    count: (statusCounts.menunggu_rekap || 0) + (statusCounts.menunggu_alamat || 0), color: '#3b82f6' },
+            { id: 'gali_kebutuhan',     label: 'Tanya-tanya (Aktif)',      count: statusCounts.gali_kebutuhan || 0, color: '#6366f1' },
+            { id: 'baru_masuk',         label: 'Baru Masuk',               count: totalLeads, color: '#94a3b8' }
         ];
 
         let maxCount = Math.max(...stages.map(s => s.count));
@@ -3373,20 +3377,28 @@
         stages.forEach(stage => {
             const percent = Math.round((stage.count / maxCount) * 100);
             const actualPercent = totalLeads > 0 ? ((stage.count / totalLeads) * 100).toFixed(1) : 0;
-            
-            container.innerHTML += `
-                <div class="mb-3" style="cursor: pointer; transition: transform 0.2s;" onclick="viewAnalyticsLeads('${stage.id}', '${qs}')" onmouseover="this.style.transform='translateX(5px)'" onmouseout="this.style.transform='none'">
-                    <div class="d-flex justify-content-between mb-1" style="font-size:0.85rem">
-                        <span class="fw-semibold text-dark">${stage.label}</span>
-                        <span class="text-muted fw-bold">${stage.count} <span style="font-size:0.75rem" class="fw-normal">(${actualPercent}%)</span></span>
-                    </div>
-                    <div class="progress rounded-pill bg-light" style="height: 8px;">
-                        <div class="progress-bar rounded-pill" role="progressbar" 
-                             style="width: ${percent}%; background-color: ${stage.color};" 
-                             aria-valuenow="${percent}" aria-valuemin="0" aria-valuemax="100"></div>
-                    </div>
+
+            const wrapper = document.createElement('div');
+            wrapper.className = 'mb-3';
+            wrapper.style.cssText = 'cursor:pointer;transition:transform 0.2s;';
+            // Simpan label id di data attribute — TIDAK di onclick string
+            wrapper.dataset.stageId = stage.id;
+            wrapper.addEventListener('mouseover', () => wrapper.style.transform = 'translateX(5px)');
+            wrapper.addEventListener('mouseout', () => wrapper.style.transform = 'none');
+            wrapper.addEventListener('click', () => viewAnalyticsLeads(stage.id, _currentAnalyticsQs));
+
+            wrapper.innerHTML = `
+                <div class="d-flex justify-content-between mb-1" style="font-size:0.85rem">
+                    <span class="fw-semibold text-dark">${escapeHtml(stage.label)}</span>
+                    <span class="text-muted fw-bold">${stage.count} <span style="font-size:0.75rem" class="fw-normal">(${actualPercent}%)</span></span>
+                </div>
+                <div class="progress rounded-pill bg-light" style="height:8px;">
+                    <div class="progress-bar rounded-pill" role="progressbar"
+                         style="width:${percent}%;background-color:${stage.color};"
+                         aria-valuenow="${percent}" aria-valuemin="0" aria-valuemax="100"></div>
                 </div>
             `;
+            container.appendChild(wrapper);
         });
     }
 
