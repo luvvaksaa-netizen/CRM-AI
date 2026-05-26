@@ -3244,6 +3244,29 @@
             });
     }
 
+    function formatTimeAgo(dateString) {
+        if (!dateString) return '-';
+        const date = new Date(dateString);
+        const now = new Date();
+        const seconds = Math.floor((now - date) / 1000);
+        
+        let interval = seconds / 31536000;
+        if (interval > 1) return Math.floor(interval) + " tahun lalu";
+        interval = seconds / 2592000;
+        if (interval > 1) return Math.floor(interval) + " bulan lalu";
+        interval = seconds / 86400;
+        if (interval > 1) {
+            const days = Math.floor(interval);
+            if (days === 1) return "Kemarin";
+            return days + " hari lalu";
+        }
+        interval = seconds / 3600;
+        if (interval > 1) return Math.floor(interval) + " jam lalu";
+        interval = seconds / 60;
+        if (interval > 1) return Math.floor(interval) + " menit lalu";
+        return Math.floor(seconds) + " detik lalu";
+    }
+
     function viewAnalyticsLeads(label, qs) {
         const modal = new bootstrap.Modal(document.getElementById('analyticsLeadsModal'));
         modal.show();
