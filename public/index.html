@@ -1556,6 +1556,7 @@
             const div = document.createElement('div');
             div.className = 'card-glass p-4';
             div.style.position = 'relative';
+            div.setAttribute('data-contact-id', s.contact_id || '');
             
             const displayName = getContactDisplayName(s.contact_id, s.contact_name, s);
             const initial = (displayName.replace(/[^a-z0-9]/gi, '').substring(0, 2) || 'WA').toUpperCase();
@@ -3052,7 +3053,7 @@
         if (id === 'agents') loadAgents();
         if (id === 'media')  loadMedia();
         if (id === 'summaries') loadSummaries();
-        if (id === 'analytics') loadAnalytics();
+        if (id === 'analytics') { populateAnalyticsStoreFilter(); loadAnalytics(); }
         if (id === 'followups') {
             // Populate store filter untuk followup jika belum
             const selFilter = document.getElementById('followupStoreFilter');
@@ -3164,41 +3165,54 @@
         _skipPushState = false;
     });
 
+    function populateAnalyticsStoreFilter() {
+        const sel = document.getElementById('analyticsStoreFilter');
+        if (!sel || sel.options.length > 1) return; // Sudah diisi sebelumnya
+        fetch('/api/stores')
+            .then(r => r.json())
+            .then(list => {
+                (Array.isArray(list) ? list : []).forEach(s => {
+                    const opt = document.createElement('option');
+                    opt.value = s.wa_id;
+                    opt.textContent = s.name || s.wa_id;
+                    sel.appendChild(opt);
+                });
+            })
+            .catch(() => {});
+    }
+
     function loadAnalytics() {
+        populateAnalyticsStoreFilter();
+
         const btn = document.querySelector('button[onclick="loadAnalytics()"]');
         if (btn) btn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Loading...';
-        
-        const storeId = document.getElementById('analyticsStoreFilter')?.value;
+
+        const storeId    = document.getElementById('analyticsStoreFilter')?.value;
         const dateFilter = document.getElementById('analyticsDateFilter')?.value;
-        
+
         const query = [];
-        if (storeId) query.push('store_wa_id=' + storeId);
-        
+        if (storeId) query.push('store_wa_id=' + encodeURIComponent(storeId));
+
         if (dateFilter) {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
-            
             let start, end;
             if (dateFilter === 'today') {
                 start = today;
-                end = new Date(today);
-                end.setDate(end.getDate() + 1);
+                end = new Date(today); end.setDate(end.getDate() + 1);
             } else if (dateFilter === 'yesterday') {
-                start = new Date(today);
-                start.setDate(start.getDate() - 1);
+                start = new Date(today); start.setDate(start.getDate() - 1);
                 end = today;
             } else if (dateFilter === '7days') {
-                start = new Date(today);
-                start.setDate(start.getDate() - 7);
+                start = new Date(today); start.setDate(start.getDate() - 7);
                 end = new Date();
             }
-            
             if (start && end) {
                 query.push('startDate=' + start.toISOString());
                 query.push('endDate=' + end.toISOString());
             }
         }
-        
+
         const qs = query.length ? '?' + query.join('&') : '';
 
         fetch('/api/analytics/overview' + qs)
@@ -3208,23 +3222,16 @@
                 if (data.error) throw new Error(data.error);
 
                 document.getElementById('kpi-total-leads').textContent = data.summary.totalLeads;
-                
+
                 const closingEl = document.getElementById('kpi-closing-rate');
                 closingEl.textContent = data.summary.closingRate + '%';
-                if (data.summary.closingRate > 0) {
-                    closingEl.classList.remove('text-muted');
-                    closingEl.classList.add('text-success');
-                } else {
-                    closingEl.classList.add('text-muted');
-                    closingEl.classList.remove('text-success');
-                }
-                
+                closingEl.classList.toggle('text-success', data.summary.closingRate > 0);
+                closingEl.classList.toggle('text-muted', data.summary.closingRate === 0);
+
                 document.getElementById('kpi-ai-handling').textContent = data.summary.aiHandlingRate + '%';
-                document.getElementById('kpi-ai-vs-cs').textContent = `AI ${data.summary.aiReplies} | CS ${data.summary.csReplies}`;
-                
-                const wt = data.statusBreakdown.menunggu_transfer || 0;
-                document.getElementById('kpi-transfer-pending').textContent = wt;
-                
+                document.getElementById('kpi-ai-vs-cs').textContent    = `AI ${data.summary.aiReplies} | CS ${data.summary.csReplies}`;
+                document.getElementById('kpi-transfer-pending').textContent = data.statusBreakdown.menunggu_transfer || 0;
+
                 renderFunnel(data.statusBreakdown, data.summary.totalLeads, qs);
                 renderTrendChart(data.trend);
                 renderStoreAnalyticsTable(data.perStore);
@@ -3232,18 +3239,21 @@
             })
             .catch(err => {
                 if (btn) btn.innerHTML = '<i class="fas fa-sync-alt me-2"></i>Refresh';
-                toast('Gagal memuat data Analytics.', 'error');
-                console.error(err);
+                toast('Gagal memuat data Analytics: ' + err.message, 'error');
+                console.error('[Analytics]', err);
             });
     }
 
     function viewAnalyticsLeads(label, qs) {
         const modal = new bootstrap.Modal(document.getElementById('analyticsLeadsModal'));
         modal.show();
-        
-        document.getElementById('analyticsLeadsLoading').style.display = 'block';
-        document.getElementById('analyticsLeadsTable').style.display = 'none';
-        
+
+        const loading = document.getElementById('analyticsLeadsLoading');
+        const table   = document.getElementById('analyticsLeadsTable');
+        loading.style.display = 'block';
+        loading.innerHTML = '<div class="text-center text-muted py-4"><i class="fas fa-spinner fa-spin fa-2x"></i><p class="mt-2">Memuat data...</p></div>';
+        table.style.display = 'none';
+
         const labelMap = {
             'closing': 'Closing / Selesai',
             'menunggu_transfer': 'Menunggu Transfer',
@@ -3253,56 +3263,95 @@
             'gali_kebutuhan': 'Tanya-tanya (Aktif)',
             'baru_masuk': 'Baru Masuk'
         };
-        
+
         document.getElementById('analyticsLeadsModalTitle').textContent = 'Daftar Kontak: ' + (labelMap[label] || label);
-        
-        const q = qs ? qs + '&label=' + label : '?label=' + label;
-        
-        fetch('/api/analytics/leads' + q)
+
+        // Bangun query string — gabungkan filter yang sudah ada dengan label
+        const existingParams = new URLSearchParams(qs.replace(/^\?/, ''));
+        existingParams.set('label', label);
+        const finalQs = '?' + existingParams.toString();
+
+        fetch('/api/analytics/leads' + finalQs)
             .then(res => res.json())
             .then(data => {
-                document.getElementById('analyticsLeadsLoading').style.display = 'none';
-                document.getElementById('analyticsLeadsTable').style.display = 'table';
-                
+                loading.style.display = 'none';
+                table.style.display   = 'table';
+
                 const tbody = document.getElementById('analyticsLeadsBody');
                 tbody.innerHTML = '';
-                
-                if (data.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted py-4">Tidak ada data</td></tr>';
+
+                if (!Array.isArray(data) || data.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted py-4">
+                        <i class="fas fa-inbox fa-2x d-block mb-2 text-secondary"></i>
+                        Tidak ada data untuk kategori ini
+                    </td></tr>`;
                     return;
                 }
-                
+
                 data.forEach(lead => {
+                    const phone = lead.contact_phone
+                        ? '+' + String(lead.contact_phone).replace(/\D/g, '')
+                        : (lead.contact_id || '').split('@')[0] || '-';
+
                     const tr = document.createElement('tr');
                     tr.innerHTML = `
                         <td class="ps-4">
-                            <div class="fw-bold text-dark">${lead.contact_name}</div>
-                            <div class="small text-muted">${lead.contact_phone ? '+' + lead.contact_phone : lead.contact_id}</div>
+                            <div class="fw-bold text-dark">${escapeHtml(lead.contact_name || 'Pelanggan')}</div>
+                            <div class="small text-muted">${escapeHtml(phone)}</div>
                         </td>
-                        <td><span class="badge bg-light text-dark border">${lead.store_name}</span></td>
+                        <td><span class="badge bg-light text-dark border">${escapeHtml(lead.store_name || '-')}</span></td>
                         <td><div class="small text-muted"><i class="far fa-clock me-1"></i>${formatTimeAgo(lead.last_updated)}</div></td>
                         <td class="text-end pe-4">
-                            <button class="btn btn-sm btn-primary rounded-pill px-3" onclick="openChatFromAnalytics('${lead.store_wa_id}', '${lead.contact_id}')">Chat</button>
+                            <button class="btn btn-sm btn-primary rounded-pill px-3"
+                                onclick="openChatFromAnalytics('${escapeHtml(lead.store_wa_id)}', '${escapeHtml(lead.contact_id)}')">
+                                <i class="fas fa-comments me-1"></i>Chat
+                            </button>
                         </td>
                     `;
                     tbody.appendChild(tr);
                 });
             })
             .catch(err => {
-                document.getElementById('analyticsLeadsLoading').innerHTML = '<div class="text-danger">Gagal memuat data</div>';
-                console.error(err);
+                loading.innerHTML = `<div class="text-danger text-center py-4"><i class="fas fa-exclamation-circle fa-2x d-block mb-2"></i>Gagal memuat data</div>`;
+                console.error('[Analytics Leads]', err);
             });
     }
 
     function openChatFromAnalytics(storeId, contactId) {
-        bootstrap.Modal.getInstance(document.getElementById('analyticsLeadsModal')).hide();
-        document.getElementById('summaryStoreFilter').value = storeId;
+        // Tutup modal analytics
+        const modalEl = document.getElementById('analyticsLeadsModal');
+        const modalInstance = bootstrap.Modal.getInstance(modalEl);
+        if (modalInstance) modalInstance.hide();
+
+        // Pilih toko yang benar di sidebar store (klik ikon store-nya)
+        const storeBtn = document.querySelector(`.store-item[data-wa-id="${storeId}"]`);
+        if (storeBtn) storeBtn.click();
+
+        // Set filter di halaman Summaries
+        const summaryFilter = document.getElementById('summaryStoreFilter');
+        if (summaryFilter) {
+            summaryFilter.value = storeId;
+        }
+
+        // Navigasi ke halaman Summaries
         switchView('summaries');
-        setTimeout(() => {
-            const chatCard = document.querySelector(`div[onclick*="${contactId}"]`);
-            if (chatCard) chatCard.click();
-            else toast('Mencari chat...', 'info');
-        }, 500);
+
+        // Tunggu summaries dimuat lalu cari kontaknya
+        let attempts = 0;
+        const MAX_ATTEMPTS = 20;
+        const tryClick = setInterval(() => {
+            attempts++;
+            // Cari kartu summary yang mengandung contact_id ini
+            const card = document.querySelector(`[data-contact-id="${CSS.escape(contactId)}"]`);
+            if (card) {
+                clearInterval(tryClick);
+                card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                card.click();
+            } else if (attempts >= MAX_ATTEMPTS) {
+                clearInterval(tryClick);
+                toast('Chat ditemukan di Summaries. Silakan cari manual.', 'info');
+            }
+        }, 300);
     }
 
     function renderFunnel(statusCounts, totalLeads, qs) {

@@ -134,47 +134,26 @@ function buildFastMediaReply(agent, mediaResults = [], interactionCount = 1) {
     return 'Ini ya kak 😊\nMau pilih yang mana kak?';
 }
 
-function splitLongBubble(text, maxWords = NORMAL_BUBBLE_MAX_WORDS) {
-    const words = String(text || '').trim().split(/\s+/).filter(Boolean);
-    if (words.length <= maxWords) return [String(text || '').trim()].filter(Boolean);
-
-    const chunks = [];
-    for (let i = 0; i < words.length; i += maxWords) {
-        chunks.push(words.slice(i, i + maxWords).join(' '));
-    }
-    return chunks;
-}
-
-function prepareOutboundBubbles(text, maxWords = NORMAL_BUBBLE_MAX_WORDS) {
+/**
+ * Memecah teks menjadi bubble-bubble WhatsApp.
+ * Hanya split di baris baru (\n) — TIDAK memotong kalimat per kata.
+ * Tujuan: AI bebas menulis kalimat panjang & natural.
+ * Rekap/invoice tetap utuh dalam 1 bubble agar tidak terpotong.
+ */
+function prepareOutboundBubbles(text) {
     const clean = sanitizeTextOutput(text);
     if (!clean) return [];
 
-    // Rekap/order/payment perlu tetap utuh supaya data transaksi tidak hilang.
+    // Rekap/order/payment: kirim sebagai 1 blok utuh, jangan dipecah
     if (isStructuredReply(clean)) return [clean];
 
-    const parts = clean
+    // Split hanya berdasarkan baris baru — biarkan AI menulis secara natural
+    const bubbles = clean
         .split(/\n+/)
         .map(part => part.trim())
         .filter(Boolean);
 
-    const bubbles = [];
-    for (const part of parts.length ? parts : [clean]) {
-        if (countWords(part) <= maxWords) {
-            bubbles.push(part);
-            continue;
-        }
-
-        const sentences = part
-            .split(/(?<=[.!?])\s+/)
-            .map(sentence => sentence.trim())
-            .filter(Boolean);
-
-        for (const sentence of sentences.length ? sentences : [part]) {
-            bubbles.push(...splitLongBubble(sentence, maxWords));
-        }
-    }
-
-    return bubbles;
+    return bubbles.length > 0 ? bubbles : [clean];
 }
 
 // ══════════════════════════════════════════════════════════════════

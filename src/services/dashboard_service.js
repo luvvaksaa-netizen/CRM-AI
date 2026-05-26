@@ -444,15 +444,21 @@ function initDashboard(port = 3000) {
         order: [['last_updated', 'DESC']]
       });
 
-      // Filter: hanya kontak yang sudah transfer / closing / selesai
-      const CLOSING_STATUSES = ['menunggu transfer', 'closing', 'selesai'];
+      // Hybrid detection: wa_labels (prioritas) → regex pada teks summary (fallback)
+      const CLOSING_LABEL_NAMES = ['Closing', 'Menunggu Transfer'];
+      const CLOSING_STATUS_RE   = /status:\s*(closing|selesai|menunggu\s*transfer)/i;
+
       const closingList = allSummaries.filter(s => {
-        const summaryLower = (s.summary || '').toLowerCase();
-        return CLOSING_STATUSES.some(st => summaryLower.includes(`status: ${st}`));
+        try {
+          const labels = JSON.parse(s.wa_labels || '[]');
+          if (labels.some(l => CLOSING_LABEL_NAMES.includes(l))) return true;
+        } catch(_) {}
+        return CLOSING_STATUS_RE.test(s.summary || '');
       });
 
       res.json(closingList);
     } catch (e) {
+
       res.status(500).json({ error: e.message });
     }
   });
