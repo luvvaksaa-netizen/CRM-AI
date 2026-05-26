@@ -691,7 +691,9 @@ ${sysPrompt}
                     model: config.GROQ_MODEL_TEXT, 
                     messages: [
                         ...messages,
-                        { role: "system", content: "PENGINGAT TEKNIS: Jangan tulis link/tag media/ID/timestamp. Untuk chat normal, pisahkan bubble dengan newline dan maksimal 10 kata per bubble. Untuk rekap/order/payment, tulis lengkap dan rapi." }
+                        { role: "system", content: "PENGINGAT TEKNIS: Jangan tulis link/tag media/ID/timestamp. Untuk chat normal, pisahkan bubble dengan newline dan maksimal 10 kata per bubble. Untuk rekap/order/payment, tulis lengkap dan rapi." },
+                        responseMessage,
+                        ...toolResponses
                     ],
                     temperature: 0.45
                 };
@@ -787,8 +789,8 @@ async function generateChatSummary(history = []) {
             `${h.is_from_me ? 'Admin' : 'Pelanggan'}: ${h.body || h.content}`
         ).join('\n');
 
-        const response = await openai.chat.completions.create({
-            model: config.MODEL_NAME || "gpt-4o-mini",
+        const payload = {
+            model: 'llama3-8b-8192', // Gunakan model 8B untuk summary agar tidak terkena limit TPM 6000 (Free Tier 70B)
             messages: [
                 { role: "system", content: `Tugasmu membuat REKAP DATA CUSTOMER dalam format KEY-VALUE yang terstruktur.
 Ekstrak SEMUA informasi yang sudah disebutkan customer.
@@ -825,7 +827,22 @@ ATURAN PENTING untuk field WA_LABELS:
                 { role: "user", content: `Berikut riwayat chatnya, buatkan rekapannya:\n\n${historyText}` }
             ],
             temperature: 0.2 // Lebih stabil dan konsisten untuk format terstruktur
-        }, { timeout: AI_CHAT_TIMEOUT_MS });
+        };
+
+        let response;
+        try {
+            response = await groqManager.executeWithRotation(async (client) => {
+                return await client.chat.completions.create(payload, { timeout: AI_CHAT_TIMEOUT_MS });
+            });
+        } catch (err) {
+            if (err.message === "GROQ_ALL_KEYS_EXHAUSTED" || err.message === "GROQ_UNAVAILABLE") {
+                logger.warn("[AI] Groq (Summary) tidak tersedia, fallback ke OpenAI...");
+                payload.model = config.MODEL_NAME || "gpt-4o-mini";
+                response = await openai.chat.completions.create(payload, { timeout: AI_CHAT_TIMEOUT_MS });
+            } else {
+                throw err;
+            }
+        }
 
         return response.choices[0].message.content.trim();
     } catch (e) {
