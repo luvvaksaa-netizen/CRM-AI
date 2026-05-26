@@ -676,8 +676,7 @@ ${sysPrompt}
                     messages: [
                         ...messages,
                         { role: "system", content: "PENGINGAT TEKNIS: Jangan tulis link/tag media/ID/timestamp. Untuk chat normal, pisahkan dengan newline agar enak dibaca. Untuk rekap/order/payment, tulis lengkap dan rapi." },
-                        responseMessage,
-                        ...toolResponses
+                        responseMessage
                     ],
                     temperature: 0.45
                 };
