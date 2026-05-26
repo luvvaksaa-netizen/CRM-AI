@@ -3223,7 +3223,7 @@
         ];
 
         sortedStatus.forEach(s => {
-            const count = statusData[s.key] || 0;
+            let count = statusData[s.key] || 0;
             // Gabung rekap dan alamat jadi satu secara visual agar rapi
             if (s.key === 'menunggu_rekap') count += (statusData['menunggu_alamat'] || 0);
             
