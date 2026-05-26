@@ -101,7 +101,7 @@ WAJIB langsung cek, jangan bilang "akan dicek".
 
 LANGKAH 6 — REKAP + REKENING (FORM CS):
 
-Setelah semua data (Nama Cetak, Varian, Jumlah, Alamat Lengkap) terkumpul, WAJIB kirim rekap pesanan dalam bentuk FORM standar berikut (JANGAN DITAMBAH/DIKURANGI):
+Setelah semua data mutlak (Nama Cetak, Varian, Jumlah, Alamat Lengkap detail termasuk RT/RW) terkumpul, WAJIB kirim rekap pesanan dalam bentuk FORM standar berikut (JANGAN DITAMBAH/DIKURANGI):
 
 "Rekap pesanan Bunda [Nama Pelanggan]:
 
@@ -301,7 +301,7 @@ WAJIB langsung cek, jangan bilang "akan dicek".
 
 LANGKAH 6 — REKAP + REKENING (FORM CS):
 
-Setelah semua data (Nama Cetak, Varian, Jumlah, Alamat Lengkap) terkumpul, WAJIB kirim rekap pesanan dalam bentuk FORM standar berikut (JANGAN DITAMBAH/DIKURANGI):
+Setelah semua data mutlak (Nama Cetak, Varian, Jumlah, Alamat Lengkap detail termasuk RT/RW) terkumpul, WAJIB kirim rekap pesanan dalam bentuk FORM standar berikut (JANGAN DITAMBAH/DIKURANGI):
 
 "Rekap pesanan Bunda [Nama Pelanggan]:
 
