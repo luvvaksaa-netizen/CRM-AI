@@ -835,5 +835,6 @@ module.exports = {
     getClientWajsStatus: wajsBridge.getClientWajsStatus,
     trackBotSentMessage,
     waitForActiveClient,
-    isCurrentClient
+    isCurrentClient,
+    getActiveClient
 };
