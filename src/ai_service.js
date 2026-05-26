@@ -18,7 +18,9 @@ const logger = require('./utils/logger');
 const mengantarService = require('./services/mengantar_service');
 const { getSendableMedia, getKnowledgeMedia } = require('./services/media_service');
 const { MediaAsset } = require('./database/index');
+const groqManager = require('./utils/groq_manager');
 
+// Fallback OpenAI instance (digunakan jika Groq mati/habis limit atau untuk kapabilitas khusus)
 const openai = new OpenAI({ apiKey: config.OPENAI_API_KEY });
 
 // === RESPONSE TYPE CONSTANTS ===
@@ -536,14 +538,29 @@ ${sysPrompt}
             { role: "user", content: userContent }
         ];
 
-        // === FIRST AI CALL (with timeout) ===
-        const response = await openai.chat.completions.create({
-            model: modelName,
+        // === FIRST AI CALL (with timeout & rotation) ===
+        const payload = {
+            model: config.GROQ_MODEL_TEXT,
             messages,
             tools,
             tool_choice: "auto",
             temperature: 0.55,
-        }, { timeout: AI_CHAT_TIMEOUT_MS });
+        };
+
+        let response;
+        try {
+            response = await groqManager.executeWithRotation(async (client) => {
+                return await client.chat.completions.create(payload, { timeout: AI_CHAT_TIMEOUT_MS });
+            });
+        } catch (err) {
+            if (err.message === "GROQ_ALL_KEYS_EXHAUSTED" || err.message === "GROQ_UNAVAILABLE") {
+                logger.warn("[AI] Groq tidak tersedia atau habis limit. Menggunakan fallback ke OpenAI...");
+                payload.model = modelName; // Gunakan config.MODEL_NAME bawaan
+                response = await openai.chat.completions.create(payload, { timeout: AI_CHAT_TIMEOUT_MS });
+            } else {
+                throw err;
+            }
+        }
 
         let responseMessage = response.choices[0].message;
         const downstreamToolCalls = responseMessage.tool_calls || [];
@@ -670,14 +687,29 @@ ${sysPrompt}
             let finalContent = sanitizeTextOutput(responseMessage.content || "");
 
             if (needsSecondCall && !canFastReturnMedia) {
-                const secondResponse = await openai.chat.completions.create({ 
-                    model: modelName, 
+                const secondPayload = {
+                    model: config.GROQ_MODEL_TEXT, 
                     messages: [
                         ...messages,
                         { role: "system", content: "PENGINGAT TEKNIS: Jangan tulis link/tag media/ID/timestamp. Untuk chat normal, pisahkan bubble dengan newline dan maksimal 10 kata per bubble. Untuk rekap/order/payment, tulis lengkap dan rapi." }
                     ],
                     temperature: 0.45
-                }, { timeout: AI_SECOND_CALL_TIMEOUT_MS });
+                };
+                
+                let secondResponse;
+                try {
+                    secondResponse = await groqManager.executeWithRotation(async (client) => {
+                        return await client.chat.completions.create(secondPayload, { timeout: AI_SECOND_CALL_TIMEOUT_MS });
+                    });
+                } catch (err) {
+                    if (err.message === "GROQ_ALL_KEYS_EXHAUSTED" || err.message === "GROQ_UNAVAILABLE") {
+                        logger.warn("[AI] Groq (2nd call) tidak tersedia, fallback ke OpenAI...");
+                        secondPayload.model = modelName;
+                        secondResponse = await openai.chat.completions.create(secondPayload, { timeout: AI_SECOND_CALL_TIMEOUT_MS });
+                    } else {
+                        throw err;
+                    }
+                }
                 responseMessage = secondResponse.choices[0].message;
                 finalContent = responseMessage.content;
             } else if (canFastReturnMedia && !finalContent) {
@@ -809,11 +841,26 @@ ATURAN PENTING untuk field WA_LABELS:
 async function transcribeAudio(audioPath) {
     if (!fs.existsSync(audioPath)) return null;
     try {
-        const response = await openai.audio.transcriptions.create({
+        const payload = {
             file: fs.createReadStream(audioPath),
-            model: "whisper-1",
+            model: config.GROQ_MODEL_AUDIO,
             language: "id" // Fokus ke Bahasa Indonesia
-        });
+        };
+
+        let response;
+        try {
+            response = await groqManager.executeWithRotation(async (client) => {
+                return await client.audio.transcriptions.create(payload);
+            });
+        } catch (err) {
+            if (err.message === "GROQ_ALL_KEYS_EXHAUSTED" || err.message === "GROQ_UNAVAILABLE") {
+                logger.warn("[AI] Groq (Whisper) tidak tersedia, fallback ke OpenAI...");
+                payload.model = "whisper-1";
+                response = await openai.audio.transcriptions.create(payload);
+            } else {
+                throw err;
+            }
+        }
         return response.text;
     } catch (e) {
         logger.error(`Gagal transkripsi VN: ${e.message}`);

@@ -41,6 +41,9 @@ const TMP_DIR = path.join(DATA_DIR, 'tmp');
 const config = {
     // AI & Shipping
     OPENAI_API_KEY:     process.env.OPENAI_API_KEY,
+    GROQ_API_KEYS:      process.env.GROQ_API_KEYS ? process.env.GROQ_API_KEYS.split(',').map(k => k.trim()).filter(k => k) : [],
+    GROQ_MODEL_TEXT:    process.env.GROQ_MODEL_TEXT || 'llama-3.3-70b-versatile',
+    GROQ_MODEL_AUDIO:   process.env.GROQ_MODEL_AUDIO || 'whisper-large-v3',
     RAJAONGKIR_API_KEY: process.env.RAJAONGKIR_API_KEY,
     KOMERCE_BASE_URL:   'https://rajaongkir.komerce.id/api/v1',
     CLIENT_NAME:        process.env.CLIENT_NAME || 'WA-AI-CS-Bot',
@@ -58,8 +61,8 @@ const config = {
 };
 
 const validateConfig = () => {
-    if (!config.OPENAI_API_KEY) {
-        logger.error('CRITICAL: OPENAI_API_KEY is missing in .env!');
+    if (!config.OPENAI_API_KEY && config.GROQ_API_KEYS.length === 0) {
+        logger.error('CRITICAL: Harus menyediakan setidaknya OPENAI_API_KEY atau GROQ_API_KEYS di .env!');
         return false;
     }
     return true;

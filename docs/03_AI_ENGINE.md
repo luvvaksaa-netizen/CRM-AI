@@ -1,9 +1,11 @@
 # AI Engine — Cara Kerja & Arsitektur
 
 > **File:** `src/ai_service.js`  
-> **Model Chat:** `gpt-4o-mini` (default, configurable via `.env`)  
-> **Model Vision:** `gpt-4o` (hardcoded, required for vision)  
-> **Model Audio:** `whisper-1`
+> **Dual-Engine Architecture:** Groq API (Primary) + OpenAI (Fallback & Vision)
+> **Model Chat (Groq):** `llama-3.3-70b-versatile` (configurable via `GROQ_MODEL_TEXT`)
+> **Model Chat (OpenAI):** `gpt-4o-mini` (fallback via `MODEL_NAME`)
+> **Model Vision (OpenAI):** `gpt-4o` (hardcoded, required for vision)  
+> **Model Audio (Groq):** `whisper-large-v3` (fallback `whisper-1` via `GROQ_MODEL_AUDIO`)
 
 ---
 
