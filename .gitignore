@@ -53,4 +53,7 @@ settings.json
 chat_history.json
 komerce_cache.json
 cloudflared*
+.cloudflared_backup/
+*.pem
+cert.pem
 # Dockerfile & .dockerignore HARUS di-upload agar DigitalOcean/Railway bisa mendeploy!
