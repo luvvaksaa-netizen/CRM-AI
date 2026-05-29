@@ -125,22 +125,22 @@ const manualSendLimiter = rateLimit({
 });
 
 // 2. LIVE SYSTEM LOGGING (Wow Factor)
-let lastLogMsg = ""; 
+let lastLogMsg = "";
 const originalBotLogger = logger.bot;
 logger.bot = (msg) => {
-    if (io && msg !== lastLogMsg) {
-        io.emit('sysLog', { type: 'BOT', msg, time: new Date().toLocaleTimeString() });
-        lastLogMsg = msg;
-    }
-    originalBotLogger(msg);
+  if (io && msg !== lastLogMsg) {
+    io.emit('sysLog', { type: 'BOT', msg, time: new Date().toLocaleTimeString() });
+    lastLogMsg = msg;
+  }
+  originalBotLogger(msg);
 };
 const originalErrorLogger = logger.error;
 logger.error = (msg) => {
-    if (io && msg !== lastLogMsg) {
-        io.emit('sysLog', { type: 'ERROR', msg, time: new Date().toLocaleTimeString() });
-        lastLogMsg = msg;
-    }
-    originalErrorLogger(msg);
+  if (io && msg !== lastLogMsg) {
+    io.emit('sysLog', { type: 'ERROR', msg, time: new Date().toLocaleTimeString() });
+    lastLogMsg = msg;
+  }
+  originalErrorLogger(msg);
 };
 
 // ============================================================
@@ -256,8 +256,17 @@ function initDashboard(port = 3000) {
 
   // Initialize Follow-Up Scheduler
   try {
-    const { initFollowUpScheduler } = require('./followup_service');
-    initFollowUpScheduler(io);
+    // TEMPORARY DISABLED - 2026-05-29
+    // Follow-up otomatis dimatikan sementara karena sistem masih memakai WWebJS/WA-JS.
+    // Akan diaktifkan kembali setelah ada:
+    // 1. opt-in registry,
+    // 2. opt-out handler,
+    // 3. rate limit per customer,
+    // 4. approved template flow,
+    // 5. WhatsApp Cloud API/BSP migration.
+    //
+    // const { initFollowUpScheduler } = require('./followup_service');
+    // initFollowUpScheduler(io);
   } catch (err) {
     logger.error(`[Dashboard] Gagal inisialisasi Follow-Up Scheduler: ${err.message}`);
   }
@@ -265,22 +274,22 @@ function initDashboard(port = 3000) {
   // 1. HEALTH MONITOR (Transmit to UI)
   setInterval(() => {
     try {
-        const os = require('os');
-        const free = os.freemem();
-        const total = os.totalmem();
-        const used = total - free;
-        const load = os.loadavg()[0]; // 1-minute load average
-        if (io) {
-            io.emit('sysStats', {
-                ram: { 
-                    perc: Math.round((used / total) * 100), 
-                    used: (used / 1024 / 1024 / 1024).toFixed(2), 
-                    total: (total / 1024 / 1024 / 1024).toFixed(1) 
-                },
-                cpu: Math.round(load * 10), // Scale to 100% roughly
-            });
-        }
-    } catch (e) {}
+      const os = require('os');
+      const free = os.freemem();
+      const total = os.totalmem();
+      const used = total - free;
+      const load = os.loadavg()[0]; // 1-minute load average
+      if (io) {
+        io.emit('sysStats', {
+          ram: {
+            perc: Math.round((used / total) * 100),
+            used: (used / 1024 / 1024 / 1024).toFixed(2),
+            total: (total / 1024 / 1024 / 1024).toFixed(1)
+          },
+          cpu: Math.round(load * 10), // Scale to 100% roughly
+        });
+      }
+    } catch (e) { }
   }, 10000); // 10 Detik sekali
 
 
@@ -344,7 +353,7 @@ function initDashboard(port = 3000) {
     try {
       const agentId = req.params.id;
       const { BotAgent, MediaAsset } = require('../database/index');
-      
+
       const agent = await BotAgent.findByPk(agentId);
       if (!agent) return res.status(404).json({ success: false, message: 'Agent tidak ditemukan' });
 
@@ -359,7 +368,7 @@ function initDashboard(port = 3000) {
 
       // 3. Hapus Agen
       await agent.destroy();
-      
+
       logger.success(`[Agent-${agentId}] Agen dan semua datanya berhasil dimusnahkan.`);
       res.json({ success: true, message: 'Agen berhasil dihapus.' });
     } catch (e) {
@@ -446,13 +455,13 @@ function initDashboard(port = 3000) {
 
       // Hybrid detection: wa_labels (prioritas) → regex pada teks summary (fallback)
       const CLOSING_LABEL_NAMES = ['Closing', 'Menunggu Transfer'];
-      const CLOSING_STATUS_RE   = /status:\s*(closing|selesai|menunggu\s*transfer)/i;
+      const CLOSING_STATUS_RE = /status:\s*(closing|selesai|menunggu\s*transfer)/i;
 
       const closingList = allSummaries.filter(s => {
         try {
           const labels = JSON.parse(s.wa_labels || '[]');
           if (labels.some(l => CLOSING_LABEL_NAMES.includes(l))) return true;
-        } catch(_) {}
+        } catch (_) { }
         return CLOSING_STATUS_RE.test(s.summary || '');
       });
 
@@ -479,9 +488,9 @@ function initDashboard(port = 3000) {
       let closing = 0, transferPending = 0, selesai = 0, total = allSummaries.length;
       for (const s of allSummaries) {
         const txt = (s.summary || '').toLowerCase();
-        if (txt.includes('status: closing'))           closing++;
+        if (txt.includes('status: closing')) closing++;
         if (txt.includes('status: menunggu transfer')) transferPending++;
-        if (txt.includes('status: selesai'))           selesai++;
+        if (txt.includes('status: selesai')) selesai++;
       }
 
       res.json({ total, closing, transferPending, selesai });
@@ -509,7 +518,7 @@ function initDashboard(port = 3000) {
       const msgWhere = {};
       if (store_wa_id) {
         summaryWhere.store_wa_id = store_wa_id;
-        msgWhere.store_wa_id    = store_wa_id;
+        msgWhere.store_wa_id = store_wa_id;
       }
       if (startDate && endDate) {
         msgWhere.timestamp = { [Op.between]: [new Date(startDate), new Date(endDate)] };
@@ -521,13 +530,13 @@ function initDashboard(port = 3000) {
       // Prioritas: wa_labels column → fallback regex pada summary text
       // Ini memastikan data lama yang belum punya wa_labels tetap terhitung
       const STATUS_REGEX_FALLBACK = {
-        closing:           /status:\s*(closing|selesai)/i,
+        closing: /status:\s*(closing|selesai)/i,
         menunggu_transfer: /status:\s*menunggu\s*transfer/i,
-        menunggu_rekap:    /status:\s*menunggu\s*rekap/i,
-        menunggu_alamat:   /status:\s*menunggu\s*alamat/i,
-        negosiasi:         /status:\s*negosiasi/i,
-        gali_kebutuhan:    /status:\s*gali\s*kebutuhan/i,
-        opening:           /status:\s*opening/i,
+        menunggu_rekap: /status:\s*menunggu\s*rekap/i,
+        menunggu_alamat: /status:\s*menunggu\s*alamat/i,
+        negosiasi: /status:\s*negosiasi/i,
+        gali_kebutuhan: /status:\s*gali\s*kebutuhan/i,
+        opening: /status:\s*opening/i,
       };
       const LABEL_NAMES = {
         closing: 'Closing', menunggu_transfer: 'Menunggu Transfer',
@@ -537,7 +546,7 @@ function initDashboard(port = 3000) {
 
       function detectStatus(record) {
         let labels = [];
-        try { labels = JSON.parse(record.wa_labels || '[]'); } catch(_){}
+        try { labels = JSON.parse(record.wa_labels || '[]'); } catch (_) { }
         if (labels.length > 0) {
           for (const [key, labelName] of Object.entries(LABEL_NAMES)) {
             if (labels.includes(labelName)) return key;
@@ -552,7 +561,7 @@ function initDashboard(port = 3000) {
       }
 
       const sDateMs = startDate ? new Date(startDate).getTime() : 0;
-      const eDateMs = endDate   ? new Date(endDate).getTime()   : Infinity;
+      const eDateMs = endDate ? new Date(endDate).getTime() : Infinity;
 
       const statusCounts = Object.fromEntries(Object.keys(LABEL_NAMES).map(k => [k, 0]));
       let totalLeads = 0;
@@ -565,7 +574,7 @@ function initDashboard(port = 3000) {
         if (status) {
           // Tentukan waktu label: dari label_timestamps → last_updated → createdAt
           let ts = {};
-          try { ts = JSON.parse(s.label_timestamps || '{}'); } catch(_){}
+          try { ts = JSON.parse(s.label_timestamps || '{}'); } catch (_) { }
           const labelName = LABEL_NAMES[status];
           const labelTime = ts[labelName] || new Date(s.last_updated || s.createdAt).getTime();
           if (labelTime >= sDateMs && labelTime <= eDateMs) {
@@ -601,7 +610,7 @@ function initDashboard(port = 3000) {
           const status = detectStatus(s);
           if (status === 'closing') {
             let ts = {};
-            try { ts = JSON.parse(s.label_timestamps || '{}'); } catch(_){}
+            try { ts = JSON.parse(s.label_timestamps || '{}'); } catch (_) { }
             const labelTime = ts['Closing'] || new Date(s.last_updated || s.createdAt).getTime();
             const closeKey = new Date(labelTime).toISOString().slice(0, 10);
             if (trendMap[closeKey]) trendMap[closeKey].closing++;
@@ -612,7 +621,7 @@ function initDashboard(port = 3000) {
 
       // Per-store breakdown
       let perStore = [];
-      const storesToProcess = store_wa_id 
+      const storesToProcess = store_wa_id
         ? await Store.findAll({ where: { wa_id: store_wa_id }, attributes: ['wa_id', 'name'] })
         : await Store.findAll({ attributes: ['wa_id', 'name'] });
 
@@ -625,18 +634,18 @@ function initDashboard(port = 3000) {
           const status = detectStatus(s);
           if (status === 'closing') {
             let ts = {};
-            try { ts = JSON.parse(s.label_timestamps || '{}'); } catch(_){}
+            try { ts = JSON.parse(s.label_timestamps || '{}'); } catch (_) { }
             const lt = ts['Closing'] || new Date(s.last_updated || s.createdAt).getTime();
             if (lt >= sDateMs && lt <= eDateMs) storeClosing++;
           }
         }
-        
+
         // Count messages for this store within the date range
-        const storeAi = await ChatMessage.count({ 
-            where: { store_wa_id: store.wa_id, is_from_me: true, sender_name: { [Op.not]: 'CS (dari HP)' }, ...msgWhere } 
+        const storeAi = await ChatMessage.count({
+          where: { store_wa_id: store.wa_id, is_from_me: true, sender_name: { [Op.not]: 'CS (dari HP)' }, ...msgWhere }
         });
-        const storeCs = await ChatMessage.count({ 
-            where: { store_wa_id: store.wa_id, is_from_me: true, sender_name: 'CS (dari HP)', ...msgWhere } 
+        const storeCs = await ChatMessage.count({
+          where: { store_wa_id: store.wa_id, is_from_me: true, sender_name: 'CS (dari HP)', ...msgWhere }
         });
 
         perStore.push({
@@ -653,7 +662,7 @@ function initDashboard(port = 3000) {
           const status = detectStatus(s);
           if (status !== 'closing') return false;
           let ts = {};
-          try { ts = JSON.parse(s.label_timestamps || '{}'); } catch(_){}
+          try { ts = JSON.parse(s.label_timestamps || '{}'); } catch (_) { }
           const lt = ts['Closing'] || new Date(s.last_updated || s.createdAt).getTime();
           return lt >= sDateMs && lt <= eDateMs;
         })
@@ -662,7 +671,7 @@ function initDashboard(port = 3000) {
         .map(s => ({
           store_wa_id: s.store_wa_id, contact_id: s.contact_id,
           contact_name: s.contact_name || 'Pelanggan', last_updated: s.last_updated,
-          wa_labels: (() => { try { return JSON.parse(s.wa_labels || '[]'); } catch(_) { return []; } })()
+          wa_labels: (() => { try { return JSON.parse(s.wa_labels || '[]'); } catch (_) { return []; } })()
         }));
 
       res.json({
@@ -697,7 +706,7 @@ function initDashboard(port = 3000) {
       for (const st of stores) storeMap[st.wa_id] = st.name;
 
       const sDateMs = startDate ? new Date(startDate).getTime() : 0;
-      const eDateMs = endDate   ? new Date(endDate).getTime()   : Infinity;
+      const eDateMs = endDate ? new Date(endDate).getTime() : Infinity;
 
       const LABEL_NAMES = {
         closing: 'Closing', menunggu_transfer: 'Menunggu Transfer',
@@ -705,13 +714,13 @@ function initDashboard(port = 3000) {
         negosiasi: 'Hot Lead', gali_kebutuhan: 'AI Lead Aktif', opening: 'AI Lead Baru'
       };
       const STATUS_REGEX = {
-        closing:           /status:\s*(closing|selesai)/i,
+        closing: /status:\s*(closing|selesai)/i,
         menunggu_transfer: /status:\s*menunggu\s*transfer/i,
-        menunggu_rekap:    /status:\s*menunggu\s*rekap/i,
-        menunggu_alamat:   /status:\s*menunggu\s*alamat/i,
-        negosiasi:         /status:\s*negosiasi/i,
-        gali_kebutuhan:    /status:\s*gali\s*kebutuhan/i,
-        opening:           /status:\s*opening/i,
+        menunggu_rekap: /status:\s*menunggu\s*rekap/i,
+        menunggu_alamat: /status:\s*menunggu\s*alamat/i,
+        negosiasi: /status:\s*negosiasi/i,
+        gali_kebutuhan: /status:\s*gali\s*kebutuhan/i,
+        opening: /status:\s*opening/i,
       };
 
       let leads = [];
@@ -725,7 +734,7 @@ function initDashboard(port = 3000) {
 
         // Hybrid detection
         let matchedLabels = [];
-        try { matchedLabels = JSON.parse(s.wa_labels || '[]'); } catch(_){}
+        try { matchedLabels = JSON.parse(s.wa_labels || '[]'); } catch (_) { }
         const targetLabelName = LABEL_NAMES[label];
         if (!targetLabelName) continue;
 
@@ -737,7 +746,7 @@ function initDashboard(port = 3000) {
         if (!hasLabel) continue;
 
         let ts = {};
-        try { ts = JSON.parse(s.label_timestamps || '{}'); } catch(_){}
+        try { ts = JSON.parse(s.label_timestamps || '{}'); } catch (_) { }
         const labelTime = ts[targetLabelName] || new Date(s.last_updated || s.createdAt).getTime();
         if (labelTime >= sDateMs && labelTime <= eDateMs) {
           leads.push(s);
@@ -864,7 +873,7 @@ function initDashboard(port = 3000) {
       const wa_id = req.params.id;
       const whatsappService = require('../whatsapp_service');
       await whatsappService.logoutClient(wa_id);
-      
+
       res.json({ success: true, message: 'Sesi WA berhasil diputuskan.' });
     } catch (e) {
       res.status(500).json({ success: false, message: e.message });
@@ -874,7 +883,7 @@ function initDashboard(port = 3000) {
   // ============================================================
   // SYSTEM & BACKUP APIs (Professional Grade)
   // ============================================================
-  
+
   // GET: List Backups
   app.get('/api/system/backups', async (req, res) => {
     try {
@@ -886,7 +895,7 @@ function initDashboard(port = 3000) {
           const stat = fs.statSync(path.join(BACKUP_DIR, f));
           return { name: f, size: Math.round(stat.size / 1024), time: stat.mtime };
         })
-        .sort((a,b) => b.time - a.time);
+        .sort((a, b) => b.time - a.time);
       res.json(files);
     } catch (e) { res.status(500).json({ error: e.message }); }
   });
@@ -921,7 +930,7 @@ function initDashboard(port = 3000) {
       try {
         require.resolve('@wppconnect/wa-js');
         packageInstalled = true;
-      } catch (_) {}
+      } catch (_) { }
       res.json({
         packageInstalled,
         stores
@@ -954,7 +963,7 @@ function initDashboard(port = 3000) {
 
       // Simpan status bot SEBELUM update untuk deteksi transisi OFF→ON
       const wasBotInactive = store.is_bot_active === false;
-      
+
       const updateData = {};
       if (name !== undefined) updateData.name = name;
       if (is_bot_active !== undefined) updateData.is_bot_active = is_bot_active;
@@ -1003,10 +1012,10 @@ function initDashboard(port = 3000) {
       const defaultLimit = contactId ? 50 : 2000;
       const limit = Math.min(Math.max(parseInt(req.query.limit || defaultLimit, 10) || 50, 1), maxLimit);
       const where = { store_wa_id: req.params.storeId };
-      
+
       // Jika ada contactId, ambil history spesifik dengan limit lebih besar
       if (contactId) {
-          where.contact_id = contactId;
+        where.contact_id = contactId;
       }
       if (before) {
         const beforeDate = new Date(before);
@@ -1045,7 +1054,7 @@ function initDashboard(port = 3000) {
   app.post('/api/chat/:storeId/:contactId/read', async (req, res) => {
     try {
       const { storeId, contactId } = req.params;
-      
+
       const [updated] = await ChatMessage.update(
         { is_read: true },
         { where: { store_wa_id: storeId, contact_id: contactId, is_read: false, is_from_me: false } }
@@ -1079,7 +1088,7 @@ function initDashboard(port = 3000) {
 
       // Hapus dari PausedContact juga agar bot aktif kembali
       const { PausedContact } = require('../database/index');
-      await PausedContact.destroy({ where: { store_wa_id: storeId, contact_id: decodedContactId } }).catch(() => {});
+      await PausedContact.destroy({ where: { store_wa_id: storeId, contact_id: decodedContactId } }).catch(() => { });
 
       // Beritahu frontend via Socket.IO agar daftar kontak terupdate
       if (io) io.emit('chatCleared', { storeId, contactId: decodedContactId });
@@ -1121,7 +1130,7 @@ function initDashboard(port = 3000) {
       if (!storeId || !to || !mediaId) return res.status(400).json({ success: false, message: 'Data tidak lengkap.' });
       const target = normalizeWaChatId(to);
       if (!target.ok) return res.status(400).json({ success: false, message: target.error });
-      
+
       const { MediaAsset, Store } = require('../database/index');
       const store = await Store.findOne({ where: { wa_id: storeId } });
       if (!store) return res.status(404).json({ success: false, message: 'Store tidak ditemukan.' });
@@ -1285,10 +1294,10 @@ function initDashboard(port = 3000) {
     const tempPath = req.file.path;
     try {
       const { label, description, purpose } = req.body;
-      const mimeType  = req.file.mimetype;
-      const fileType  = mimeType.startsWith('image') ? 'image' : 'video';
+      const mimeType = req.file.mimetype;
+      const fileType = mimeType.startsWith('image') ? 'image' : 'video';
       const fileSizeKb = Math.round(req.file.size / 1024);
-      const agentId   = req.params.agentId;
+      const agentId = req.params.agentId;
 
       // Validasi ukuran
       const maxSizeKb = fileType === 'image' ? 10240 : 102400; // Image 10MB, Video 100MB
@@ -1310,14 +1319,14 @@ function initDashboard(port = 3000) {
       const mediaPurpose = validPurposes.includes(purpose) ? purpose : 'both';
 
       const assetData = {
-        agent_id:      agentId,
-        filename:      req.file.filename,
+        agent_id: agentId,
+        filename: req.file.filename,
         original_name: req.file.originalname,
-        type:          fileType,
-        label:         label?.trim() || req.file.originalname,
-        description:   description?.trim() || '',
-        purpose:       mediaPurpose,
-        filePath:      tempPath
+        type: fileType,
+        label: label?.trim() || req.file.originalname,
+        description: description?.trim() || '',
+        purpose: mediaPurpose,
+        filePath: tempPath
       };
 
       // Semua upload bersifat non-blocking: daftarkan dulu, analisis di background
@@ -1328,7 +1337,7 @@ function initDashboard(port = 3000) {
       mediaService.registerMedia(assetData, (asset) => {
         // Callback saat analisis selesai
         if (io) {
-          io.emit('mediaUpdated',      { agentId });
+          io.emit('mediaUpdated', { agentId });
           io.emit('mediaAnalysisReady', { agentId, assetId: asset.id });
         }
       }).then(() => {
@@ -1353,7 +1362,7 @@ function initDashboard(port = 3000) {
       if (purpose && !validPurposes.includes(purpose)) return res.status(400).json({ success: false, message: 'Purpose tidak valid.' });
 
       const asset = await mediaService.updateMediaDetails(parseInt(req.params.id), req.params.agentId, {
-          purpose, label, description, ai_analysis, trigger_words
+        purpose, label, description, ai_analysis, trigger_words
       });
       if (io) io.emit('mediaUpdated', { agentId: req.params.agentId });
       res.json({ success: true, asset: asset.dataValues });
@@ -1493,7 +1502,7 @@ async function addToChatHistory(storeId, msg) {
     }
     const chatMsg = await ChatMessage.create({
       store_wa_id: storeId,
-      contact_id:  msg.from,
+      contact_id: msg.from,
       wa_message_id: waMessageId,
       sender_name: msg.isMe
         ? (msg.sender_name || 'CS Manual')
@@ -1507,10 +1516,10 @@ async function addToChatHistory(storeId, msg) {
       quoted_body: clipQuotedBody(quotedRecord?.body || msg.quoted_body || msg.quotedBody),
       quoted_from_me: msg.quoted_from_me ?? msg.quotedFromMe ?? quotedRecord?.is_from_me ?? null,
       quoted_sender_name: msg.quoted_sender_name || msg.quotedSenderName || quotedRecord?.sender_name || null,
-      body:        msg.body,
-      is_from_me:  msg.isMe || false,
-      type:        msg.type || 'chat',
-      timestamp:   msg.timestamp || new Date()
+      body: msg.body,
+      is_from_me: msg.isMe || false,
+      type: msg.type || 'chat',
+      timestamp: msg.timestamp || new Date()
     });
     if (io) io.emit('newMessage', { storeId, msg: chatMsg.dataValues });
   } catch (err) {
@@ -1546,7 +1555,7 @@ async function updateContactPhoneIdentity(storeId, contactId, resolved = {}) {
     await ChatSummary.update({ contact_name: identity.displayName }, {
       where: { store_wa_id: storeId, contact_id: contactId }
     });
-  } catch (_) {}
+  } catch (_) { }
 
   if (io) {
     io.emit('contactIdentityUpdated', {
