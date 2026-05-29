@@ -15,4 +15,42 @@ trash/
 temp/
 *.log
 scripts/patch_html.js
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Database / local data
+*.sqlite
+*.sqlite3
+database.sqlite
+data/
+backups/
+backup/
+*.db
+
+# Runtime files
+logs/
+tmp/
+uploads/
+.wwebjs_auth/
+.wwebjs_cache/
+.session/
+sessions/
+
+# Media / large files
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+
+# Binary
+*.exe
+
+# Local config / generated files
+settings.json
+chat_history.json
+komerce_cache.json
+cloudflared*
 # Dockerfile & .dockerignore HARUS di-upload agar DigitalOcean/Railway bisa mendeploy!
