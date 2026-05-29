@@ -39,6 +39,12 @@ const TMP_DIR = path.join(DATA_DIR, 'tmp');
 });
 
 const config = {
+    // Session & Security
+    SESSION_SECRET:     process.env.SESSION_SECRET || '',
+    DASHBOARD_ALLOWED_ORIGINS: process.env.DASHBOARD_ALLOWED_ORIGINS
+        ? process.env.DASHBOARD_ALLOWED_ORIGINS.split(',').map(o => o.trim()).filter(Boolean)
+        : ['http://localhost:3001', 'http://127.0.0.1:3001'],
+
     // AI & Shipping
     OPENAI_API_KEY:     process.env.OPENAI_API_KEY,
     GROQ_API_KEYS:      process.env.GROQ_API_KEYS ? process.env.GROQ_API_KEYS.split(',').map(k => k.trim()).filter(k => k) : [],
@@ -61,10 +67,23 @@ const config = {
 };
 
 const validateConfig = () => {
+    // Validasi AI keys
     if (!config.OPENAI_API_KEY && config.GROQ_API_KEYS.length === 0) {
         logger.error('CRITICAL: Harus menyediakan setidaknya OPENAI_API_KEY atau GROQ_API_KEYS di .env!');
         return false;
     }
+
+    // Validasi SESSION_SECRET di production
+    const isProduction = process.env.NODE_ENV === 'production';
+    const defaultSecret = 'rekapoin-crm-xyz-secret-2025';
+    if (isProduction && (!config.SESSION_SECRET || config.SESSION_SECRET === defaultSecret)) {
+        logger.error('CRITICAL: SESSION_SECRET wajib di-set di production! Jangan gunakan default. Server tidak akan start.');
+        return false;
+    }
+    if (!isProduction && !config.SESSION_SECRET) {
+        logger.warn('[Security] SESSION_SECRET tidak di-set. Menggunakan fallback development. JANGAN gunakan ini di production!');
+    }
+
     return true;
 };
 

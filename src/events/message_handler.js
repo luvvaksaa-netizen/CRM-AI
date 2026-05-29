@@ -99,6 +99,47 @@ const MEDIA_STABILITY_DELAY_MS = Number(process.env.WA_MEDIA_STABILITY_DELAY_MS 
 const WA_TYPING_PULSE_MS = Number(process.env.WA_TYPING_PULSE_MS || 5000);
 const WA_TYPING_HARD_STOP_MS = Number(process.env.WA_TYPING_HARD_STOP_MS || 7000);
 const WA_SEND_RETRY_DELAY_MS = Number(process.env.WA_SEND_RETRY_DELAY_MS || 1200);
+
+// ══════════════════════════════════════════════════════════════════
+// OPT-OUT & HUMAN ESCALATION KEYWORDS (Safety Guard)
+// ══════════════════════════════════════════════════════════════════
+const OPT_OUT_KEYWORDS = [
+    'stop', 'berhenti', 'jangan chat lagi', 'jangan hubungi saya',
+    'unsubscribe', 'tidak mau', 'nggak mau', 'ga mau', 'gak mau',
+    'jangan kirim pesan', 'jangan ganggu'
+];
+const HUMAN_ESCALATION_KEYWORDS = [
+    'komplain', 'kecewa', 'marah', 'penipuan', 'refund',
+    'salah kirim', 'admin manusia', 'cs manusia', 'mau bicara admin',
+    'bicara orang', 'minta admin', 'operator manusia'
+];
+
+const OPT_OUT_REPLY = 'Baik kak, kami tidak akan mengirim pesan otomatis lagi. Kalau nanti butuh bantuan, kakak bisa chat kami kembali.';
+const ESCALATION_REPLY = 'Baik kak, saya teruskan ke admin manusia ya. Mohon tunggu sebentar.';
+
+// Track IDs of safety auto-replies to prevent them from re-triggering AI on message_create
+const _safetyReplyIds = new Set();
+setInterval(() => _safetyReplyIds.clear(), 3600000); // Clear hourly
+
+/**
+ * Cek apakah teks pesan mengandung keyword opt-out.
+ * @param {string} text
+ * @returns {boolean}
+ */
+function _isOptOutMessage(text) {
+    const normalized = text.toLowerCase().trim();
+    return OPT_OUT_KEYWORDS.some(kw => normalized === kw || normalized.includes(kw));
+}
+
+/**
+ * Cek apakah teks pesan mengandung keyword eskalasi ke manusia.
+ * @param {string} text
+ * @returns {boolean}
+ */
+function _isHumanEscalationMessage(text) {
+    const normalized = text.toLowerCase().trim();
+    return HUMAN_ESCALATION_KEYWORDS.some(kw => normalized.includes(kw));
+}
 const debounceTimers = new Map();      // Key: 'storeWaId_contactId' → timeoutId
 const pendingMessages = new Map();     // Key: 'storeWaId_contactId' → { messages: [], mediaContexts: [], tempPaths: [], senderName, message (last) }
 
@@ -386,6 +427,48 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
         // ═══════════════════════════════════════════════════════
         if (pausedContacts.has(debounceKey)) {
             logger.info(`[${storeWaId}] Bot sedang dipause (Human Override) untuk: ${logDisplay}`);
+            _cleanupTempFile(tempPath, storeWaId);
+            return;
+        }
+
+        // ═══════════════════════════════════════════════════════
+        // FIREWALL 2.5: OPT-OUT & HUMAN ESCALATION DETECTION
+        // Mendeteksi pesan customer yang meminta berhenti atau
+        // membutuhkan CS manusia. AI TIDAK akan membalas.
+        // ═══════════════════════════════════════════════════════
+        if (_isOptOutMessage(body)) {
+            logger.warn(`[${storeWaId}] ⛔ OPT-OUT terdeteksi dari ${logDisplay}: "${body}"`);
+            await pauseBotForContact(storeWaId, contactId);
+            // Kirim satu balasan sopan, lalu stop. Track ID agar tidak re-trigger.
+            try {
+                const sentMsg = await message.reply(OPT_OUT_REPLY);
+                const replyId = sentMsg?.id?._serialized || sentMsg?.id?.id;
+                if (replyId) _safetyReplyIds.add(replyId);
+                try {
+                    const { trackBotSentMessage } = require('../whatsapp_service');
+                    if (replyId) trackBotSentMessage(replyId);
+                } catch (_) {}
+            } catch (replyErr) {
+                logger.warn(`[${storeWaId}] Gagal kirim balasan opt-out: ${replyErr.message}`);
+            }
+            _cleanupTempFile(tempPath, storeWaId);
+            return;
+        }
+
+        if (_isHumanEscalationMessage(body)) {
+            logger.warn(`[${storeWaId}] 🚨 ESKALASI KE MANUSIA terdeteksi dari ${logDisplay}: "${body}"`);
+            await pauseBotForContact(storeWaId, contactId);
+            try {
+                const sentMsg = await message.reply(ESCALATION_REPLY);
+                const replyId = sentMsg?.id?._serialized || sentMsg?.id?.id;
+                if (replyId) _safetyReplyIds.add(replyId);
+                try {
+                    const { trackBotSentMessage } = require('../whatsapp_service');
+                    if (replyId) trackBotSentMessage(replyId);
+                } catch (_) {}
+            } catch (replyErr) {
+                logger.warn(`[${storeWaId}] Gagal kirim balasan eskalasi: ${replyErr.message}`);
+            }
             _cleanupTempFile(tempPath, storeWaId);
             return;
         }
@@ -1070,5 +1153,8 @@ module.exports = {
     pauseBotForContact,
     resumeBotForContact,
     pausedContacts,
-    getActiveAIRepliesCount: () => activeAIReplies.size
+    getActiveAIRepliesCount: () => activeAIReplies.size,
+    _isOptOutMessage,
+    _isHumanEscalationMessage,
+    _safetyReplyIds
 };

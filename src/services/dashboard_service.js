@@ -18,6 +18,7 @@ const multer = require('multer');
 const session = require('express-session');
 const SequelizeStore = require('connect-session-sequelize')(session.Store);
 const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
 const { Op } = require('sequelize');
 const logger = require('../utils/logger');
 const config = require('../config');
@@ -37,6 +38,15 @@ const storeStatuses = {};
 const app = express();
 app.set('trust proxy', 1); // Wajib untuk Cloudflare / Nginx proxy
 const server = http.createServer(app);
+
+// ============================================================
+// SECURITY HEADERS (Helmet)
+// ============================================================
+app.use(helmet({
+  contentSecurityPolicy: false,        // Disable CSP agar inline scripts di dashboard tidak rusak
+  crossOriginEmbedderPolicy: false,    // Agar Socket.IO dan media embed tetap berfungsi
+  crossOriginResourcePolicy: { policy: 'cross-origin' } // Agar uploads/media bisa diakses
+}));
 
 function isPlaceholderContactName(name) {
   const value = String(name || '').trim();
@@ -152,7 +162,7 @@ sessionStore.sync(); // Buat tabel session jika belum ada
 app.use(express.json());
 
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'rekapoin-crm-xyz-secret-2025',
+  secret: config.SESSION_SECRET || 'dev-fallback-secret-do-not-use-in-production',
   store: sessionStore,         // ← Simpan di SQLite, bukan RAM
   resave: false,
   saveUninitialized: false,
@@ -252,24 +262,25 @@ const upload = multer({
 // INIT DASHBOARD
 // ============================================================
 function initDashboard(port = 3000) {
-  io = new Server(server, { cors: { origin: '*' } });
+  // Socket.IO dengan CORS dari environment (tidak lagi wildcard '*')
+  const allowedOrigins = config.DASHBOARD_ALLOWED_ORIGINS;
+  io = new Server(server, {
+    cors: {
+      origin: allowedOrigins,
+      credentials: true
+    }
+  });
+  logger.info(`[Socket.IO] CORS allowed origins: ${allowedOrigins.join(', ')}`);
 
-  // Initialize Follow-Up Scheduler
-  try {
-    // TEMPORARY DISABLED - 2026-05-29
-    // Follow-up otomatis dimatikan sementara karena sistem masih memakai WWebJS/WA-JS.
-    // Akan diaktifkan kembali setelah ada:
-    // 1. opt-in registry,
-    // 2. opt-out handler,
-    // 3. rate limit per customer,
-    // 4. approved template flow,
-    // 5. WhatsApp Cloud API/BSP migration.
-    //
-    // const { initFollowUpScheduler } = require('./followup_service');
-    // initFollowUpScheduler(io);
-  } catch (err) {
-    logger.error(`[Dashboard] Gagal inisialisasi Follow-Up Scheduler: ${err.message}`);
-  }
+  // ── FOLLOW-UP SCHEDULER: DISABLED FOR SAFETY ────────────────────
+  // Follow-up otomatis dimatikan sementara karena sistem masih memakai WWebJS/WA-JS
+  // dan belum memiliki compliance layer (opt-in/opt-out, 24h window, approved templates).
+  // Mengaktifkan follow-up otomatis dalam kondisi ini BERISIKO TINGGI menyebabkan banned.
+  // Akan diaktifkan kembali setelah compliance layer siap.
+  //
+  // const { initFollowUpScheduler } = require('./followup_service');
+  // initFollowUpScheduler(io);
+  logger.warn('[FollowUp] ⚠️  Automatic follow-up scheduler is DISABLED for safety until compliance layer is ready.');
 
   // 1. HEALTH MONITOR (Transmit to UI)
   setInterval(() => {
@@ -294,7 +305,19 @@ function initDashboard(port = 3000) {
 
 
 
-  // Proteksi semua /api/* (kecuali /api/login & /api/logout yang sudah di atas)
+  // ── HEALTH CHECK ENDPOINT (Tidak memerlukan autentikasi) ──────────
+  // Berguna untuk monitoring uptime dan load balancer health probe.
+  app.get('/api/health', (req, res) => {
+    res.json({
+      success: true,
+      status: 'ok',
+      service: 'wa-ai-cs',
+      time: new Date().toISOString(),
+      uptime: Math.floor(process.uptime())
+    });
+  });
+
+  // Proteksi semua /api/* (kecuali /api/login, /api/logout, /api/health yang sudah di atas)
   app.use('/api', authenticate);
 
   app.get('/api/session', (req, res) => {
