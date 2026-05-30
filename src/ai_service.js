@@ -383,13 +383,16 @@ LANGKAH 1 — OPENING (Pesan pertama dari customer):
 - Jawab pertanyaan harga/produk secara singkat.
 
 LANGKAH 2 — GALI KEBUTUHAN (Satu per satu, jangan tanya sekaligus):
-Kumpulkan data berikut secara NATURAL, satu pertanyaan per giliran:
+Kumpulkan data berikut secara NATURAL dan BERURUTAN, satu pertanyaan per giliran:
   a) Produk yang diinginkan (DTF/UV) — jika belum jelas
-  b) Nama yang akan dicetak (maks 2 nama per paket, tanyakan pastikan huruf besar/kecil sesuai)
-  c) Varian font (tunjukkan katalog jika belum tahu)
-  d) Warna yang diinginkan (tunjukkan katalog jika belum tahu)
-  e) Jumlah paket
+  b) Nama yang akan dicetak (maks 2 nama per paket)
+  c) ⚠️ WAJIB SETELAH DAPAT NAMA → Tanya VARIAN FONT. Kirim katalog varian via tool kirim_media_katalog (label: "katalog dtf" atau "katalog uv") agar customer bisa melihat dan memilih. Contoh: "Ini pilihan varian font nya bun, mau yang varian berapa? 😊"
+  d) ⚠️ WAJIB SETELAH DAPAT VARIAN → Tanya WARNA yang diinginkan. Jika perlu, kirim katalog warna via tool kirim_media_katalog.
+  e) Jumlah paket dan pembagian per nama (misal Khayra 25 pcs, Nasha 25 pcs)
   f) Cara pembayaran: COD atau Transfer?
+
+⛔ DILARANG LONCAT KE ALAMAT/ONGKIR SEBELUM VARIAN DAN WARNA SUDAH DIPILIH!
+Urutan WAJIB: Nama → Varian → Warna → Jumlah → Metode Bayar → Alamat → Ongkir.
 
 LANGKAH 3 — CEK ONGKIR:
 - Minta alamat pengiriman (Jalan, RT/RW, Kelurahan, Kecamatan, Kota/Kabupaten).
@@ -513,7 +516,7 @@ PANDUAN SITUASI TIDAK TERDUGA:
                 type: "function",
                 function: {
                     name: "cek_ongkir",
-                    description: "Mengecek biaya ongkos kirim JNE dan J&T dari Kediri ke kota tujuan di Indonesia.",
+                    description: "Mengecek biaya ongkos kirim J&T dari Kediri ke kota tujuan di Indonesia.",
                     parameters: {
                         type: "object",
                         properties: {
@@ -902,7 +905,7 @@ JUMLAH: [jumlah paket atau pcs, atau "belum"]
 DETAIL PER NAMA: [pembagian jumlah per nama, misal "Andi 25, Budi 25" atau "belum"]
 ALAMAT: [alamat lengkap atau "belum"]
 HARGA: [sudah disebutkan / belum]
-ONGKIR: [Tulis NOMINAL aktual jika sudah ada di chat, contoh: "Rp 18.000 (JNE REG)" atau "belum dicek". JANGAN tulis hanya "sudah dicek".]
+ONGKIR: [Tulis NOMINAL aktual jika sudah ada di chat, contoh: "Rp 18.000 (J&T REG)" atau "belum dicek". JANGAN tulis hanya "sudah dicek".]
 METODE BAYAR: [Transfer / COD / belum]
 STATUS: [opening / gali kebutuhan / negosiasi / menunggu alamat / menunggu rekap / menunggu transfer / closing / selesai]
 UPSELLING_STATUS: [belum ditawarkan / sudah ditawarkan namun belum closing / sudah closing upsell]
@@ -911,7 +914,7 @@ WA_LABELS: [Isi dengan label WA yang PALING relevan dari daftar ini berdasarkan 
 CATATAN: [info penting lain, keluhan, permintaan khusus]
 
 ATURAN PENTING untuk field ONGKIR:
-- Jika bot sudah membalas hasil cek ongkir di chat (ada nominal Rp), WAJIB tulis nominalnya. Contoh: "Rp 18.000 (JNE REG, 2-3 hari)"
+- Jika bot sudah membalas hasil cek ongkir di chat (ada nominal Rp), WAJIB tulis nominalnya. Contoh: "Rp 18.000 (J&T REG, 2-3 hari)"
 - Jika ongkir belum dicek, tulis "belum dicek"
 - JANGAN tulis hanya "sudah dicek" tanpa nominal
 
