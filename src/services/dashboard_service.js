@@ -444,21 +444,15 @@ function initDashboard(port = 3000) {
         order: [['last_updated', 'DESC']]
       });
 
-      // Hybrid detection: wa_labels (prioritas) → regex pada teks summary (fallback)
-      const CLOSING_LABEL_NAMES = ['Closing', 'Menunggu Transfer'];
-      const CLOSING_STATUS_RE   = /status:\s*(closing|selesai|menunggu\s*transfer)/i;
-
+      // Filter: hanya kontak yang sudah transfer / closing / selesai
+      const CLOSING_STATUSES = ['menunggu transfer', 'closing', 'selesai'];
       const closingList = allSummaries.filter(s => {
-        try {
-          const labels = JSON.parse(s.wa_labels || '[]');
-          if (labels.some(l => CLOSING_LABEL_NAMES.includes(l))) return true;
-        } catch(_) {}
-        return CLOSING_STATUS_RE.test(s.summary || '');
+        const summaryLower = (s.summary || '').toLowerCase();
+        return CLOSING_STATUSES.some(st => summaryLower.includes(`status: ${st}`));
       });
 
       res.json(closingList);
     } catch (e) {
-
       res.status(500).json({ error: e.message });
     }
   });
@@ -1390,11 +1384,10 @@ function initDashboard(port = 3000) {
         where: { store_wa_id: req.params.storeId },
         attributes: ['contact_id']
       });
-      // Kembalikan array sederhana: ["id1@c.us", "id2@lid", ...]
       res.json(records.map(r => r.contact_id));
     } catch (e) {
       logger.error(`[Paused-Contacts API] ${e.message}`);
-      res.json([]); // Fallback aman: array kosong
+      res.json([]);
     }
   });
 

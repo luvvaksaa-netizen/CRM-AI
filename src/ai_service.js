@@ -18,9 +18,7 @@ const logger = require('./utils/logger');
 const mengantarService = require('./services/mengantar_service');
 const { getSendableMedia, getKnowledgeMedia } = require('./services/media_service');
 const { MediaAsset } = require('./database/index');
-const groqManager = require('./utils/groq_manager');
 
-// Fallback OpenAI instance (digunakan jika Groq mati/habis limit atau untuk kapabilitas khusus)
 const openai = new OpenAI({ apiKey: config.OPENAI_API_KEY });
 
 // === RESPONSE TYPE CONSTANTS ===
@@ -47,7 +45,35 @@ function countWords(text = '') {
 }
 
 function isStructuredReply(text = '') {
-    return /(\*Nama\*|\*Alamat\*|\*Pesanan\*|\*Harga\*|\*Ongkir\*|\*total\*|rekening|rekap|detail pemesanan|transfer|cod)/i.test(String(text || ''));
+    return /(rekening|rekap pesanan|nama penerima|total harus dibayar|harga produk|ongkir ke|kode pos|nama cetak|pengiriman\s*:\s*(cod|non))/i.test(String(text || ''));
+}
+
+/**
+ * Bersihkan teks respons AI dari noise sebelum dikirim ke WhatsApp.
+ * - Hapus baris berupa catatan internal AI: (Kirim gambar...), (Kirim video...), [SISTEM:...], dsb.
+ * - Normalisasi whitespace berlebih.
+ */
+function sanitizeTextOutput(text = '') {
+    if (!text) return '';
+    const lines = String(text)
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => {
+            if (!line) return false;
+            // Hapus baris yang hanya berisi catatan/action AI dalam kurung atau bracket
+            if (/^\(Kirim/i.test(line)) return false;
+            if (/^\[Kirim/i.test(line)) return false;
+            if (/^\(Mengirim/i.test(line)) return false;
+            if (/^\[SISTEM:/i.test(line)) return false;
+            if (/^\[AI-/i.test(line)) return false;
+            if (/^\*\s*\(Kirim/i.test(line)) return false;
+            // Hapus baris yang hanya berisi tanda baca / emoji saja
+            if (/^[\s\p{Emoji}\-_*#>]+$/u.test(line) && line.length < 4) return false;
+            return true;
+        })
+        .join('\n');
+    // Normalisasi: lebih dari 2 baris kosong berturut → 2
+    return lines.replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function inferAgentProductKind(agent = {}, mediaResults = []) {
@@ -126,35 +152,53 @@ function _autoInjectMedia(content, kind, sendableMedia) {
 function buildFastMediaReply(agent, mediaResults = [], interactionCount = 1) {
     const kind = inferAgentProductKind(agent, mediaResults);
     if (interactionCount === 1 && kind === 'uv') {
-        return 'Hai kak! Ini stiker UV kami 😊\nMau varian yang mana kak?';
+        return 'Untuk promo Stiker UV masih tersedia ya bun 😊\nMau pilih varian yang mana bun?';
     }
     if (interactionCount === 1 && kind === 'dtf') {
-        return 'Hai kak! Ini label DTF kami 😊\nMau varian yang mana kak?';
+        return 'Untuk promo Label Nama DTF masih tersedia ya bun 😊\nMau pilih varian yang mana bun?';
     }
-    return 'Ini ya kak 😊\nMau pilih yang mana kak?';
+    return 'Ini ya bun 😊\nMau pilih yang mana bun?';
 }
 
-/**
- * Memecah teks menjadi bubble-bubble WhatsApp.
- * Hanya split di baris baru (\n) — TIDAK memotong kalimat per kata.
- * Tujuan: AI bebas menulis kalimat panjang & natural.
- * Rekap/invoice tetap utuh dalam 1 bubble agar tidak terpotong.
- */
+function splitLongBubble(text, maxWords = NORMAL_BUBBLE_MAX_WORDS) {
+    const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+    if (words.length <= maxWords) return [String(text || '').trim()].filter(Boolean);
+
+    const chunks = [];
+    for (let i = 0; i < words.length; i += maxWords) {
+        chunks.push(words.slice(i, i + maxWords).join(' '));
+    }
+    return chunks;
+}
+
 function prepareOutboundBubbles(text) {
     const clean = sanitizeTextOutput(text);
     if (!clean) return [];
 
-    // Rekap/order/payment: kirim sebagai 1 blok utuh, jangan dipecah
+    // Rekap/order/payment harus tetap utuh supaya data transaksi tidak hilang.
     if (isStructuredReply(clean)) return [clean];
 
-    // Split hanya berdasarkan baris baru — biarkan AI menulis secara natural
-    const bubbles = clean
-        .split(/\n+/)
+    // Pecah hanya di ENTER GANDA (\n\n) — batas alami antar bubble.
+    // Single newline dianggap masih 1 bubble (misal: list keunggulan produk).
+    const rawBubbles = clean
+        .split(/\n{2,}/)
         .map(part => part.trim())
         .filter(Boolean);
 
-    return bubbles.length > 0 ? bubbles : [clean];
+    // HARD CAP: Maksimal 3 bubble per respons untuk mencegah spam.
+    // Jika AI menghasilkan lebih dari 3 bagian, gabungkan sisanya ke bubble terakhir.
+    const MAX_BUBBLES = 3;
+    if (rawBubbles.length <= MAX_BUBBLES) {
+        return rawBubbles;
+    }
+    // Gabungkan bubble ke-3 dan seterusnya menjadi satu bubble akhir
+    const merged = [
+        ...rawBubbles.slice(0, MAX_BUBBLES - 1),
+        rawBubbles.slice(MAX_BUBBLES - 1).join('\n')
+    ];
+    return merged;
 }
+
 
 // ══════════════════════════════════════════════════════════════════
 // FAULT-TOLERANT CONCURRENCY LIMITER (Deadlock-Proof)
@@ -294,12 +338,136 @@ LABEL OTOMATIS YANG BOLEH DIPAKAI:
 ${labelSection}
 
 ═══════════════════════════════════════════
-SAPAAN CUSTOMER — WAJIB "BUNDA" / "BUN":
+FLEKSIBILITAS PRODUK (WAJIB DIIKUTI):
 ═══════════════════════════════════════════
-⚡ ATURAN MUTLAK: Gunakan sapaan "bun" atau "bunda" untuk SEMUA percakapan dengan customer.
-Contoh BENAR : "Baik bun 😊", "Iya bunda 😊", "Mau pesan berapa paket bun?", "Silakan bun 😊"
-Contoh SALAH : "Baik kak", "iya kak", "kak mau pesan berapa?" — ⛔ DILARANG
-Jika prompt agen menyebut "kak", GANTI dengan "bun" / "bunda" di setiap balasan.
+Kamu melayani DUA jenis produk. Terima customer mana pun, jangan tolak!
+
+🟦 Label DTF (untuk BAJU/KAIN) → ditempel dengan setrika, ukuran 5.5x1.5 cm, awet 3-5 tahun
+🟧 Stiker UV DTF (untuk BENDA KERAS) → untuk botol, helm, tumbler, buku, plastik, kaca, ember, dll.
+
+ATURAN PENTING:
+- Jika customer di nomor DTF tapi mau beli UV → LAYANI, iyakan, tanyakan varian UV.
+- Jika customer di nomor UV tapi mau beli DTF → LAYANI, iyakan, tanyakan varian DTF.
+- Tentukan produk berdasarkan KEBUTUHAN customer, bukan berdasarkan nomor WA.
+- Jika customer belum jelas mau produk apa, tanyakan dulu: "Bunda mau label untuk baju atau stiker untuk benda keras? 😊"
+- Harga KEDUANYA sama: Rp 39.000 / paket (isi 50 pcs), maksimal 2 nama per paket.
+
+═══════════════════════════════════════════
+GAYA BAHASA & PANJANG PESAN:
+═══════════════════════════════════════════
+⚡ ATURAN WAJIB 1: Tulis respons singkat dan natural seperti CS manusia via WhatsApp.
+⚡ ATURAN WAJIB 2: Satu respons = MAKSIMAL 2-3 kalimat/bagian pendek. Tidak boleh lebih.
+⚡ ATURAN WAJIB 3: Gunakan sapaan "bun" atau "bunda" SELALU. DILARANG pakai "kak".
+⚡ ATURAN WAJIB 4: Emoji secukupnya (😊 🥰 🙏), tidak berlebihan.
+⚡ ATURAN WAJIB 5: Akhiri dengan pertanyaan untuk menggiring closing.
+
+⛔ YANG DILARANG KERAS:
+- DILARANG menulis catatan internal seperti "(Kirim gambar...)", "(Kirim video...)", "[SISTEM:...]" — sistem akan mengirimnya secara otomatis.
+- DILARANG membuat lebih dari 3 bagian teks dalam satu respons.
+- DILARANG menulis daftar panjang yang bertele-tele.
+
+Cara menulis yang BENAR (contoh respons pembukaan):
+"Hai bun! 😊 Label nama DTF kami masih tersedia ya 🥰
+Bisa dibantu dengan Bunda siapa dan darimana nih bund?"
+
+Cara menulis yang SALAH:
+"Hai bun! 😊\nLabel nama DTF kami masih tersedia.\nIni dia katalog varian fontnya.\nSilakan dipilih ya bun! 🤩\n(Kirim gambar katalog varian font)\nDan ini juga ada video cara setrika labelnya.\nCek videonya ya bun! 🎬\n(Kirim video produk/demo cetak)\nMau yang varian mana bun?"
+
+═══════════════════════════════════════════
+ALUR PERCAKAPAN YANG WAJIB DIIKUTI:
+═══════════════════════════════════════════
+
+LANGKAH 1 — OPENING (Pesan pertama dari customer):
+- Kirim katalog/video produk via tool kirim_media_katalog.
+- Tanya nama dan asal daerah: "Bisa dibantu dengan Bunda siapa dan darimana nih bund? 🥰"
+- Jawab pertanyaan harga/produk secara singkat.
+
+LANGKAH 2 — GALI KEBUTUHAN (Satu per satu, jangan tanya sekaligus):
+Kumpulkan data berikut secara NATURAL, satu pertanyaan per giliran:
+  a) Produk yang diinginkan (DTF/UV) — jika belum jelas
+  b) Nama yang akan dicetak (maks 2 nama per paket, tanyakan pastikan huruf besar/kecil sesuai)
+  c) Varian font (tunjukkan katalog jika belum tahu)
+  d) Warna yang diinginkan (tunjukkan katalog jika belum tahu)
+  e) Jumlah paket
+  f) Cara pembayaran: COD atau Transfer?
+
+LANGKAH 3 — CEK ONGKIR:
+- Minta alamat pengiriman (Jalan, RT/RW, Kelurahan, Kecamatan, Kota/Kabupaten).
+- Setelah dapat alamat, WAJIB gunakan tool cek_ongkir.
+- Jika customer pilih Transfer: kasih tau ada potongan ongkir khusus hari ini.
+- Jika customer pilih COD: sampaikan ongkir normalnya.
+
+LANGKAH 4 — REKAP PESANAN (HANYA SEKALI, saat SEMUA data sudah lengkap):
+Kirim rekap dalam SATU pesan utuh menggunakan format ini persis:
+
+Rekap pesanan Bunda [Nama]:
+
+Pengiriman : [COD / NON COD (Transfer)]
+Nama Penerima : [Nama]
+No WA : [Nomor WA customer — ambil otomatis dari identitas chat]
+Alamat : [Alamat lengkap]
+Kode Pos : [Kode pos jika disebutkan, atau -]
+Produk : [Label Nama DTF / Stiker UV DTF]
+Nama Cetak : [Nama 1] | [Nama 2]
+Varian : [Varian yang dipilih]
+Warna : [Warna yang dipilih]
+Jumlah : [X] Paket
+Harga Produk : Rp [Harga total produk]
+Ongkir ke [Kota] : Rp [Ongkir]
+Total Harus Dibayar : Rp [Total]
+Catatan : [Catatan khusus, atau -]
+
+Pembayaran ke:
+🏦 Bank Mandiri: 1710016814843 a/n PARE DIGITAL CUSTOM
+🏦 Bank BCA: 0333965841 a/n PARE DIGITAL CUSTOM
+
+Mohon dicek ya bund, terutama produk dan alamatnya 🥰
+Mohon balas IYA jika sudah sesuai 🙏
+
+ATURAN REKAP PENTING:
+- JANGAN tampilkan rekap jika ada data yang belum lengkap!
+- Rekap hanya ditampilkan 1 kali. Jika ada perubahan, update rekapnya dan kirim ulang 1 kali.
+- Nomor WA customer diambil otomatis dari konteks chat, TIDAK perlu ditanya.
+- Jika customer tiba-tiba transfer tanpa bilang COD/NON COD → Pengiriman = NON COD.
+- Jika customer menyebut COD → Pengiriman = COD, JANGAN pernah minta bukti transfer.
+
+LANGKAH 5 — CLOSING:
+- Jika customer konfirmasi "IYA" atau "sudah sesuai" → closing, ucapkan terima kasih.
+- Kirim estimasi pengiriman setelah konfirmasi:
+
+Berikut estimasi pengerjaan:
+LUNAS/Transfer: PO 2-3 hari
+COD: PO 3-4 hari
+
+Estimasi pengiriman:
+Pulau Jawa: 3-5 hari
+Pulau Bali: 5-6 hari
+Pulau Sumatra: 7-8 hari kerja
+Pulau Kalimantan/Sulawesi: 8-9 hari kerja
+
+- Gunakan tool tambahkan_label_chat: ["COD", "Closing"] atau ["Menunggu Transfer", "Closing"]
+- Gunakan tool matikan_bot_kontak agar CS manusia yang melanjutkan proses.
+
+LANGKAH 6 — UPSELLING (1 kali saja setelah rekap dikonfirmasi):
+Tawarkan Paket Back to School Rp 97.000:
+✅ 54 pcs stiker buku
+✅ 42 pcs stiker alat tulis
+✅ 60 pcs stiker tempat makan
+✅ 50 pcs label nama DTF BONUS
+Plus subsidi ongkir (gratis untuk Jawa, Rp 20.000 untuk luar Jawa)
+Kirim gambar via tool: label "Paket Bundling Back to School"
+Tawarkan HANYA SEKALI setelah closing utama.
+
+═══════════════════════════════════════════
+DILARANG KERAS (DRACONIAN RULES):
+═══════════════════════════════════════════
+- DILARANG tanya ulang data yang sudah diberikan customer.
+- DILARANG menolak customer karena produk berbeda (DTF vs UV) — LAYANI SEMUA.
+- DILARANG kirim rekap sebelum semua data lengkap.
+- DILARANG kirim rekap lebih dari 1 kali kecuali ada update dari customer.
+- DILARANG minta bukti transfer jika customer COD.
+- DILARANG buat customer marah — empati dulu, solusi kemudian.
+- DILARANG menulis paragraf panjang — selalu pecah menjadi bubble-bubble pendek.
 
 ═══════════════════════════════════════════
 STATUS PERCAKAPAN & INSTRUKSI KONTEKSTUAL:
@@ -308,38 +476,36 @@ INTERAKSI KE-${interactionCount} DENGAN PELANGGAN INI.
 ${interactionCount === 1
   ? `🚨 INI PESAN PERTAMA — WAJIB JALANKAN OPENING FLOW SEKARANG JUGA:
 
-LANGKAH WAJIB (TIDAK BOLEH DILEWATI):
-1. PANGGIL TOOL kirim_media_katalog SEKARANG dengan label_names sesuai agent:
-   - Agent DTF (label baju/kain/setrika): label_names = ["katalog dtf", "video dtf"]
-   - Agent UV (stiker keras/botol/helm): label_names = ["katalog uv", "video uv"]
-2. Setelah tool dipanggil, kirim teks sambutan singkat dan natural.
-3. Akhiri dengan pertanyaan mau varian yang mana.
+LANGKAH WAJIB:
+1. PANGGIL TOOL kirim_media_katalog dengan label_names sesuai produk yang ditanya:
+   - Untuk label baju/kain/DTF: label_names = ["katalog dtf", "video dtf"]
+   - Untuk stiker keras/UV/botol/helm: label_names = ["katalog uv", "video uv"]
+   - Jika belum jelas produknya, kirim semua katalog.
+2. Kirim teks sambutan singkat (perhatikan aturan bubble).
+3. Tanya nama dan asal daerah customer.
+4. Akhiri dengan pertanyaan mau varian yang mana.
 
 ⛔ DILARANG: Menjawab hanya teks tanpa memanggil kirim_media_katalog.
-⛔ DILARANG: Bertanya data apapun (nama/jumlah/alamat) sebelum opening selesai.
 ✅ WAJIB: Tool kirim_media_katalog HARUS dipanggil di respons pertama ini.`
   : `REKAP PEMBAHASAN SEBELUMNYA (Long-Term Memory):\n${conversationSummary || 'Percakapan sedang berlangsung.'}
 
 📌 ATURAN SAAT CUSTOMER TANYA VARIAN/KATALOG (MID-CONVERSATION):
 Jika customer bertanya "varian apa aja", "ada pilihan apa", "lihat katalog", "gambarnya mana", atau sejenisnya:
-→ WAJIB panggil kirim_media_katalog dengan label katalog sesuai agent (katalog dtf / katalog uv).
-→ DILARANG menjawab hanya teks "berikut pilihannya" tanpa mengirim gambar katalog.`
+→ WAJIB panggil kirim_media_katalog dengan label katalog sesuai produk yang sedang dibahas.
+→ DILARANG menjawab hanya teks tanpa mengirim gambar katalog.`
 }
 
 ═══════════════════════════════════════════
-PANDUAN KECERDASAN LANJUTAN (Advanced Intelligence):
+PANDUAN SITUASI TIDAK TERDUGA:
 ═══════════════════════════════════════════
-Kamu adalah CS yang sangat cerdas. Berikut panduan untuk menangani berbagai situasi tidak terduga:
-
-1. PELANGGAN MARAH/KECEWA: Tunjukkan empati dulu, validasi perasaan mereka, baru tawarkan solusi. Jangan langsung defensif.
-2. BAHASA GAUL/TYPO: Pahami maksud dari pesan yang ditulis dengan singkatan atau typo. Misal "brp hrg" = "berapa harga", "gw mw psen" = "saya mau pesan".
-3. PESAN AMBIGU: Jika pesan pelanggan sangat ambigu atau hanya berisi emoji/stiker, tanyakan dengan sopan apa yang bisa dibantu.
-4. DI LUAR TOPIK: Jika pelanggan bertanya hal yang tidak ada di knowledge, jawab dengan jujur dan arahkan kembali ke produk/layanan.
-5. PELANGGAN BARU KEMBALI: Jika ada rekap sebelumnya, sambut kembali dan tanyakan progress dari diskusi terakhir.
-6. NEGOSIASI: Bersikap fleksibel tapi tegas. Arahkan ke value produk, bukan perang harga.
-7. SPAM/ISENG: Jika pelanggan mengirim hal tidak relevan berulang kali, tetap profesional dan singkat.
-8. MULTI-BAHASA: Jika pelanggan chat dalam bahasa Inggris atau bahasa lain, balas dalam bahasa yang sama.
+1. PELANGGAN MARAH/KECEWA: Tunjukkan empati dulu, baru bantu solusi.
+2. BAHASA GAUL/TYPO: Pahami maksudnya. "brp hrg" = "berapa harga".
+3. PESAN AMBIGU: Tanya dengan sopan apa yang bisa dibantu.
+4. NEGOSIASI HARGA: Arahkan ke value produk. Tawarkan potongan ongkir transfer.
+5. TANYA ASAL PENGIRIMAN: "Dari Kediri, Jawa Timur bund 🙏"
+6. KOMPLAIN TIDAK SAMPAI: Empati, tanyakan resi, arahkan ke CS manusia.
 `.trim();
+
 
         // === TOOL DEFINITIONS ===
         const tools = [
@@ -502,29 +668,14 @@ ${sysPrompt}
             { role: "user", content: userContent }
         ];
 
-        // === FIRST AI CALL (with timeout & rotation) ===
-        const payload = {
-            model: config.GROQ_MODEL_TEXT,
+        // === FIRST AI CALL (with timeout) ===
+        const response = await openai.chat.completions.create({
+            model: modelName,
             messages,
             tools,
             tool_choice: "auto",
             temperature: 0.55,
-        };
-
-        let response;
-        try {
-            response = await groqManager.executeWithRotation(async (client) => {
-                return await client.chat.completions.create(payload, { timeout: AI_CHAT_TIMEOUT_MS });
-            });
-        } catch (err) {
-            if (err.message === "GROQ_ALL_KEYS_EXHAUSTED" || err.message === "GROQ_UNAVAILABLE") {
-                logger.warn("[AI] Groq tidak tersedia atau habis limit. Menggunakan fallback ke OpenAI...");
-                payload.model = modelName; // Gunakan config.MODEL_NAME bawaan
-                response = await openai.chat.completions.create(payload, { timeout: AI_CHAT_TIMEOUT_MS });
-            } else {
-                throw err;
-            }
-        }
+        }, { timeout: AI_CHAT_TIMEOUT_MS });
 
         let responseMessage = response.choices[0].message;
         const downstreamToolCalls = responseMessage.tool_calls || [];
@@ -650,30 +801,14 @@ ${sysPrompt}
             let finalContent = sanitizeTextOutput(responseMessage.content || "");
 
             if (needsSecondCall && !canFastReturnMedia) {
-                const secondPayload = {
-                    model: config.GROQ_MODEL_TEXT, 
+                const secondResponse = await openai.chat.completions.create({ 
+                    model: modelName, 
                     messages: [
                         ...messages,
-                        { role: "system", content: "PENGINGAT TEKNIS: Jangan tulis link/tag media/ID/timestamp. Untuk chat normal, pisahkan dengan newline agar enak dibaca. Untuk rekap/order/payment, tulis lengkap dan rapi." },
-                        responseMessage
+                        { role: "system", content: "PENGINGAT TEKNIS: Jangan tulis link/tag media/ID/timestamp. Untuk chat normal, pisahkan bubble dengan newline dan maksimal 10 kata per bubble. Untuk rekap/order/payment, tulis lengkap dan rapi." }
                     ],
                     temperature: 0.45
-                };
-                
-                let secondResponse;
-                try {
-                    secondResponse = await groqManager.executeWithRotation(async (client) => {
-                        return await client.chat.completions.create(secondPayload, { timeout: AI_SECOND_CALL_TIMEOUT_MS });
-                    });
-                } catch (err) {
-                    if (err.message === "GROQ_ALL_KEYS_EXHAUSTED" || err.message === "GROQ_UNAVAILABLE") {
-                        logger.warn("[AI] Groq (2nd call) tidak tersedia, fallback ke OpenAI...");
-                        secondPayload.model = modelName;
-                        secondResponse = await openai.chat.completions.create(secondPayload, { timeout: AI_SECOND_CALL_TIMEOUT_MS });
-                    } else {
-                        throw err;
-                    }
-                }
+                }, { timeout: AI_SECOND_CALL_TIMEOUT_MS });
                 responseMessage = secondResponse.choices[0].message;
                 finalContent = responseMessage.content;
             } else if (canFastReturnMedia && !finalContent) {
@@ -751,8 +886,8 @@ async function generateChatSummary(history = []) {
             `${h.is_from_me ? 'Admin' : 'Pelanggan'}: ${h.body || h.content}`
         ).join('\n');
 
-        const payload = {
-            model: 'llama-3.1-8b-instant', // Gunakan model 8B terbaru agar terhindar dari limit TPM 6000 (Free Tier 70B)
+        const response = await openai.chat.completions.create({
+            model: config.MODEL_NAME || "gpt-4o-mini",
             messages: [
                 { role: "system", content: `Tugasmu membuat REKAP DATA CUSTOMER dalam format KEY-VALUE yang terstruktur.
 Ekstrak SEMUA informasi yang sudah disebutkan customer.
@@ -789,22 +924,7 @@ ATURAN PENTING untuk field WA_LABELS:
                 { role: "user", content: `Berikut riwayat chatnya, buatkan rekapannya:\n\n${historyText}` }
             ],
             temperature: 0.2 // Lebih stabil dan konsisten untuk format terstruktur
-        };
-
-        let response;
-        try {
-            response = await groqManager.executeWithRotation(async (client) => {
-                return await client.chat.completions.create(payload, { timeout: AI_CHAT_TIMEOUT_MS });
-            });
-        } catch (err) {
-            if (err.message === "GROQ_ALL_KEYS_EXHAUSTED" || err.message === "GROQ_UNAVAILABLE") {
-                logger.warn("[AI] Groq (Summary) tidak tersedia, fallback ke OpenAI...");
-                payload.model = config.MODEL_NAME || "gpt-4o-mini";
-                response = await openai.chat.completions.create(payload, { timeout: AI_CHAT_TIMEOUT_MS });
-            } else {
-                throw err;
-            }
-        }
+        }, { timeout: AI_CHAT_TIMEOUT_MS });
 
         return response.choices[0].message.content.trim();
     } catch (e) {
@@ -820,26 +940,11 @@ ATURAN PENTING untuk field WA_LABELS:
 async function transcribeAudio(audioPath) {
     if (!fs.existsSync(audioPath)) return null;
     try {
-        const payload = {
+        const response = await openai.audio.transcriptions.create({
             file: fs.createReadStream(audioPath),
-            model: config.GROQ_MODEL_AUDIO,
+            model: "whisper-1",
             language: "id" // Fokus ke Bahasa Indonesia
-        };
-
-        let response;
-        try {
-            response = await groqManager.executeWithRotation(async (client) => {
-                return await client.audio.transcriptions.create(payload);
-            });
-        } catch (err) {
-            if (err.message === "GROQ_ALL_KEYS_EXHAUSTED" || err.message === "GROQ_UNAVAILABLE") {
-                logger.warn("[AI] Groq (Whisper) tidak tersedia, fallback ke OpenAI...");
-                payload.model = "whisper-1";
-                response = await openai.audio.transcriptions.create(payload);
-            } else {
-                throw err;
-            }
-        }
+        });
         return response.text;
     } catch (e) {
         logger.error(`Gagal transkripsi VN: ${e.message}`);
