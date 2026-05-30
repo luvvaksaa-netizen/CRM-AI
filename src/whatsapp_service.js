@@ -386,8 +386,12 @@ function setupEventListeners(client, storeWaId) {
         const msgId = message.id?._serialized || message.id?.id;
         if (!msgId) return;
 
-        // PALING CEPAT: Cek in-memory set dulu (menghindari race condition dengan DB write)
-        if (botSentMessageIds.has(msgId)) return;
+        // Berikan delay singkat (1.5 detik) agar jika ini pesan BOT, 
+        // _logBotReply punya waktu untuk mendaftarkan ID ke in-memory tracker (botSentMessageIds).
+        // Ini menghindari race condition dimana AI tercatat sebagai CS Manual.
+        setTimeout(async () => {
+            // PALING CEPAT: Cek in-memory set dulu (menghindari race condition dengan DB write)
+            if (botSentMessageIds.has(msgId)) return;
 
         // Cek apakah pesan ini sudah dicatat (mungkin sudah dicatat oleh bot sendiri via _logBotReply)
         try {
@@ -433,12 +437,11 @@ function setupEventListeners(client, storeWaId) {
                 const { triggerCsManualSummaryUpdate } = require('./services/bot_activation_service');
                 triggerCsManualSummaryUpdate(storeWaId, message.to, 'CS (dari HP)');
             } catch (_) { /* non-critical */ }
-
         } catch (e) {
             // Non-critical
         }
+        }, 1500); // Tutup setTimeout
     });
-
 
     client.on('disconnected', (reason) => {
         logger.error(`[${storeWaId}] WhatsApp Terputus: ${reason}`);

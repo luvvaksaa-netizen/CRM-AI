@@ -224,6 +224,9 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
     const debounceKey = `${storeWaId}_${contactId}`;
     let customerMediaContext = "";
     let tempPath = "";
+    // Deklarasi identity di awal agar selalu tersedia (termasuk di catch block)
+    let identity = { displayName: contactId, phone: null, lid: null, type: 'unknown', source: 'fallback' };
+    let senderName = contactId;
 
     try {
         // ═══════════════════════════════════════════════════════
@@ -289,8 +292,7 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
             : body;
 
         if (!logBody) {
-            const logDisplay = `[${identity.displayName || ''}${identity.phone ? ' | +' + identity.phone : ''}] (${contactId})`;
-            logger.info(`[${storeWaId}] Pesan kosong dari ${logDisplay} diabaikan.`);
+            logger.info(`[${storeWaId}] Pesan kosong dari [${contactId}] diabaikan.`);
             _cleanupTempFile(tempPath, storeWaId);
             return;
         }
@@ -335,14 +337,19 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
                 }, 5000);
             }
         }
-        const identity = buildContactIdentity(contactId, {
-            name: contact.name,
-            pushname: contact.pushname,
-            shortName: contact.shortName,
-            displayName: contact.displayName,
-            number: resolvedPhone || contact.number
-        });
-        const senderName = identity.displayName;
+        try {
+            identity = buildContactIdentity(contactId, {
+                name: contact.name,
+                pushname: contact.pushname,
+                shortName: contact.shortName,
+                displayName: contact.displayName,
+                number: resolvedPhone || contact.number
+            });
+        } catch (identityErr) {
+            logger.warn(`[${storeWaId}] buildContactIdentity gagal [${contactId}]: ${identityErr.message}`);
+            // identity tetap menggunakan default fallback dari atas
+        }
+        senderName = identity.displayName;
         const quotedContext = await _extractQuotedContext(message, storeWaId);
 
         await dashboard.addToChatHistory(storeWaId, {

@@ -7,7 +7,21 @@ const { DATA_DIR } = require('../config');
 const sequelize = new Sequelize({
   dialect: 'sqlite',
   storage: path.join(DATA_DIR, 'database.sqlite'),
-  logging: false
+  logging: false,
+  // Retry otomatis saat database locked (default SQLite = 0ms, ini set 15 detik)
+  dialectOptions: {
+    busyTimeout: 15000
+  },
+  // Connection pool: SQLite sebaiknya 1 koneksi write agar tidak race
+  pool: {
+    max: 1,
+    min: 0,
+    acquire: 30000,
+    idle: 10000
+  },
+  retry: {
+    max: 3  // Retry query otomatis 3x jika gagal
+  }
 });
 
 /**
@@ -301,8 +315,10 @@ async function initDB() {
   try {
     await sequelize.authenticate();
     
-    // TAHAP 1 UPGRADE (Anti-Lock Database): Aktifkan WAL Mode untuk performa konkurensi tingkat tinggi
+    // TAHAP 1 UPGRADE (Anti-Lock Database): Aktifkan WAL Mode + busy_timeout
     await sequelize.query('PRAGMA journal_mode=WAL;');
+    await sequelize.query('PRAGMA busy_timeout=15000;');
+    await sequelize.query('PRAGMA synchronous=NORMAL;');  // Performa lebih baik dengan WAL
     
     // 1. Sync Standard (Hanya buat tabel jika belum ada)
     await sequelize.sync(); 
@@ -337,6 +353,17 @@ async function initDB() {
     // Smart Label System (2026-05-25)
     // Menyimpan label WA aktif per kontak sebagai JSON array untuk visibilitas dashboard
     await safeAddColumn('ChatSummaries', 'wa_labels', { type: DataTypes.TEXT, defaultValue: '[]' });
+
+    // Anti-Duplikat: Unique index pada wa_message_id untuk mencegah pesan dobel di dashboard
+    try {
+      await queryInterface.addIndex('ChatMessages', ['wa_message_id'], {
+        unique: true,
+        where: { wa_message_id: { [Sequelize.Op.not]: null } },
+        name: 'chat_messages_wa_message_id_unique'
+      });
+    } catch (_) {
+      // Index sudah ada atau kolom belum ada — skip
+    }
 
     // RocketChat Hybrid Mode Columns
     await safeAddColumn('Stores', 'connection_mode', { type: DataTypes.STRING, defaultValue: 'wwebjs' });

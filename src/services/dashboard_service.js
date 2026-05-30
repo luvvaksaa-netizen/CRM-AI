@@ -1484,7 +1484,8 @@ async function addToChatHistory(storeId, msg) {
         where: { store_wa_id: storeId, wa_message_id: quotedMessageId }
       }).catch(() => null);
     }
-    const chatMsg = await ChatMessage.create({
+
+    const messageData = {
       store_wa_id: storeId,
       contact_id:  msg.from,
       wa_message_id: waMessageId,
@@ -1504,7 +1505,21 @@ async function addToChatHistory(storeId, msg) {
       is_from_me:  msg.isMe || false,
       type:        msg.type || 'chat',
       timestamp:   msg.timestamp || new Date()
-    });
+    };
+
+    let chatMsg;
+    if (waMessageId) {
+      // Gunakan findOrCreate untuk mencegah race condition duplikat
+      const [record, created] = await ChatMessage.findOrCreate({
+        where: { wa_message_id: waMessageId },
+        defaults: messageData
+      });
+      if (!created) return; // Sudah ada, skip
+      chatMsg = record;
+    } else {
+      chatMsg = await ChatMessage.create(messageData);
+    }
+
     if (io) io.emit('newMessage', { storeId, msg: chatMsg.dataValues });
   } catch (err) {
     // Tangkap UniqueConstraint error juga sebagai dedup fallback
