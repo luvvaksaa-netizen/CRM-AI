@@ -907,7 +907,7 @@ METODE BAYAR: [Transfer / COD / belum]
 STATUS: [opening / gali kebutuhan / negosiasi / menunggu alamat / menunggu rekap / menunggu transfer / closing / selesai]
 UPSELLING_STATUS: [belum ditawarkan / sudah ditawarkan namun belum closing / sudah closing upsell]
 NEXT ACTION: [apa langkah selanjutnya yang perlu dilakukan bot]
-WA_LABELS: [Isi dengan label WA yang PALING relevan dari daftar ini berdasarkan STATUS: "Closing", "Hot Lead", "Menunggu Transfer", "Menunggu Rekap", "Menunggu Alamat", "AI Lead Aktif", "AI Lead Baru". Pilih hanya 1-2 yang paling tepat dan tulis dalam format array, misal: [Closing] atau [Hot Lead, Menunggu Rekap]]
+WA_LABELS: [Isi dengan label WA yang PALING relevan dari daftar ini berdasarkan STATUS: "Closing", "Menunggu Transfer", "Menunggu Rekap", "COD", "AI Lead Aktif", "AI Lead Baru". Pilih hanya 1-2 yang paling tepat dalam format array, misal: [Closing] atau [COD]]
 CATATAN: [info penting lain, keluhan, permintaan khusus]
 
 ATURAN PENTING untuk field ONGKIR:
@@ -916,11 +916,13 @@ ATURAN PENTING untuk field ONGKIR:
 - JANGAN tulis hanya "sudah dicek" tanpa nominal
 
 ATURAN PENTING untuk field WA_LABELS:
-- STATUS closing/selesai → WA_LABELS: [Closing]
-- STATUS menunggu transfer → WA_LABELS: [Menunggu Transfer]
-- STATUS negosiasi → WA_LABELS: [Hot Lead]
-- STATUS gali kebutuhan → WA_LABELS: [AI Lead Aktif]
-- STATUS opening → WA_LABELS: [AI Lead Baru]` },
+- JIKA STATUS opening/baru → WA_LABELS: [AI Lead Baru]
+- JIKA STATUS gali kebutuhan → WA_LABELS: [AI Lead Aktif]
+- JIKA data masih dikumpulkan dan belum direkap utuh → WA_LABELS: [Menunggu Rekap]
+- JIKA pesanan COD (Bayar di Tempat) dan belum deal → WA_LABELS: [COD]
+- JIKA pesanan NON-COD (Transfer) dan belum ada bukti transfer → WA_LABELS: [Menunggu Transfer]. JANGAN BERIKAN jika COD!
+- JIKA pesanan COD dan customer SUDAH KONFIRMASI DEAL → WA_LABELS: [Closing, COD]
+- JIKA pesanan TRANSFER dan customer SUDAH MENGIRIM BUKTI TRANSFER → WA_LABELS: [Closing]` },
                 { role: "user", content: `Berikut riwayat chatnya, buatkan rekapannya:\n\n${historyText}` }
             ],
             temperature: 0.2 // Lebih stabil dan konsisten untuk format terstruktur
