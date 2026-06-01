@@ -942,12 +942,10 @@ async function _logBotReply(storeWaId, contactId, body, botName, waMessageId = n
  * Pembersihan file sementara (Anti-Leak Storage).
  */
 function _cleanupTempFile(tempPath, storeWaId) {
-    if (tempPath && fs.existsSync(tempPath)) {
-        try {
-            fs.unlinkSync(tempPath);
-            logger.info(`[${storeWaId}] File sementara pelanggan dibersihkan dari disk (Storage Aman).`);
-        } catch (e) { /* ignore */ }
-    }
+    // DIBATALKAN: File media dari pelanggan JANGAN DIBERSIHKAN seketika.
+    // Dashboard Web App butuh membaca file ini (/uploads) untuk menampilkan histori obrolan.
+    // Pembersihan akan dilakukan oleh temp_cleanup_service.js (Cron job) secara background
+    // setelah melewati batas retensi 7 hari.
 }
 
 /**

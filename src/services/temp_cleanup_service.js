@@ -3,7 +3,7 @@ const path = require('path');
 const logger = require('../utils/logger');
 const { UPLOADS_DIR, TMP_DIR } = require('../config');
 
-const DEFAULT_MAX_AGE_MS = Number(process.env.TEMP_CLEANUP_MAX_AGE_MS || 60 * 60 * 1000);
+const DEFAULT_MAX_AGE_MS = Number(process.env.TEMP_CLEANUP_MAX_AGE_MS || 7 * 24 * 60 * 60 * 1000); // 7 Hari
 const TEMP_FILE_PREFIXES = ['customer_', 'voice_'];
 const TEMP_DIR_PREFIXES = ['wa-frames-'];
 
