@@ -829,8 +829,23 @@ async function _sendTextBubbles(message, chat, storeWaId, contactId, bubbles, bo
         .filter(Boolean);
 
     const safeList = list.length > 0 ? list : ['Mohon maaf kak, bisa diulangi sebentar?'];
+    const debounceKey = `${storeWaId}_${contactId}`;
 
     for (let i = 0; i < safeList.length; i++) {
+        // HARD STOP: Cek apakah bot sudah dipause sebelum kirim tiap bubble
+        if (pausedContacts.has(debounceKey)) {
+            logger.warn(`[${storeWaId}] HARD STOP: Bubble ke-${i+1} digugurkan karena bot dipause untuk [${contactId}]`);
+            return;
+        }
+        // Juga cek is_bot_active dari database (toggle global)
+        try {
+            const storeCheck = await Store.findOne({ where: { wa_id: storeWaId }, attributes: ['is_bot_active'] });
+            if (!storeCheck || storeCheck.is_bot_active === false) {
+                logger.warn(`[${storeWaId}] HARD STOP: Bot global OFF. Bubble ke-${i+1} digugurkan.`);
+                return;
+            }
+        } catch (_) { /* non-critical, lanjut kirim */ }
+
         const bubble = safeList[i];
         await _markTyping(chat, storeWaId, contactId, message.client);
         if (i > 0) {
