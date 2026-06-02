@@ -660,6 +660,7 @@
                     <select id="followupStoreFilter" class="form-select border shadow-sm" style="width:auto;min-width:160px;font-weight:500;" onchange="loadFollowUps()">
                         <option value="">🏪 Semua Akun WA</option>
                     </select>
+                    <button class="btn btn-light border" onclick="openFollowUpConfig()"><i class="fas fa-cog me-2"></i>Konfigurasi</button>
                     <button class="btn btn-primary" onclick="loadFollowUps()"><i class="fas fa-sync-alt me-2"></i>Segarkan</button>
                 </div>
             </div>
@@ -1230,6 +1231,41 @@
                 <button class="btn-primary-custom w-100 mt-4" id="btnUpload" onclick="uploadMedia()">
                     <i class="fas fa-upload me-2"></i>Upload & Registrasi ke AI
                 </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Follow-Up Config (NEW) -->
+<div class="modal fade" id="modalFollowUpConfig" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="fw-bold m-0"><i class="fas fa-cog me-2 text-primary"></i>Konfigurasi Follow-Up AI</h5>
+                <button class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body bg-light">
+                <p class="text-muted" style="font-size: 0.85rem;">Atur jadwal dan instruksi AI untuk Follow-Up. Konfigurasi ini disimpan per Akun WhatsApp (Store).</p>
+                <div class="mb-3">
+                    <label class="form-label">Akun WhatsApp</label>
+                    <select id="fuConfigStoreSelect" class="form-select" onchange="loadStoreFollowUpConfig(this.value)">
+                        <!-- Injected via JS -->
+                    </select>
+                </div>
+                
+                <div id="fuConfigEditorContainer" style="display: none;">
+                    <div id="fuStagesContainer" class="d-flex flex-column gap-3">
+                        <!-- Stages injected via JS -->
+                    </div>
+                </div>
+                <div id="fuConfigLoading" class="text-center p-4">
+                    <i class="fas fa-spinner fa-spin text-primary fs-3 mb-2"></i>
+                    <p class="text-muted">Memuat Konfigurasi...</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Tutup</button>
+                <button type="button" class="btn btn-primary" onclick="saveFollowUpConfig()"><i class="fas fa-save me-2"></i>Simpan Konfigurasi</button>
             </div>
         </div>
     </div>
@@ -3469,6 +3505,133 @@
         });
     }
 
+
+    // ============================================================
+    // FOLLOW-UP CONFIG
+    // ============================================================
+    let currentFollowUpConfig = null;
+
+    async function openFollowUpConfig() {
+        const modal = new bootstrap.Modal(document.getElementById('modalFollowUpConfig'));
+        modal.show();
+
+        const sel = document.getElementById('fuConfigStoreSelect');
+        sel.innerHTML = '<option value="">-- Pilih Akun WA --</option>';
+        stores.forEach(s => {
+            sel.innerHTML += `<option value="${s.wa_id}">${escapeHtml(s.name)}</option>`;
+        });
+
+        document.getElementById('fuConfigEditorContainer').style.display = 'none';
+        document.getElementById('fuConfigLoading').style.display = 'none';
+    }
+
+    async function loadStoreFollowUpConfig(storeWaId) {
+        if (!storeWaId) {
+            document.getElementById('fuConfigEditorContainer').style.display = 'none';
+            return;
+        }
+
+        document.getElementById('fuConfigEditorContainer').style.display = 'none';
+        document.getElementById('fuConfigLoading').style.display = 'block';
+
+        try {
+            const res = await fetch(`/api/stores/${storeWaId}/followup-config`);
+            currentFollowUpConfig = await res.json();
+            renderFollowUpConfigEditor();
+            document.getElementById('fuConfigLoading').style.display = 'none';
+            document.getElementById('fuConfigEditorContainer').style.display = 'block';
+        } catch (e) {
+            toast('Gagal memuat konfigurasi follow-up', 'error');
+            document.getElementById('fuConfigLoading').style.display = 'none';
+        }
+    }
+
+    function renderFollowUpConfigEditor() {
+        const container = document.getElementById('fuStagesContainer');
+        container.innerHTML = '';
+
+        for (let i = 1; i <= 4; i++) {
+            const cfg = currentFollowUpConfig[i] || { delay_minutes: 60, media_type: 'none', ai_instruction: '' };
+            
+            let timeInputHTML = '';
+            if (cfg.scheduled_hour !== undefined) {
+                timeInputHTML = `
+                    <div class="col-md-4">
+                        <label class="form-label" style="font-size:0.75rem;">Jam Eksekusi</label>
+                        <input type="number" class="form-ctrl form-ctrl-sm" id="fu_hour_${i}" value="${cfg.scheduled_hour}" min="0" max="23">
+                    </div>
+                `;
+            } else {
+                timeInputHTML = `
+                    <div class="col-md-4">
+                        <label class="form-label" style="font-size:0.75rem;">Jeda Menit</label>
+                        <input type="number" class="form-ctrl form-ctrl-sm" id="fu_delay_${i}" value="${cfg.delay_minutes || 60}" min="1">
+                    </div>
+                `;
+            }
+
+            container.innerHTML += `
+                <div class="p-3 bg-white border rounded shadow-sm">
+                    <h6 class="fw-bold text-primary mb-3">Stage ${i}</h6>
+                    <div class="row g-2 mb-2">
+                        ${timeInputHTML}
+                        <div class="col-md-4">
+                            <label class="form-label" style="font-size:0.75rem;">Tipe Media</label>
+                            <select class="form-select form-select-sm" id="fu_media_${i}">
+                                <option value="none" ${cfg.media_type === 'none' ? 'selected' : ''}>Tanpa Media</option>
+                                <option value="image" ${cfg.media_type === 'image' ? 'selected' : ''}>Gambar Saja</option>
+                                <option value="video" ${cfg.media_type === 'video' ? 'selected' : ''}>Video Saja</option>
+                                <option value="mixed" ${cfg.media_type === 'mixed' ? 'selected' : ''}>Gambar/Video</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label" style="font-size:0.75rem;">Instruksi AI (Prompt)</label>
+                        <textarea class="form-ctrl form-ctrl-sm" id="fu_prompt_${i}" rows="2" placeholder="Instruksi untuk AI (misal: Sapa pelanggan dengan ramah...)">${escapeHtml(cfg.ai_instruction || '')}</textarea>
+                    </div>
+                </div>
+            `;
+        }
+    }
+
+    async function saveFollowUpConfig() {
+        const storeWaId = document.getElementById('fuConfigStoreSelect').value;
+        if (!storeWaId) {
+            toast('Pilih akun WA terlebih dahulu', 'error');
+            return;
+        }
+
+        const newConfig = { ...currentFollowUpConfig };
+        for (let i = 1; i <= 4; i++) {
+            newConfig[i] = newConfig[i] || {};
+            
+            const delayEl = document.getElementById(`fu_delay_${i}`);
+            const hourEl = document.getElementById(`fu_hour_${i}`);
+            if (delayEl) newConfig[i].delay_minutes = parseInt(delayEl.value, 10);
+            if (hourEl) newConfig[i].scheduled_hour = parseInt(hourEl.value, 10);
+            
+            newConfig[i].media_type = document.getElementById(`fu_media_${i}`).value;
+            newConfig[i].ai_instruction = document.getElementById(`fu_prompt_${i}`).value;
+        }
+
+        try {
+            const res = await fetch(`/api/stores/${storeWaId}/followup-config`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ config: newConfig })
+            });
+            const data = await res.json();
+            if (res.ok && data.success) {
+                toast('Konfigurasi follow-up berhasil disimpan!', 'success');
+                const modal = bootstrap.Modal.getInstance(document.getElementById('modalFollowUpConfig'));
+                modal.hide();
+            } else {
+                throw new Error(data.message || 'Gagal menyimpan konfigurasi');
+            }
+        } catch (e) {
+            toast(e.message, 'error');
+        }
+    }
 
     function selectPurpose(el) {
         document.querySelectorAll('.purpose-option').forEach(o => o.classList.remove('active'));

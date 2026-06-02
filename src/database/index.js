@@ -47,6 +47,7 @@ const Store = sequelize.define('Store', {
   is_bot_active:    { type: DataTypes.BOOLEAN, defaultValue: true },
   last_active:      { type: DataTypes.DATE,    defaultValue: Sequelize.NOW },
   bot_phone:        { type: DataTypes.STRING,  allowNull: true },
+  followup_config:  { type: DataTypes.TEXT,    allowNull: true },
 
   // Legacy columns (masih ada di DB tapi tidak aktif dipakai)
   connection_mode:     { type: DataTypes.STRING,  defaultValue: 'wwebjs' },
@@ -345,6 +346,7 @@ async function initDB() {
     await safeAddColumn('ChatMessages', 'quoted_sender_name', { type: DataTypes.STRING, allowNull: true });
     await safeAddColumn('ChatMessages', 'is_read', { type: DataTypes.BOOLEAN, defaultValue: false });
     await safeAddColumn('BotAgents', 'auto_labels', { type: DataTypes.TEXT, defaultValue: '' });
+    await safeAddColumn('Stores', 'followup_config', { type: DataTypes.TEXT, allowNull: true });
 
     // Follow-Up System
     await safeAddColumn('FollowUps', 'sent_at', { type: DataTypes.DATE, allowNull: true });

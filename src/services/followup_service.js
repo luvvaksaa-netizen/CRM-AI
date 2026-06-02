@@ -22,54 +22,53 @@ const { FollowUp, Store, ChatSummary, MediaAsset, BotAgent } = require('../datab
 // {name} akan diganti dengan nama customer.
 // ══════════════════════════════════════════════════════════════════
 
-const FOLLOWUP_TEMPLATES = {
+const DEFAULT_FOLLOWUP_CONFIG = {
     1: {
         delay_minutes: 10,
         media_type: 'video',
         media_label_hints: ['video label', 'video produk', 'video'],
-        copies: [
-            "Ka {name} 😊\nIni hasil aslinya kak ✨\nWarnanya tajam banget 🙌\nMau aku siapin sekarang kak?",
-            "Ka {name} 😊\nCek videonya kak ✨\nBahannya premium lho 🙌\nMau pesan berapa paket kak?",
-            "Ka {name} 😊\nLihat hasilnya kak ✨\nTahan cuci berkali-kali 🙌\nMau aku proses hari ini?",
-            "Ka {name} 😊\nHasil cetaknya tajam kak ✨\nNggak luntur lho 🙌\nMau langsung pesan?"
-        ]
+        ai_instruction: "Sapa ramah, beri tahu ada video cara pemakaian yang bagus. Ajak untuk pesan sekarang."
     },
     2: {
         delay_minutes: 60,
         media_type: 'image',
         media_label_hints: ['value', 'keunggulan', 'foto value', 'testimoni'],
-        copies: [
-            "Stok promo masih ada ka {name} 😊\nBanyak dipakai anak sekolah 🙌\nMau nama siapa nanti kak?",
-            "Ka {name} promonya masih ada 😊\nSudah banyak yang order kak ✨\nMau aku bantu pesankan?",
-            "Ka {name} 😊\nLabelnya waterproof lho kak 🙌\nNggak luntur meski dicuci ✨\nMau coba pesan?",
-            "Ka {name} 😊\nBanyak customer puas kak ✨\nBahannya awet banget 🙌\nMau pesan juga?"
-        ]
+        ai_instruction: "Berikan keunggulan produk (misal: anti air, tidak luntur). Sapa ramah."
     },
     3: {
         scheduled_hour: 19,
         media_type: 'video',
         media_label_hints: ['video label', 'video produk', 'video'],
-        copies: [
-            "Ka {name} 😊\nBesok masih bisa langsung dikirim kak ✨\nMau aku bantu proses malam ini?",
-            "Ka {name} 😊\nMasih sempat order malam ini kak ✨\nBesok langsung aku kirim 🙌\nMau pesan?",
-            "Ka {name} 😊\nSebelum istirahat mau aku siapin dulu kak? ✨\nBiar besok langsung kirim 🙌",
-            "Ka {name} 😊\nMalam ini masih bisa order kak ✨\nBesok langsung proses 🙌\nMinat kak?"
-        ]
+        ai_instruction: "Ingatkan bahwa kalau pesan malam ini, besok bisa langsung diproses/dikirim."
     },
     4: {
         scheduled_hour: 6,
         scheduled_next_day: true,
         media_type: 'mixed',
-        // Stage 4: kirim foto testimoni DAN video pemasangan (sesuai instruksi bos)
         media_label_hints: ['testimoni', 'pemasangan', 'video pemasangan', 'review', 'video', 'value'],
-        copies: [
-            "Selamat pagi ka {name} 😊\nIni testimoni customer kami ✨\nLabelnya rapi dan tahan lama 🙌\nMau pesan juga kak?",
-            "Pagi ka {name} 😊\nBanyak yang sudah pakai label kami ✨\nHasilnya bagus kak 🙌\nMau aku buatkan juga?",
-            "Ka {name} selamat pagi 😊\nLihat review customer kami kak ✨\nKualitasnya premium 🙌\nMasih minat pesan?",
-            "Met pagi ka {name} 😊\nLabel kami tahan cuci kak ✨\nSudah banyak yang order 🙌\nMau pesan juga?"
-        ]
+        ai_instruction: "Ucapkan selamat pagi. Beri tahu banyak customer lain puas dengan hasilnya. Tanyakan apakah masih berminat pesan."
     }
 };
+
+/**
+ * Helper: Ambil konfigurasi follow-up per-store dari DB, atau fallback ke default.
+ */
+async function getFollowUpConfig(storeWaId) {
+    try {
+        const store = await Store.findOne({ where: { wa_id: storeWaId } });
+        if (store && store.followup_config) {
+            const parsed = JSON.parse(store.followup_config);
+            // Validasi sederhana, pastikan object punya key 1,2,3,4
+            if (parsed && typeof parsed === 'object' && parsed['1']) {
+                return parsed;
+            }
+        }
+    } catch (e) {
+        logger.warn(`[FollowUp] Gagal parse config DB untuk ${storeWaId}, pakai default.`);
+    }
+    return DEFAULT_FOLLOWUP_CONFIG;
+}
+
 
 const SCHEDULER_INTERVAL_MS = 60 * 1000;   // Cek tiap 60 detik
 const RANDOM_DELAY_MIN_MS   = 2 * 60 * 1000; // Min 2 menit antar-customer
@@ -227,17 +226,24 @@ async function executeFollowUp(followUp) {
         return;
     }
 
-    // 6. Ambil template dan personalisasi
-    const template = FOLLOWUP_TEMPLATES[followUp.stage];
+    const config = await getFollowUpConfig(followUp.store_wa_id);
+    const template = config[followUp.stage];
     if (!template) {
-        await followUp.update({ status: 'cancelled', cancel_reason: 'Template tidak ditemukan' });
+        await followUp.update({ status: 'cancelled', cancel_reason: 'Template config tidak ditemukan' });
         return;
     }
 
-    const copyIndex = Math.floor(Math.random() * template.copies.length);
-    const rawCopy = template.copies[copyIndex];
     const customerName = followUp.contact_name || 'kak';
-    const personalizedCopy = rawCopy.replace(/{name}/g, customerName);
+
+    // 6. Generate pesan secara organik lewat AI
+    const aiService = require('../ai_service');
+    const productKnowledge = store.BotAgent?.product_knowledge || '';
+    const personalizedCopy = await aiService.generateOrganicFollowUp(
+        customerName, 
+        followUp.last_chat_context, 
+        template.ai_instruction, 
+        productKnowledge
+    );
 
     // 5. Cari media yang sesuai dari katalog Agent (Cerdas & Multi-Produk Aware)
     const agentId = store.agent_id;
@@ -355,8 +361,8 @@ async function executeFollowUp(followUp) {
  * Jadwalkan follow-up stage berikutnya setelah stage saat ini berhasil dikirim.
  */
 async function scheduleNextStage(currentFollowUp) {
-    const nextStage = currentFollowUp.stage + 1;
-    const nextTemplate = FOLLOWUP_TEMPLATES[nextStage];
+    const config = await getFollowUpConfig(currentFollowUp.store_wa_id);
+    const nextTemplate = config[nextStage];
     if (!nextTemplate) return;
 
     const scheduledAt = calculateScheduleTime(nextTemplate);
@@ -426,7 +432,10 @@ async function scheduleFollowUp(storeWaId, contactId, contactName, chatContext) 
             return null;
         }
 
-        const template = FOLLOWUP_TEMPLATES[1];
+        const config = await getFollowUpConfig(storeWaId);
+        const template = config[1];
+        if (!template) return null;
+        
         const scheduledAt = calculateScheduleTime(template);
 
         const followUp = await FollowUp.create({
@@ -554,7 +563,8 @@ function emitFollowUpUpdate(storeWaId) {
 }
 
 module.exports = {
-    FOLLOWUP_TEMPLATES,
+    DEFAULT_FOLLOWUP_CONFIG,
+    getFollowUpConfig,
     initFollowUpScheduler,
     scheduleFollowUp,
     cancelPendingFollowUps,

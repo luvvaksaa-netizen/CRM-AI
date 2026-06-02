@@ -1034,6 +1034,50 @@ function calculateTypingDelay(text, minCharDelay = 12, maxDelay = 300) {
     return Math.min(baseDelay + humanOffset, maxDelay);
 }
 
+/**
+ * Generate Follow-Up Message secara Organik (Anti-Banned)
+ * Menggunakan AI untuk memastikan setiap pesan unik, tidak ada template kaku.
+ */
+async function generateOrganicFollowUp(customerName, chatContext, stageInstruction, productKnowledge) {
+    try {
+        const response = await openai.chat.completions.create({
+            model: "gpt-4o-mini", // Cepat dan murah untuk tugas teks pendek
+            messages: [
+                { 
+                    role: "system", 
+                    content: `Kamu adalah asisten jualan WhatsApp yang sangat natural, ramah, dan tidak terlihat seperti robot.
+Tugasmu adalah membuat PESAN FOLLOW-UP (tindak lanjut) ke customer yang sempat menghilang (belum membalas/belum bayar).
+
+INSTRUKSI FOLLOW-UP:
+${stageInstruction}
+
+PENGETAHUAN PRODUK:
+${productKnowledge}
+
+ATURAN ANTI-BANNED WA (SANGAT KRITIKAL):
+1. PESAN HARUS SINGKAT! Maksimal 2 kalimat pendek saja.
+2. JANGAN PERNAH menyertakan link/URL (mencegah flag spam).
+3. Buat variasi kalimat yang sangat natural seperti ketikan jari manusia biasa.
+4. Gunakan emoji secukupnya (maksimal 1 atau 2).
+5. Jangan terlalu memaksa/menjual keras, gunakan pendekatan empati/halus.
+6. JANGAN gunakan salam pembuka kaku seperti "Halo Bapak/Ibu". Gunakan nama customer langsung.` 
+                },
+                { 
+                    role: "user", 
+                    content: `Nama Customer: ${customerName}\nKonteks Percakapan Terakhir: ${chatContext || 'Belum ada konteks jelas'}\n\nTolong buatkan pesan follow up yang unik sekarang.` 
+                }
+            ],
+            temperature: 0.7 // Cukup kreatif agar menghasilkan variasi teks organik
+        }, { timeout: 10000 });
+
+        return response.choices[0].message.content.trim();
+    } catch (e) {
+        logger.error(`[AI] Gagal generate organic follow-up: ${e.message}`);
+        // Fallback organik darurat
+        return `Ka ${customerName} 😊\nMasih ada yang mau ditanyakan kak tentang pesanannya?`;
+    }
+}
+
 module.exports = {
     getAIResponse,
     generateChatSummary,
@@ -1042,5 +1086,6 @@ module.exports = {
     prepareOutboundBubbles,
     sanitizeTextOutput,
     parseAutoLabels,
-    RESPONSE_TYPE
+    RESPONSE_TYPE,
+    generateOrganicFollowUp
 };

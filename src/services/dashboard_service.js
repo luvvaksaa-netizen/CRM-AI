@@ -828,6 +828,54 @@ function initDashboard(port = 3000) {
     }
   });
 
+  // POST: Emergency Cancel All
+  app.post('/api/followups/emergency-cancel-all', async (req, res) => {
+    try {
+      const { FollowUp } = require('../database/index');
+      const [updated] = await FollowUp.update(
+        { status: 'cancelled', cancel_reason: 'Emergency cancel by system' },
+        { where: { status: 'pending' } }
+      );
+      res.json({ success: true, updated });
+    } catch (e) {
+      res.status(500).json({ success: false, message: e.message });
+    }
+  });
+
+  // GET: Ambil konfigurasi follow-up untuk store
+  app.get('/api/stores/:id/followup-config', authorize('operator'), async (req, res) => {
+    try {
+      const { getFollowUpConfig } = require('./followup_service');
+      const config = await getFollowUpConfig(req.params.id);
+      res.json(config);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // POST: Simpan konfigurasi follow-up
+  app.post('/api/stores/:id/followup-config', authorize('admin'), async (req, res) => {
+    try {
+      const wa_id = req.params.id;
+      const { config } = req.body;
+      if (!config || typeof config !== 'object') {
+        return res.status(400).json({ success: false, message: 'Format config tidak valid' });
+      }
+
+      const store = await Store.findOne({ where: { wa_id } });
+      if (!store) {
+        return res.status(404).json({ success: false, message: 'Store tidak ditemukan' });
+      }
+
+      store.followup_config = JSON.stringify(config);
+      await store.save();
+
+      res.json({ success: true, message: 'Konfigurasi Follow-Up berhasil disimpan' });
+    } catch (e) {
+      res.status(500).json({ success: false, message: e.message });
+    }
+  });
+
   // DELETE: Hapus Store & Bersihkan Semua Data (Clean Slate)
   app.delete('/api/stores/:id', authorize('admin'), async (req, res) => {
     try {

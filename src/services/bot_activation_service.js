@@ -56,11 +56,14 @@ function isConversationActive(summaryText) {
 
 /**
  * Hitung waktu jadwal follow-up saat bot baru ON.
- * Memberikan jeda 15 menit agar tidak langsung spam setelah aktivasi.
+ * Memberikan jeda acak (jitter) 15 hingga 180 menit agar ratusan pesan tidak dikirim serentak saat server restart.
  * @returns {Date}
  */
 function getActivationFollowUpTime() {
-    return new Date(Date.now() + 15 * 60 * 1000); // 15 menit dari sekarang
+    const minMinutes = 15;
+    const maxMinutes = 180;
+    const randomMinutes = Math.floor(Math.random() * (maxMinutes - minMinutes + 1)) + minMinutes;
+    return new Date(Date.now() + randomMinutes * 60 * 1000);
 }
 
 /**
