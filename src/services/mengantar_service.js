@@ -112,9 +112,8 @@ async function getShippingCost(destinationCity, weight = 1) {
         }
 
         // 3. Susun Jawaban Natural
-        // 3. Cari Harga Termurah dari JNE dan J&T
+        // 3. Cari Harga Termurah (Hanya J&T sesuai request owner)
         const couriers = [
-            { key: 'JNE', name: 'JNE Reguler' },
             { key: 'JT', name: 'J&T Express' }
         ];
 

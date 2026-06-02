@@ -37,13 +37,13 @@ async function getMediaByAgent(agentId) {
 
 /**
  * Ambil media yang tersedia untuk DIKIRIM ke customer (purpose: both | send_only).
- * @param {number} agentId
+ * SEKARANG GLOBAL (semua agent) agar bisa cross-selling produk (DTF <-> UV) tanpa upload ulang.
+ * @param {number} agentId - Diabaikan, sekarang mengambil semua media.
  */
 async function getSendableMedia(agentId) {
   const { Op } = require('sequelize');
   return MediaAsset.findAll({
     where: {
-      agent_id: agentId,
       purpose: { [Op.in]: ['both', 'send_only'] }
     },
     order: [['createdAt', 'DESC']]
@@ -52,13 +52,13 @@ async function getSendableMedia(agentId) {
 
 /**
  * Ambil media yang memberikan KNOWLEDGE ke AI (purpose: both | knowledge_only).
- * @param {number} agentId
+ * SEKARANG GLOBAL (semua agent) agar AI tahu semua produk.
+ * @param {number} agentId - Diabaikan, mengambil semua media.
  */
 async function getKnowledgeMedia(agentId) {
   const { Op } = require('sequelize');
   return MediaAsset.findAll({
     where: {
-      agent_id: agentId,
       purpose: { [Op.in]: ['both', 'knowledge_only'] }
     },
     order: [['createdAt', 'DESC']]

@@ -23,8 +23,9 @@ const logger = require('../utils/logger');
 // Value: { label, color } — color adalah colorIndex WA (0-19)
 // ══════════════════════════════════════════════════════════════════
 const STATUS_LABEL_MAP = [
-  // Prioritas tertinggi — closing/selesai
+  // Prioritas tertinggi — closing/selesai atau batal
   { pattern: /\bstatus:\s*(closing|selesai)\b/i,           label: 'Closing',           color: 1  }, // Hijau
+  { pattern: /\bstatus:\s*(batal|cancel|nggak jadi)\b/i,   label: 'Cancel',            color: 11 }, // Abu-abu tua/Merah pudar
   // Menunggu pembayaran
   { pattern: /\bstatus:\s*menunggu\s*transfer\b/i,         label: 'Menunggu Transfer', color: 7  }, // Kuning
   // Menunggu data dari customer
@@ -41,7 +42,13 @@ const STATUS_LABEL_MAP = [
 // Label yang DIHAPUS saat status berubah ke closing (tidak relevan lagi)
 const LABELS_TO_REMOVE_ON_CLOSING = [
   'Hot Lead', 'AI Lead Aktif', 'AI Lead Baru',
-  'Menunggu Transfer', 'Menunggu Rekap', 'Menunggu Alamat',
+  'Menunggu Transfer', 'Menunggu Rekap', 'Menunggu Alamat', 'Cancel'
+];
+
+// Label yang DIHAPUS saat status berubah ke cancel
+const LABELS_TO_REMOVE_ON_CANCEL = [
+  'Hot Lead', 'AI Lead Aktif', 'AI Lead Baru',
+  'Menunggu Transfer', 'Menunggu Rekap', 'Menunggu Alamat', 'Closing', 'COD'
 ];
 
 // Field WA_LABELS di rekap — format: WA_LABELS: [label1, label2]
@@ -92,6 +99,53 @@ function isClosingStatus(summaryText) {
   return /\bstatus:\s*(closing|selesai)\b/i.test(summaryText || '');
 }
 
+/**
+ * Cek apakah rekap menunjukkan status batal/cancel.
+ * @param {string} summaryText
+ * @returns {boolean}
+ */
+function isCancelStatus(summaryText) {
+  return /\bstatus:\s*(batal|cancel|nggak jadi)\b/i.test(summaryText || '');
+}
+
+/**
+ * FIX #3 — PRE-CLOSING VALIDATION GATE
+ * Validasi apakah data pesanan sudah cukup lengkap sebelum label Closing diizinkan.
+ * Mencegah bot melabeli Closing padahal data (Nama, Varian, Warna, Jumlah, Alamat) belum lengkap.
+ * @param {string} summaryText - Teks rekap dari AI
+ * @returns {boolean} true jika closing boleh diterapkan
+ */
+function isClosingDataComplete(summaryText) {
+  if (!summaryText) return false;
+  const txt = summaryText;
+
+  // Deteksi apakah produk ini UV (Stiker Keras) atau DTF (Label Baju)
+  const isUvProduct = /PRODUK DIMINATI:.*?(UV|Stiker UV|stiker keras)/i.test(txt);
+
+  // Field wajib SEMUA produk
+  const commonChecks = [
+    { regex: /NAMA CUSTOMER:\s*(?!belum\b)(.+)/i, label: 'Nama Customer' },
+    { regex: /VARIAN:\s*(?!belum\b)(.+)/i, label: 'Varian' },
+    { regex: /JUMLAH:\s*(?!belum\b)(.+)/i, label: 'Jumlah' },
+    { regex: /ALAMAT:\s*(?!belum\b)(.+)/i, label: 'Alamat' },
+    { regex: /METODE BAYAR:\s*(Transfer|COD)/i, label: 'Metode Bayar' },
+  ];
+
+  // Field WARNA hanya wajib untuk DTF — UV tidak ada pilihan warna
+  const dtfOnlyChecks = [
+    { regex: /WARNA:\s*(?!belum\b)(?!N\/A)(.+)/i, label: 'Warna (DTF)' },
+  ];
+
+  const allChecks = isUvProduct ? commonChecks : [...commonChecks, ...dtfOnlyChecks];
+
+  const missingFields = allChecks.filter(check => !check.regex.test(txt));
+  if (missingFields.length > 0) {
+    logger.warn(`[SmartLabel] ⚠️ Closing DIBLOKIR — data belum lengkap: ${missingFields.map(f => f.label).join(', ')}`);
+    return false;
+  }
+  return true;
+}
+
 // ══════════════════════════════════════════════════════════════════
 // MAIN ENGINE
 // ══════════════════════════════════════════════════════════════════
@@ -110,10 +164,26 @@ async function applyLabelsFromSummary(storeWaId, contactId, summaryText, waClien
     const { ChatSummary } = require('../database/index');
 
     // 1. Deteksi label dari STATUS field
-    const detectedRule = detectLabelFromSummary(summaryText);
+    let detectedRule = detectLabelFromSummary(summaryText);
+
+    // FIX #3: Jika label yang terdeteksi adalah Closing, validasi kelengkapan data dulu
+    if (detectedRule && detectedRule.label === 'Closing') {
+      if (!isClosingDataComplete(summaryText)) {
+        // Data belum lengkap — downgrade ke Menunggu Rekap
+        detectedRule = { label: 'Menunggu Rekap', color: 6 };
+        logger.warn(`[SmartLabel] [${storeWaId}] Closing di-downgrade ke Menunggu Rekap untuk [${contactId}] karena data belum lengkap.`);
+      }
+    }
 
     // 2. Parse explicit WA_LABELS field dari rekap (jika AI mengisinya)
-    const explicitLabels = parseWaLabelsField(summaryText);
+    let explicitLabels = parseWaLabelsField(summaryText);
+    // FIX #3: Juga validasi Closing dari explicit labels
+    if (explicitLabels.includes('Closing') && !isClosingDataComplete(summaryText)) {
+      explicitLabels = explicitLabels.filter(l => l !== 'Closing');
+      if (!explicitLabels.includes('Menunggu Rekap')) {
+        explicitLabels.push('Menunggu Rekap');
+      }
+    }
 
     // Gabungkan: label dari STATUS + explicit labels dari AI
     const labelsToApply = [];
@@ -179,18 +249,40 @@ async function _persistLabelsToDb(storeWaId, contactId, labelNames, ChatSummary)
     });
 
     if (record) {
-      let timestamps = {};
+      // ════════════════════════════════════════════════════════════
+      // FIX #1 — IDEMPOTENCY GUARD FOR CLOSING
+      // Jika label Closing sudah pernah dicatat sebelumnya,
+      // JANGAN timpa timestamp-nya. Ini menjaga konsistensi
+      // tanggal closing di analitik.
+      // ════════════════════════════════════════════════════════════
+      let existingTimestamps = {};
       try {
-        timestamps = JSON.parse(record.label_timestamps || '{}');
+        existingTimestamps = JSON.parse(record.label_timestamps || '{}');
       } catch (_) {}
 
-      const newTimestamps = {};
+      // FIX #2 — FULL MERGE (tidak pernah hapus timestamp lama)
+      // Gabungkan semua timestamp lama dengan yang baru.
+      // Label baru mendapat timestamp sekarang,
+      // label lama TETAP mempertahankan timestamp aslinya.
+      const mergedTimestamps = { ...existingTimestamps };
       for (const lbl of labelNames) {
-        newTimestamps[lbl] = timestamps[lbl] || Date.now();
+        if (!mergedTimestamps[lbl]) {
+          // Label baru: catat sekarang
+          mergedTimestamps[lbl] = Date.now();
+        }
+        // Jika sudah ada: JANGAN UBAH (idempotent)
       }
 
-      record.wa_labels = JSON.stringify(labelNames);
-      record.label_timestamps = JSON.stringify(newTimestamps);
+      // Gabungkan wa_labels: pertahankan label lama yang masih relevan
+      // (label baru di-append, tidak replace total)
+      let existingLabels = [];
+      try {
+        existingLabels = JSON.parse(record.wa_labels || '[]');
+      } catch (_) {}
+      const mergedLabels = [...new Set([...existingLabels, ...labelNames])];
+
+      record.wa_labels = JSON.stringify(mergedLabels);
+      record.label_timestamps = JSON.stringify(mergedTimestamps);
       await record.save();
     }
   } catch (e) {
@@ -212,6 +304,8 @@ async function _applyLabelsToWA(storeWaId, contactId, labelsToApply, summaryText
   // Jika status closing, hapus label yang tidak relevan dulu
   if (isClosingStatus(summaryText)) {
     await _removeStaleLabels(storeWaId, contactId, waClient, LABELS_TO_REMOVE_ON_CLOSING);
+  } else if (isCancelStatus(summaryText)) {
+    await _removeStaleLabels(storeWaId, contactId, waClient, LABELS_TO_REMOVE_ON_CANCEL);
   }
 
   // Terapkan setiap label yang terdeteksi
@@ -235,6 +329,7 @@ async function _applyLabelsToWA(storeWaId, contactId, labelsToApply, summaryText
  */
 async function _removeStaleLabels(storeWaId, contactId, waClient, labelNamesToRemove) {
   try {
+    // Hapus dari WhatsApp Business
     const { getLabels, addOrRemoveLabels } = require('./wajs_bridge');
     const allLabels = await getLabels(waClient, storeWaId);
 
@@ -244,7 +339,27 @@ async function _removeStaleLabels(storeWaId, contactId, waClient, labelNamesToRe
 
     if (removeOps.length > 0) {
       await addOrRemoveLabels(waClient, contactId, removeOps, storeWaId);
-      logger.info(`[SmartLabel] Dihapus ${removeOps.length} label lama dari [${contactId}]`);
+      logger.info(`[SmartLabel] Dihapus ${removeOps.length} label lama dari WA [${contactId}]`);
+    }
+
+    // Sinkronisasi ke DB: hapus label stale dari wa_labels di ChatSummary
+    try {
+      const { ChatSummary } = require('../database/index');
+      const record = await ChatSummary.findOne({ where: { store_wa_id: storeWaId, contact_id: contactId } });
+      if (record) {
+        let currentLabels = [];
+        try { currentLabels = JSON.parse(record.wa_labels || '[]'); } catch (_) {}
+        const cleanedLabels = currentLabels.filter(
+          lbl => !labelNamesToRemove.some(n => n.toLowerCase() === lbl.toLowerCase())
+        );
+        if (cleanedLabels.length !== currentLabels.length) {
+          record.wa_labels = JSON.stringify(cleanedLabels);
+          await record.save();
+          logger.info(`[SmartLabel] DB wa_labels dibersihkan untuk [${contactId}]: ${labelNamesToRemove.join(', ')} dihapus.`);
+        }
+      }
+    } catch (dbErr) {
+      logger.warn(`[SmartLabel] Gagal sinkronisasi hapus label ke DB: ${dbErr.message}`);
     }
   } catch (e) {
     // Non-critical — label removal is best-effort
@@ -277,6 +392,8 @@ module.exports = {
   detectLabelFromSummary,
   parseWaLabelsField,
   isClosingStatus,
+  isCancelStatus,
+  isClosingDataComplete,
   getLabelsFromDb,
   STATUS_LABEL_MAP,
 };

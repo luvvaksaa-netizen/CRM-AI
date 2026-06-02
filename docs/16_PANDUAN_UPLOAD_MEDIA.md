@@ -9,8 +9,8 @@ terpakai di follow-up otomatis, dan sebagai knowledge AI.
 ## ⚠️ ATURAN PENTING SEBELUM UPLOAD
 
 1. **Label HARUS persis seperti di tabel** (huruf kecil, spasi tepat).
-2. Upload media ke agent yang sesuai (**Agent DTF** atau **Agent UV**).
-3. Gambar bundling **"bundling upsell"** upload ke **KEDUA agent** (agar keduanya bisa upsell).
+2. 🌟 **UPDATE TERBARU (GLOBAL MEDIA):** Semua media sekarang saling berbagi lintas agen! Artinya, jika Anda mengupload "katalog uv" ke Agen 2, Agen 1 otomatis bisa mengirimkannya ke customer jika diminta. Anda TIDAK PERLU lagi mengupload media yang sama di dua agen berbeda.
+3. Gambar bundling **"bundling upsell"** cukup di-upload ke **SALAH SATU** agent saja, keduanya otomatis bisa menggunakannya.
 4. Setelah upload, tunggu hingga status menjadi ✅ **"Analisis Vision AI Selesai"**.
 
 ---
@@ -76,7 +76,7 @@ Jadi untuk follow-up, cukup 1 file per label sudah optimal.
 
 | No | Tipe | Label (WAJIB PERSIS INI) | Isi / Keterangan | Digunakan Untuk |
 |----|------|--------------------------|------------------|-----------------|
-| 1 | 📷 Gambar | `katalog uv` | Foto 4 varian font DTF UV (stiker keras) | Dikirim bot saat opening — customer lihat pilihan font |
+| 1 | 📷 Gambar | `katalog uv` | Foto 3 varian UV (Cowok, Cewek, Polos) | Dikirim bot saat opening — customer lihat pilihan varian |
 | 2 | 🎬 Video | `video uv` | Video cara tempel stiker ke botol/helm/buku | Dikirim saat opening + Follow-Up Stage 1 & 3 |
 | 3 | 📷 Gambar | `testimoni uv` | Screenshot/foto review customer stiker keras | Follow-Up Stage 2 & 4 |
 | 4 | 📷 Gambar | `value uv` | Infografis keunggulan UV (anti air, timbul, permanen) | Follow-Up Stage 2 |
@@ -158,7 +158,10 @@ A: Hapus media tersebut dan upload ulang dengan label yang benar. Bot tidak akan
 A: Ya, tapi sistem akan mengambil yang pertama ditemukan. Sebaiknya 1 label = 1 file untuk konsistensi.
 
 **Q: Gambar bundling upsell perlu di-upload ke kedua agent?**
-A: YA, wajib di kedua agent (DTF dan UV) agar keduanya bisa mengirim gambar bundling.
+A: TIDAK PERLU. Cukup upload ke salah satu agent saja (misal Agent DTF). Karena sistem sekarang menggunakan **Global Media Access**, Agent UV akan otomatis bisa mengirimnya selama labelnya persis `bundling upsell`.
+
+**Q: Kalau customer di Agent DTF tiba-tiba minta katalog UV, apakah bot bisa ngirim?**
+A: YA! Bot DTF akan otomatis mencari gambar berlabel `katalog uv` di seluruh sistem (termasuk yang Anda upload di Agent UV), lalu mengirimkannya ke customer. Inilah keunggulan sistem cross-selling otomatis.
 
 **Q: Video pemasangan untuk Agent UV saja atau DTF juga?**
 A: Agent UV membutuhkan "video pemasangan" (cara tempel stiker). Agent DTF sudah pakai "video dtf" untuk tujuan yang sama (cara setrika). Jadi tidak perlu upload "video pemasangan" ke Agent DTF.
