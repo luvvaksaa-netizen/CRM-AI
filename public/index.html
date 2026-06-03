@@ -536,6 +536,10 @@
     <div class="nav-btn" onclick="switchView('summaries')" id="nav-summaries">
         <i class="fas fa-list-check"></i><span>Rekap</span>
     </div>
+    <!-- REKAP CLOSING MANAGEMENT -->
+    <div class="nav-btn" onclick="switchView('closing')" id="nav-closing" title="Rekap Closing — Laporan CS">
+        <i class="fas fa-clipboard-check"></i><span>Closing</span>
+    </div>
     <!-- AUTOMATED FOLLOW-UPS -->
     <div class="nav-btn" onclick="switchView('followups')" id="nav-followups">
         <i class="fas fa-history"></i><span>Follow Up</span>
@@ -680,6 +684,127 @@
                 <button id="summaryNextBtn" class="btn btn-outline-secondary btn-sm px-3" onclick="loadSummaries(currentSummaryPage + 1)" disabled>
                     Next<i class="fas fa-chevron-right ms-1"></i>
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- === VIEW: REKAP CLOSING MANAGEMENT (NEW) === -->
+    <div class="view" id="view-closing">
+        <div class="page-view">
+            <!-- Header -->
+            <div class="page-header d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h2 class="fw-bold m-0" style="color:#10b981"><i class="fas fa-clipboard-check me-3"></i>Rekap Closing</h2>
+                    <p class="text-muted m-0 mt-1">Laporan closingan untuk tim CS — COD & Transfer terpisah jelas</p>
+                </div>
+                <div class="d-flex gap-2 align-items-center flex-wrap">
+                    <!-- Filter Method -->
+                    <div class="btn-group" role="group" id="closingMethodFilter">
+                        <button type="button" class="btn btn-sm btn-outline-secondary active" onclick="filterClosingMethod('all', this)" id="clFilter-all">Semua</button>
+                        <button type="button" class="btn btn-sm btn-outline-success" onclick="filterClosingMethod('transfer', this)" id="clFilter-transfer">💸 Transfer</button>
+                        <button type="button" class="btn btn-sm btn-outline-primary" onclick="filterClosingMethod('COD', this)" id="clFilter-COD">🏍️ COD</button>
+                    </div>
+                    <!-- Filter Tanggal -->
+                    <input type="date" id="closingDateFilter" class="form-control form-control-sm border shadow-sm" style="width:auto;" onchange="loadClosingData(1)">
+                    <!-- Filter Store -->
+                    <select id="closingStoreFilter" class="form-select form-select-sm border shadow-sm" style="width:auto;min-width:160px;font-weight:500;" onchange="loadClosingData(1)">
+                        <option value="">🏪 Semua Toko</option>
+                    </select>
+                    <button class="btn btn-sm btn-light border" onclick="exportClosingCSV()" title="Export ke CSV"><i class="fas fa-file-csv me-1"></i>Export</button>
+                    <button class="btn btn-sm btn-success" onclick="loadClosingData(1, true)"><i class="fas fa-sync-alt me-2"></i>Segarkan</button>
+                </div>
+            </div>
+
+            <!-- Stats Ringkas -->
+            <div class="row g-3 mb-4" id="closingStatsRow">
+                <div class="col-6 col-md-3">
+                    <div class="card-glass text-center p-3" style="border-top:4px solid #10b981;">
+                        <div style="font-size:1.8rem;font-weight:800;color:#10b981" id="clStat-total">—</div>
+                        <div class="text-muted small fw-bold mt-1" style="text-transform:uppercase;letter-spacing:1px;">Total Closing</div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-3">
+                    <div class="card-glass text-center p-3" style="border-top:4px solid #3b82f6;">
+                        <div style="font-size:1.8rem;font-weight:800;color:#3b82f6" id="clStat-transfer">—</div>
+                        <div class="text-muted small fw-bold mt-1" style="text-transform:uppercase;letter-spacing:1px;">Transfer</div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-3">
+                    <div class="card-glass text-center p-3" style="border-top:4px solid #8b5cf6;">
+                        <div style="font-size:1.8rem;font-weight:800;color:#8b5cf6" id="clStat-cod">—</div>
+                        <div class="text-muted small fw-bold mt-1" style="text-transform:uppercase;letter-spacing:1px;">COD</div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-3">
+                    <div class="card-glass text-center p-3" style="border-top:4px solid #f59e0b;">
+                        <div style="font-size:1.8rem;font-weight:800;color:#f59e0b" id="clStat-pending">—</div>
+                        <div class="text-muted small fw-bold mt-1" style="text-transform:uppercase;letter-spacing:1px;">Menunggu TF</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tabel Closing -->
+            <div class="card-glass p-0" style="overflow:hidden;">
+                <div style="overflow-x:auto;">
+                    <table class="table table-hover mb-0" id="closingTable">
+                        <thead style="background:#f8fafc;border-bottom:2px solid #f1f5f9;">
+                            <tr style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.7px;color:#64748b;">
+                                <th style="padding:14px 20px;">Tanggal</th>
+                                <th style="padding:14px 16px;">Nama Customer</th>
+                                <th style="padding:14px 16px;">No WA</th>
+                                <th style="padding:14px 16px;">Metode</th>
+                                <th style="padding:14px 16px;">Produk</th>
+                                <th style="padding:14px 16px;">Nama Cetak</th>
+                                <th style="padding:14px 16px;">Jumlah</th>
+                                <th style="padding:14px 16px;">Ongkir</th>
+                                <th style="padding:14px 16px;">Status</th>
+                                <th style="padding:14px 16px;">Aksi</th>
+                            </tr>
+                        </thead>
+                        <tbody id="closingTableBody">
+                            <tr><td colspan="10" class="text-center py-5">
+                                <i class="fas fa-spinner fa-spin me-2 text-primary"></i>Memuat data closing...
+                            </td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <!-- Pagination -->
+                <div class="d-flex justify-content-between align-items-center px-4 py-3" style="border-top:1px solid #f1f5f9;font-size:0.82rem;">
+                    <span id="closingPaginationInfo" class="text-muted">—</span>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-outline-secondary" id="clPrevBtn" onclick="loadClosingData(closingCurrentPage - 1)" disabled>
+                            <i class="fas fa-chevron-left me-1"></i>Prev
+                        </button>
+                        <div id="clPageNumbers" class="d-flex gap-1"></div>
+                        <button class="btn btn-sm btn-outline-secondary" id="clNextBtn" onclick="loadClosingData(closingCurrentPage + 1)" disabled>
+                            Next<i class="fas fa-chevron-right ms-1"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- === MODAL: Detail Rekap Closing === -->
+    <div class="modal fade" id="modalClosingDetail" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header" style="background:linear-gradient(135deg,#f0fdf4,#ecfdf5);">
+                    <div>
+                        <h5 class="modal-title fw-bold"><i class="fas fa-receipt me-2 text-success"></i>Detail Rekap Order</h5>
+                        <p class="text-muted m-0" style="font-size:0.8rem;">Klik ikon chat untuk lihat riwayat percakapan lengkap</p>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-0">
+                    <div id="closingDetailContent" class="p-4"></div>
+                </div>
+                <div class="modal-footer border-0">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Tutup</button>
+                    <button type="button" class="btn btn-primary" id="btnOpenClosingChat" onclick="openClosingChat()">
+                        <i class="fas fa-comments me-2"></i>Buka Chat
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -3388,6 +3513,10 @@
             if (el) el.scrollTop = el.scrollHeight;
             loadBackups();
         }
+        if (id === 'closing') {
+            populateClosingStoreFilter();
+            loadClosingData(1);
+        }
     }
 
     // ============================================================
@@ -4170,16 +4299,292 @@
     }
 
     // ============================================================
-    // TOAST
+    // REKAP CLOSING MANAGEMENT
     // ============================================================
-    function toast_DUMMY() {} // placeholder removed above — keeping structure intact
+    let closingCurrentPage = 1;
+    let closingCurrentMethod = 'all';
+    let closingDetailData = null;
+
+    async function loadClosingData(page = 1, force = false) {
+        closingCurrentPage = page;
+        const method = closingCurrentMethod;
+        const date = document.getElementById('closingDateFilter')?.value || '';
+        const storeId = document.getElementById('closingStoreFilter')?.value || '';
+
+        const tbody = document.getElementById('closingTableBody');
+        if (tbody) tbody.innerHTML = '<tr><td colspan="10" class="text-center py-4"><i class="fas fa-spinner fa-spin me-2 text-primary"></i>Memuat...</td></tr>';
+
+        try {
+            let url = `/api/summaries/closing?page=${page}&limit=20`;
+            if (method && method !== 'all') url += `&method=${method}`;
+            if (date) url += `&date=${date}`;
+            if (storeId) url += `&storeId=${storeId}`;
+
+            const res = await fetch(url);
+            const result = await res.json();
+            const data = result.data || [];
+            const total = result.total || 0;
+            const totalPages = result.totalPages || 1;
+
+            renderClosingTable(data);
+            updateClosingPagination(page, totalPages, total);
+            updateClosingStats(data);
+        } catch (e) {
+            if (tbody) tbody.innerHTML = `<tr><td colspan="10" class="text-center py-4 text-danger"><i class="fas fa-exclamation-circle me-2"></i>Gagal memuat: ${e.message}</td></tr>`;
+        }
+    }
+
+    function updateClosingStats(data) {
+        const total = data.length;
+        const transfer = data.filter(d => d.metode === 'Transfer').length;
+        const cod = data.filter(d => d.metode === 'COD').length;
+        const pending = data.filter(d => (d.wa_labels || []).includes('Menunggu Transfer')).length;
+        document.getElementById('clStat-total').innerText = total;
+        document.getElementById('clStat-transfer').innerText = transfer;
+        document.getElementById('clStat-cod').innerText = cod;
+        document.getElementById('clStat-pending').innerText = pending;
+    }
+
+    function renderClosingTable(data) {
+        const tbody = document.getElementById('closingTableBody');
+        if (!tbody) return;
+        if (!data || data.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="10" class="text-center py-5">
+                <i class="fas fa-clipboard-check fa-2x mb-3 d-block" style="opacity:0.25;color:#10b981"></i>
+                <span class="text-muted">Tidak ada data closing untuk filter yang dipilih</span>
+            </td></tr>`;
+            return;
+        }
+
+        tbody.innerHTML = data.map(item => {
+            const date = item.closing_date ? new Date(item.closing_date).toLocaleDateString('id-ID', {
+                day: '2-digit', month: 'short', year: 'numeric'
+            }) : '-';
+            const time = item.closing_date ? new Date(item.closing_date).toLocaleTimeString('id-ID', {
+                hour: '2-digit', minute: '2-digit'
+            }) : '';
+
+            const metode = item.metode || '-';
+            const metodeBadge = metode === 'COD'
+                ? `<span class="badge" style="background:#ede9fe;color:#7c3aed;font-size:0.7rem;padding:4px 10px;">🏍️ COD</span>`
+                : metode === 'Transfer'
+                ? `<span class="badge" style="background:#dcfce7;color:#15803d;font-size:0.7rem;padding:4px 10px;">💸 Transfer</span>`
+                : `<span class="badge bg-secondary-subtle text-secondary" style="font-size:0.7rem;">${metode}</span>`;
+
+            const labels = item.wa_labels || [];
+            const statusLbl = labels.includes('Closing') ? 'Closing'
+                : labels.includes('Menunggu Transfer') ? 'Menunggu TF'
+                : item.status || '-';
+            const statusColor = statusLbl === 'Closing' ? '#10b981'
+                : statusLbl === 'Menunggu TF' ? '#f59e0b' : '#64748b';
+
+            const phone = item.contact_phone && item.contact_phone !== '-' ? item.contact_phone : '-';
+            const produk = (item.produk || '-').replace(/label\s*dtf/i, 'DTF').replace(/stiker\s*uv/i, 'UV').split('(')[0].trim();
+            const teksLabel = item.teks_label || '-';
+            const jumlah = item.jumlah || '-';
+            const ongkir = item.ongkir || '-';
+
+            return `<tr style="cursor:pointer;font-size:0.85rem;" onclick="showClosingDetail(${JSON.stringify(JSON.stringify(item))})">
+                <td style="padding:12px 20px;">
+                    <div style="font-weight:600;color:#1e293b;">${date}</div>
+                    <div style="font-size:0.72rem;color:#94a3b8;">${time}</div>
+                </td>
+                <td style="padding:12px 16px;">
+                    <div style="font-weight:600;color:#0f172a;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.contact_name}</div>
+                </td>
+                <td style="padding:12px 16px;">
+                    <span style="font-family:monospace;font-size:0.8rem;color:#475569;">${phone}</span>
+                </td>
+                <td style="padding:12px 16px;">${metodeBadge}</td>
+                <td style="padding:12px 16px;">
+                    <span style="font-size:0.78rem;color:#374151;">${produk}</span>
+                </td>
+                <td style="padding:12px 16px;">
+                    <span style="font-size:0.78rem;color:#374151;max-width:120px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${teksLabel}</span>
+                </td>
+                <td style="padding:12px 16px;">
+                    <span style="font-size:0.78rem;">${jumlah}</span>
+                </td>
+                <td style="padding:12px 16px;">
+                    <span style="font-size:0.78rem;color:#374151;">${ongkir}</span>
+                </td>
+                <td style="padding:12px 16px;">
+                    <span style="font-size:0.72rem;font-weight:700;color:${statusColor};">${statusLbl}</span>
+                </td>
+                <td style="padding:12px 16px;" onclick="event.stopPropagation()">
+                    <button class="btn btn-sm btn-light border" style="font-size:0.72rem;padding:3px 10px;"
+                        onclick="showClosingDetail(${JSON.stringify(JSON.stringify(item))})">
+                        <i class="fas fa-eye me-1"></i>Detail
+                    </button>
+                </td>
+            </tr>`;
+        }).join('');
+    }
+
+    function showClosingDetail(itemJson) {
+        const item = JSON.parse(itemJson);
+        closingDetailData = item;
+        const labels = item.wa_labels || [];
+        const metodeBadge = item.metode === 'COD'
+            ? `<span class="badge" style="background:#ede9fe;color:#7c3aed;">🏍️ COD</span>`
+            : item.metode === 'Transfer'
+            ? `<span class="badge" style="background:#dcfce7;color:#15803d;">💸 Transfer</span>`
+            : `<span class="badge bg-secondary">${item.metode || '-'}</span>`;
+
+        const closingDate = item.closing_date ? new Date(item.closing_date).toLocaleString('id-ID', {
+            day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit'
+        }) : '-';
+
+        const labelBadges = labels.map(l => {
+            const colors = { 'Closing': '#dcfce7:#15803d', 'COD': '#ede9fe:#7c3aed', 'Menunggu Transfer': '#fef3c7:#b45309' };
+            const [bg, fg] = (colors[l] || '#f1f5f9:#64748b').split(':');
+            return `<span class="badge" style="background:${bg};color:${fg};font-size:0.7rem;">${l}</span>`;
+        }).join(' ');
+
+        const content = document.getElementById('closingDetailContent');
+        content.innerHTML = `
+        <div class="row g-3">
+            <div class="col-md-6">
+                <div style="background:#f8fafc;border-radius:12px;padding:16px;">
+                    <div class="text-muted small fw-bold mb-3" style="text-transform:uppercase;letter-spacing:1px;">Info Customer</div>
+                    <div class="d-flex flex-column gap-2">
+                        <div><span class="text-muted" style="font-size:0.78rem;">Nama:</span><br><strong>${item.contact_name}</strong></div>
+                        <div><span class="text-muted" style="font-size:0.78rem;">No WA:</span><br><strong style="font-family:monospace;">${item.contact_phone !== '-' ? item.contact_phone : '<span class="text-warning">Belum terdetek</span>'}</strong></div>
+                        <div><span class="text-muted" style="font-size:0.78rem;">Toko:</span><br><strong>${item.store_wa_id}</strong></div>
+                        <div><span class="text-muted" style="font-size:0.78rem;">Tanggal Closing:</span><br><strong>${closingDate}</strong></div>
+                        <div><span class="text-muted" style="font-size:0.78rem;">Label:</span><br>${labelBadges || '-'}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div style="background:#f0fdf4;border-radius:12px;padding:16px;border:1px solid #bbf7d0;">
+                    <div class="text-muted small fw-bold mb-3" style="text-transform:uppercase;letter-spacing:1px;">Detail Pesanan</div>
+                    <div class="d-flex flex-column gap-2">
+                        <div><span class="text-muted" style="font-size:0.78rem;">Metode:</span> ${metodeBadge}</div>
+                        <div><span class="text-muted" style="font-size:0.78rem;">Produk:</span><br><strong>${item.produk || '-'}</strong></div>
+                        <div><span class="text-muted" style="font-size:0.78rem;">Varian:</span><br><strong>${item.varian || '-'}</strong></div>
+                        <div><span class="text-muted" style="font-size:0.78rem;">Warna:</span><br><strong>${item.warna || '-'}</strong></div>
+                        <div><span class="text-muted" style="font-size:0.78rem;">Nama Cetak:</span><br><strong>${item.teks_label || '-'}</strong></div>
+                        <div><span class="text-muted" style="font-size:0.78rem;">Jumlah:</span><br><strong>${item.jumlah || '-'}</strong></div>
+                        <div><span class="text-muted" style="font-size:0.78rem;">Ongkir:</span><br><strong>${item.ongkir || '-'}</strong></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12">
+                <div style="background:#f8fafc;border-radius:12px;padding:16px;">
+                    <div class="text-muted small fw-bold mb-2" style="text-transform:uppercase;letter-spacing:1px;">Alamat Pengiriman</div>
+                    <p class="mb-0" style="font-size:0.88rem;line-height:1.6;">${item.alamat || '<span class="text-warning">Belum ada alamat</span>'}</p>
+                </div>
+            </div>
+            ${item.catatan && item.catatan !== '-' ? `<div class="col-12">
+                <div style="background:#fffbeb;border-radius:12px;padding:16px;border:1px solid #fde68a;">
+                    <div class="text-muted small fw-bold mb-2" style="text-transform:uppercase;letter-spacing:1px;"><i class="fas fa-sticky-note me-2 text-warning"></i>Catatan</div>
+                    <p class="mb-0" style="font-size:0.88rem;">${item.catatan}</p>
+                </div>
+            </div>` : ''}
+        </div>`;
+
+        const modal = new bootstrap.Modal(document.getElementById('modalClosingDetail'));
+        modal.show();
+    }
+
+    function openClosingChat() {
+        if (!closingDetailData) return;
+        const { contact_id, store_wa_id } = closingDetailData;
+        // Ambil store dari selector aktif
+        const storeToUse = store_wa_id || activeStore;
+        switchView('chat');
+        // Cari kontak di convList dan klik
+        setTimeout(() => {
+            const items = document.querySelectorAll('.conv-item');
+            for (const item of items) {
+                if (item.dataset.contactId === contact_id) {
+                    item.click();
+                    break;
+                }
+            }
+        }, 500);
+        const modal = bootstrap.Modal.getInstance(document.getElementById('modalClosingDetail'));
+        if (modal) modal.hide();
+    }
+
+    function filterClosingMethod(method, btn) {
+        closingCurrentMethod = method;
+        // Update button active states
+        document.querySelectorAll('#closingMethodFilter .btn').forEach(b => {
+            b.classList.remove('active');
+            // Reset to outline variants
+            b.classList.remove('btn-secondary', 'btn-success', 'btn-primary');
+        });
+        if (btn) btn.classList.add('active');
+        loadClosingData(1);
+    }
+
+    function updateClosingPagination(page, totalPages, total) {
+        const info = document.getElementById('closingPaginationInfo');
+        const prevBtn = document.getElementById('clPrevBtn');
+        const nextBtn = document.getElementById('clNextBtn');
+        const pageNums = document.getElementById('clPageNumbers');
+        if (info) info.innerText = `${total} data | Hal ${page} dari ${totalPages}`;
+        if (prevBtn) prevBtn.disabled = page <= 1;
+        if (nextBtn) nextBtn.disabled = page >= totalPages;
+        if (pageNums) {
+            pageNums.innerHTML = '';
+            for (let i = Math.max(1, page - 2); i <= Math.min(totalPages, page + 2); i++) {
+                const btn = document.createElement('button');
+                btn.className = `btn btn-sm ${i === page ? 'btn-primary' : 'btn-outline-secondary'}`;
+                btn.innerText = i;
+                btn.onclick = () => loadClosingData(i);
+                pageNums.appendChild(btn);
+            }
+        }
+    }
+
+    function exportClosingCSV() {
+        const method = closingCurrentMethod;
+        const date = document.getElementById('closingDateFilter')?.value || '';
+        const storeId = document.getElementById('closingStoreFilter')?.value || '';
+        let url = `/api/summaries/closing?limit=999`;
+        if (method && method !== 'all') url += `&method=${method}`;
+        if (date) url += `&date=${date}`;
+        if (storeId) url += `&storeId=${storeId}`;
+        fetch(url).then(r => r.json()).then(result => {
+            const data = result.data || [];
+            if (!data.length) { toast('Tidak ada data untuk diexport', 'error'); return; }
+            const headers = ['Tanggal', 'Nama Customer', 'No WA', 'Metode', 'Produk', 'Nama Cetak', 'Varian', 'Warna', 'Jumlah', 'Ongkir', 'Alamat', 'Status', 'Label'];
+            const rows = data.map(d => [
+                d.closing_date ? new Date(d.closing_date).toLocaleString('id-ID') : '-',
+                d.contact_name, d.contact_phone,
+                d.metode, d.produk, d.teks_label, d.varian, d.warna, d.jumlah, d.ongkir,
+                `"${(d.alamat || '').replace(/"/g, '""')}"`,
+                d.status, (d.wa_labels || []).join('|')
+            ]);
+            const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `closing_${date || 'semua'}_${new Date().toLocaleDateString('id-ID').replace(/\//g,'-')}.csv`;
+            link.click();
+            toast('Export CSV berhasil!');
+        }).catch(e => toast('Gagal export: ' + e.message, 'error'));
+    }
+
+    function populateClosingStoreFilter() {
+        const sel = document.getElementById('closingStoreFilter');
+        if (!sel) return;
+        while (sel.options.length > 1) sel.remove(1);
+        stores.forEach(s => {
+            const opt = new Option(`🏪 ${s.name || s.wa_id}`, s.wa_id);
+            sel.add(opt);
+        });
+    }
 
     // ============================================================
     // KICKOFF
     // ============================================================
     // Restore view dari URL hash saat pertama kali load (deep link support)
     const _initHash = location.hash.replace('#/', '').trim();
-    const _validViews = ['chat', 'agents', 'bot', 'media', 'summaries', 'analytics', 'followups', 'learning', 'connect', 'system'];
+    const _validViews = ['chat', 'agents', 'bot', 'media', 'summaries', 'closing', 'analytics', 'followups', 'learning', 'connect', 'system'];
     if (_initHash && _validViews.includes(_initHash) && _initHash !== 'chat') {
         // Tunda agar init() selesai load data terlebih dahulu
         setTimeout(() => switchView(_initHash), 300);

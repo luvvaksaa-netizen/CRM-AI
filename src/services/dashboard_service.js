@@ -455,11 +455,14 @@ function initDashboard(port = 3000) {
     }
   });
 
-  // GET: Rekap hanya yang STATUS closing / menunggu transfer (untuk halaman Closing)
+  // GET: Rekap hanya yang STATUS closing / menunggu transfer (untuk halaman Closing Management)
+  // Query: ?storeId=xxx&method=COD|transfer|all&date=YYYY-MM-DD&page=1&limit=30
   app.get('/api/summaries/closing', async (req, res) => {
     try {
       const { ChatSummary } = require('../database/index');
-      const { storeId } = req.query;
+      const { storeId, method, date, page, limit } = req.query;
+      const pageNum  = Math.max(1, parseInt(page)  || 1);
+      const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 30));
       const where = {};
       if (storeId) where.store_wa_id = storeId;
 
@@ -470,16 +473,89 @@ function initDashboard(port = 3000) {
 
       // Filter: hanya kontak yang sudah transfer / closing / selesai
       const CLOSING_STATUSES = ['menunggu transfer', 'closing', 'selesai'];
-      const closingList = allSummaries.filter(s => {
+      let closingList = allSummaries.filter(s => {
         const summaryLower = (s.summary || '').toLowerCase();
-        return CLOSING_STATUSES.some(st => summaryLower.includes(`status: ${st}`));
+        // Prioritas: cek wa_labels dulu
+        let labels = [];
+        try { labels = JSON.parse(s.wa_labels || '[]'); } catch(_){}
+        const hasClosingLabel = labels.some(l => ['Closing', 'Menunggu Transfer', 'COD'].includes(l));
+        return hasClosingLabel || CLOSING_STATUSES.some(st => summaryLower.includes(`status: ${st}`));
       });
 
-      res.json(closingList);
+      // Helper: parse field dari summary text (KEY-VALUE format)
+      function parseSummaryField(txt, fieldName, defaultVal = '-') {
+        const regex = new RegExp(`${fieldName}:\\s*(.+)`, 'i');
+        const match = txt.match(regex);
+        return match ? match[1].trim().split('\n')[0].trim() : defaultVal;
+      }
+
+      // Enrich data: parse rekap dari summary text
+      const enriched = closingList.map(s => {
+        const txt = s.summary || '';
+        let labels = [];
+        try { labels = JSON.parse(s.wa_labels || '[]'); } catch(_){}
+
+        const metodeBayar = parseSummaryField(txt, 'METODE BAYAR');
+        const isCOD = labels.includes('COD') || /COD|bayar\s*di\s*tempat/i.test(metodeBayar);
+        const isTransfer = !isCOD && (/Transfer/i.test(metodeBayar) || labels.includes('Menunggu Transfer') || labels.includes('Closing'));
+
+        const closingDate = s.label_timestamps
+          ? (() => { try { return JSON.parse(s.label_timestamps)?.Closing || null; } catch(_){ return null; } })()
+          : null;
+
+        return {
+          contact_id: s.contact_id,
+          store_wa_id: s.store_wa_id,
+          contact_name: s.contact_name || '-',
+          contact_phone: s.contact_phone || '-',
+          last_updated: s.last_updated,
+          closing_date: closingDate || s.last_updated,
+          wa_labels: labels,
+          metode: isCOD ? 'COD' : (isTransfer ? 'Transfer' : metodeBayar || '-'),
+          produk: parseSummaryField(txt, 'PRODUK DIMINATI'),
+          jumlah: parseSummaryField(txt, 'JUMLAH'),
+          ongkir: parseSummaryField(txt, 'ONGKIR'),
+          teks_label: parseSummaryField(txt, 'TEKS LABEL'),
+          varian: parseSummaryField(txt, 'VARIAN'),
+          warna: parseSummaryField(txt, 'WARNA'),
+          alamat: parseSummaryField(txt, 'ALAMAT'),
+          status: parseSummaryField(txt, 'STATUS'),
+          harga: parseSummaryField(txt, 'HARGA'),
+          catatan: parseSummaryField(txt, 'CATATAN'),
+          summary_raw: txt
+        };
+      });
+
+      // Filter berdasarkan method (COD / transfer / all)
+      let filtered = enriched;
+      if (method === 'COD') {
+        filtered = enriched.filter(e => e.metode === 'COD');
+      } else if (method === 'transfer') {
+        filtered = enriched.filter(e => e.metode === 'Transfer');
+      }
+
+      // Filter berdasarkan tanggal
+      if (date) {
+        const targetDate = new Date(date);
+        targetDate.setHours(0, 0, 0, 0);
+        const nextDate = new Date(targetDate);
+        nextDate.setDate(nextDate.getDate() + 1);
+        filtered = filtered.filter(e => {
+          const d = new Date(e.closing_date || e.last_updated);
+          return d >= targetDate && d < nextDate;
+        });
+      }
+
+      const total      = filtered.length;
+      const totalPages = Math.ceil(total / limitNum) || 1;
+      const data       = filtered.slice((pageNum - 1) * limitNum, pageNum * limitNum);
+
+      res.json({ data, total, page: pageNum, totalPages, limit: limitNum });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
   });
+
 
   // GET: Statistik ringkas — jumlah closing hari ini
   app.get('/api/summaries/stats', async (req, res) => {

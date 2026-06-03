@@ -630,7 +630,9 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
 
     // 6. PROSES AI (dengan pesan yang sudah digabung)
     const interactionCount = history.filter(h => !h.is_from_me).length + 1;
-    const aiResult = await getAIResponse(finalBodyForAI, history, store, agent, combinedMedia, summary, interactionCount);
+    // Ambil nomor HP customer dari summary record atau identity untuk diinjeksi ke AI prompt
+    const customerPhone = summaryRecord?.contact_phone || identity?.phone || '';
+    const aiResult = await getAIResponse(finalBodyForAI, history, store, agent, combinedMedia, summary, interactionCount, customerPhone);
     
     // SAFETY NET: Pastikan selalu ada konten untuk membalas, mencegah error WWebJS "Message cannot be empty"
     const fallbackContent = aiResult.content || "Mohon maaf, saya sedang kesulitan memproses pesan Anda. Bisa diulangi pertanyaannya Kak?";

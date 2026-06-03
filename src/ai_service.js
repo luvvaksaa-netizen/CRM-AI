@@ -265,13 +265,13 @@ function runNextInQueue() {
     }
 }
 
-async function getAIResponse(userMessage, history = [], store = null, agent = null, customerMediaContext = "", conversationSummary = "", interactionCount = 1) {
+async function getAIResponse(userMessage, history = [], store = null, agent = null, customerMediaContext = "", conversationSummary = "", interactionCount = 1, customerPhone = "") {
     return new Promise((resolve, reject) => {
         pendingQueue.push({
             resolve,
             reject,
             queuedAt: Date.now(),
-            execute: () => _processAIResponse(userMessage, history, store, agent, customerMediaContext, conversationSummary, interactionCount)
+            execute: () => _processAIResponse(userMessage, history, store, agent, customerMediaContext, conversationSummary, interactionCount, customerPhone)
         });
         runNextInQueue();
     }).catch(err => {
@@ -284,7 +284,7 @@ async function getAIResponse(userMessage, history = [], store = null, agent = nu
 /**
  * Logika internal pemrosesan AI (Refactored: Smarter & Safer)
  */
-async function _processAIResponse(userMessage, history = [], store = null, agent = null, customerMediaContext = "", conversationSummary = "", interactionCount = 1) {
+async function _processAIResponse(userMessage, history = [], store = null, agent = null, customerMediaContext = "", conversationSummary = "", interactionCount = 1, customerPhone = "") {
     // Guard: Validasi API Key tanpa crash
     if (!config.OPENAI_API_KEY || !config.OPENAI_API_KEY.startsWith('sk-')) {
         logger.error("OpenAI API Key belum dikonfigurasi atau tidak valid!");
@@ -343,18 +343,11 @@ async function _processAIResponse(userMessage, history = [], store = null, agent
         const nowStr = moment().format('dddd, DD MMMM YYYY HH:mm');
 
         const fullSystemInstruction = `
-${sysPrompt}
-
 ═══════════════════════════════════════════
 WAKTU SAAT INI: ${nowStr}
 ═══════════════════════════════════════════
-Gunakan informasi waktu ini HANYA untuk konteks internal (misal: menyapa "Selamat pagi" atau "Selamat malam"). 
+Gunakan informasi waktu ini HANYA untuk konteks internal (misal: menyapa "Selamat pagi" atau "Selamat malam").
 DILARANG KERAS menulis tanggal/jam/timestamp di dalam teks balasan ke pelanggan.
-
-═══════════════════════════════════════════
-INFORMASI PRODUK & KEUNGGULAN (KNOWLEDGE):
-═══════════════════════════════════════════
-${knowledge}
 
 ═══════════════════════════════════════════
 PENGETAHUAN DARI MEDIA (Foto & Video):
@@ -368,7 +361,7 @@ KETERSEDIAAN MEDIA:
 ═══════════════════════════════════════════
 KATALOG MEDIA YANG BISA KAMU KIRIM:
 ═══════════════════════════════════════════
-PENTING: Gunakan tool "kirim_media_katalog" untuk mengirim media. Kamu HANYA tahu ID-nya. 
+PENTING: Gunakan tool "kirim_media_katalog" untuk mengirim media. Kamu HANYA tahu ID-nya.
 ${catalogSection}
 
 LABEL OTOMATIS YANG BOLEH DIPAKAI:
@@ -580,6 +573,17 @@ PANDUAN SITUASI TIDAK TERDUGA:
 4. NEGOSIASI HARGA: Arahkan ke value produk. Tawarkan potongan ongkir transfer.
 5. TANYA ASAL PENGIRIMAN: "Dari Kediri, Jawa Timur bund 🙏"
 6. KOMPLAIN TIDAK SAMPAI: Empati, tanyakan resi, arahkan ke CS manusia.
+
+═══════════════════════════════════════════
+INFORMASI PRODUK TAMBAHAN (CATATAN KHUSUS TOKO/AGEN):
+═══════════════════════════════════════════
+${knowledge}
+
+═══════════════════════════════════════════
+IDENTITAS & KEPRIBADIAN CS — INSTRUKSI PRIORITAS TERTINGGI:
+(Bagian ini MENGGANTIKAN apapun yang bertentangan di atas)
+═══════════════════════════════════════════
+${sysPrompt}
 `.trim();
 
 
@@ -688,6 +692,12 @@ PANDUAN SITUASI TIDAK TERDUGA:
         // STRATEGI PRIORITAS TERBALIK (BOTTOM-WEIGHTED)
         // Aturan Draconian diletakkan di instruksi sistem terakhir.
         // ══════════════════════════════════════════════════════════════════
+        // Nomor WA customer (diinjeksi server, bukan dari AI)
+        const customerPhoneFormatted = customerPhone ? String(customerPhone).replace(/[^0-9+]/g, '') : '';
+        const customerWADisplay = customerPhoneFormatted
+            ? (customerPhoneFormatted.startsWith('+') ? customerPhoneFormatted : `+${customerPhoneFormatted}`)
+            : '(sedang diambil dari sistem)';
+
         const draconianRules = `
 --- [ATURAN MUTLAK & TEKNIS - WAJIB PATUH] ---
 1. STATUS: Ini adalah interaksi ke-${interactionCount}.
@@ -715,6 +725,26 @@ PANDUAN SITUASI TIDAK TERDUGA:
     - Customer konfirmasi sudah transfer (ada bukti transfer) → "Closing"
     - Customer antusias tapi belum order → "Hot Lead"
     ⚠️ PENTING: Label "COD" harus TETAP ADA bahkan setelah Closing — jangan pernah hapus label COD.
+
+15. 📱 NOMOR WA CUSTOMER (DIINJEKSI OTOMATIS OLEH SERVER — GUNAKAN INI UNTUK FIELD "No WA" DI REKAP):
+    No WA Customer: ${customerWADisplay}
+    ATURAN KRITIS:
+    - WAJIB gunakan nomor di atas untuk field "No WA" di rekap pesanan
+    - DILARANG KERAS menulis placeholder seperti "[Nomor WA dari chat]", "[nomor wa customer]", atau teks kosong
+    - Nomor ini sudah diambil otomatis oleh sistem dari identitas chat
+
+16. 🚨 ATURAN VALIDASI SEBELUM MENUTUP BOT (matikan_bot_kontak):
+    WAJIB validasi SEMUA checklist ini sebelum memanggil matikan_bot_kontak:
+    ✅ Pengiriman sudah jelas: COD atau NON COD (Transfer)
+    ✅ Nama Penerima sudah diisi (bukan kosong)
+    ✅ No WA sudah terisi dengan nomor asli (bukan placeholder [...])
+    ✅ Alamat lengkap (Jalan, Kecamatan, Kota, Provinsi)
+    ✅ Produk sudah konsisten (DTF ≠ UV, varian sesuai produk)
+    ✅ Nama Cetak, Varian, Jumlah sudah terisi dan konsisten
+    ✅ Ongkir sudah tertera (nominal Rp)
+    ✅ Total Harus Dibayar sudah terisi
+    JIKA ADA SATU SAJA YANG BELUM → TANYA DULU KE CUSTOMER, JANGAN BOT OFF!
+    KHUSUS TRANSFER: Pastikan customer sudah mengirim BUKTI TRANSFER (gambar struk/screenshot) sebelum label Closing dipasang.
 
 --- [KETERANGAN PENTING: KEPRIBADIAN & STRATEGI SALES] ---
 ${sysPrompt}
@@ -972,51 +1002,46 @@ async function generateChatSummary(history = []) {
 Ekstrak SEMUA informasi yang sudah disebutkan customer.
 Gunakan format PERSIS seperti ini (isi setiap field, tulis "belum" jika belum diketahui):
 
-NAMA CUSTOMER: [nama pemesan atau "belum"]
-PRODUK DIMINATI: [Label DTF (baju/kain) / Stiker UV DTF Timbul (benda keras) / belum jelas]
-VARIAN:
-  - Jika DTF: [Varian 1 / Varian 2 / Varian 3 / Varian 4 atau "belum"]
-  - Jika UV: [Cowok / Cewek / Polos atau "belum"]
-WARNA:
-  - Jika DTF: [Pink / Kuning / Putih / Hijau / Biru / Hitam atau "belum"]
-  - Jika UV: [N/A - warna fixed sesuai varian] ← SELALU tulis ini jika produk UV
-TEKS LABEL: [nama-nama yang mau dicetak, tulis semua satu per satu, atau "belum"]
-JUMLAH: [jumlah paket, atau "belum". Ingat: DTF 1 paket = 50 pcs, UV 1 paket = 60 pcs]
-DETAIL PER NAMA: [pembagian jumlah per nama/varian, misal "Andrian Cowok 30 pcs, Alivia Cewek 30 pcs" atau "belum"]
+NAMA CUSTOMER: [nama pemesan, atau "belum"]
+PRODUK DIMINATI: [Label DTF / Stiker UV DTF Timbul / belum jelas]
+VARIAN: [tulis varian yang dipilih customer. DTF: Varian 1/2/3/4. UV: Cowok/Cewek/Polos. Tulis "belum" jika belum tahu]
+WARNA: [tulis warna yang dipilih. DTF: Pink/Kuning/Putih/Hijau/Biru/Hitam. UV: tulis "N/A". Tulis "belum" jika belum tahu]
+TEKS LABEL: [nama-nama yang mau dicetak, tulis satu per satu, atau "belum"]
+JUMLAH: [jumlah paket. DTF 1 paket=50pcs, UV 1 paket=60pcs. Atau "belum"]
+DETAIL PER NAMA: [contoh: "Andrian Cowok 30pcs, Alivia Cewek 30pcs" atau "belum"]
 ALAMAT: [alamat lengkap atau "belum"]
 HARGA: [sudah disebutkan / belum]
-ONGKIR: [Tulis NOMINAL aktual jika sudah ada di chat, contoh: "Rp 18.000 (J&T REG)" atau "belum dicek". JANGAN tulis hanya "sudah dicek".]
+ONGKIR: [nominal aktual, contoh: "Rp 18.000 (J&T REG)" atau "belum dicek". JANGAN tulis hanya "sudah dicek".]
 METODE BAYAR: [Transfer / COD / belum]
 STATUS: [opening / gali kebutuhan / negosiasi / menunggu alamat / menunggu rekap / menunggu transfer / closing / selesai / cancel]
 UPSELLING_STATUS: [belum ditawarkan / sudah ditawarkan namun belum closing / sudah closing upsell]
-NEXT ACTION: [apa langkah selanjutnya yang perlu dilakukan bot]
-WA_LABELS: [Isi dengan label WA yang PALING relevan dari daftar ini berdasarkan STATUS: "Closing", "Menunggu Transfer", "Menunggu Rekap", "COD", "AI Lead Aktif", "AI Lead Baru", "Cancel". Pilih hanya 1-2 yang paling tepat dalam format array, misal: [Closing] atau [COD]]
+NEXT ACTION: [langkah selanjutnya yang perlu dilakukan bot]
+WA_LABELS: [label paling relevan: "Closing", "Menunggu Transfer", "Menunggu Rekap", "COD", "AI Lead Aktif", "AI Lead Baru", "Cancel". Pilih 1-2, format array, contoh: [Closing] atau [COD, Closing]]
 CATATAN: [info penting lain, keluhan, permintaan khusus]
 
-ATURAN PENTING untuk field ONGKIR:
-- Jika bot sudah membalas hasil cek ongkir di chat (ada nominal Rp), WAJIB tulis nominalnya. Contoh: "Rp 18.000 (J&T REG, 2-3 hari)"
-- Jika ongkir belum dicek, tulis "belum dicek"
-- JANGAN tulis hanya "sudah dicek" tanpa nominal
+ATURAN FIELD ONGKIR:
+- Ada nominal Rp di chat → wajib tulis nominalnya, contoh: "Rp 18.000 (J&T REG)"
+- Belum dicek → tulis "belum dicek"
+- DILARANG tulis hanya "sudah dicek" tanpa nominal
 
-ATURAN PENTING untuk field WA_LABELS:
-- JIKA STATUS opening/baru → WA_LABELS: [AI Lead Baru]
-- JIKA STATUS gali kebutuhan → WA_LABELS: [AI Lead Aktif]
-- JIKA data masih dikumpulkan dan belum direkap utuh → WA_LABELS: [Menunggu Rekap]
-- JIKA pesanan COD (Bayar di Tempat) dan belum deal → WA_LABELS: [COD]
-- JIKA pesanan NON-COD (Transfer) dan belum ada bukti transfer → WA_LABELS: [Menunggu Transfer]. JANGAN BERIKAN jika COD!
-- JIKA pesanan COD dan customer SUDAH KONFIRMASI DEAL → WA_LABELS: [Closing, COD]
-- JIKA pesanan TRANSFER dan customer SUDAH MENGIRIM BUKTI TRANSFER → WA_LABELS: [Closing]
-- JIKA customer membatalkan pesanan atau tidak jadi beli → WA_LABELS: [Cancel] dan STATUS: cancel
+ATURAN WA_LABELS (pilih berdasarkan STATUS):
+- Opening/baru → [AI Lead Baru]
+- Gali kebutuhan → [AI Lead Aktif]
+- Data belum lengkap, belum direkap → [Menunggu Rekap]
+- COD, belum konfirmasi deal → [COD]
+- Transfer, belum ada bukti → [Menunggu Transfer]
+- COD + sudah konfirmasi deal → [Closing, COD]
+- Transfer + sudah kirim bukti → [Closing]
+- Batal/tidak jadi → [Cancel] dan STATUS: cancel
 
 ATURAN KRITIS — STATUS "closing" HANYA BOLEH DIISI JIKA:
-✅ TEKS LABEL sudah terisi (nama cetak sudah ada, bukan "belum")
-✅ ONGKIR sudah ada nominalnya (tulis nominal Rp atau tulis "Gratis" — sesuai SOP tidak boleh hanya "belum dicek")
-✅ DETAIL PER NAMA sudah jelas (pembagian nama+jumlah, bukan "belum")
+✅ TEKS LABEL sudah ada (bukan "belum")
+✅ ONGKIR sudah ada nominal Rp (bukan "belum dicek")
+✅ DETAIL PER NAMA sudah jelas
 ✅ METODE BAYAR sudah jelas (Transfer atau COD)
-✅ REKAP sudah dikirim ke customer dan customer sudah KONFIRMASI
+✅ REKAP sudah dikirim dan customer sudah konfirmasi
 
-Jika ada satu saja kondisi di atas belum terpenuhi, JANGAN tulis STATUS: closing.
-Tulis status yang paling akurat (misal: menunggu rekap, gali kebutuhan, menunggu alamat, dsb).` },
+Jika satu saja belum terpenuhi, tulis status yang paling akurat (menunggu rekap, gali kebutuhan, dst).` },
                 { role: "user", content: `Berikut riwayat chatnya, buatkan rekapannya:\n\n${historyText}` }
             ],
             temperature: 0.2 // Lebih stabil dan konsisten untuk format terstruktur

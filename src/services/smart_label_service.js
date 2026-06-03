@@ -169,6 +169,22 @@ function isClosingDataComplete(summaryText) {
     logger.warn(`[SmartLabel] ⚠️ Closing DIBLOKIR — data belum lengkap: ${missingFields.map(f => f.label).join(', ')}`);
     return false;
   }
+
+  // FIX #2D: Cegah closing jika field kritis masih mengandung placeholder literal [...] 
+  // (AI kadang menulis [Nomor WA dari chat] atau [belum diisi] alih-alih data asli)
+  const kritisFields = ['TEKS LABEL', 'ALAMAT', 'NAMA CUSTOMER', 'DETAIL PER NAMA'];
+  for (const fieldName of kritisFields) {
+    const fieldMatch = txt.match(new RegExp(`${fieldName}:\\s*(.+)`, 'i'));
+    if (fieldMatch) {
+      const fieldValue = fieldMatch[1].trim();
+      // Jika nilai field masih mengandung [ atau ] → belum terisi asli
+      if (/[\[\]]/.test(fieldValue)) {
+        logger.warn(`[SmartLabel] ⚠️ Closing DIBLOKIR — field "${fieldName}" masih berisi placeholder: "${fieldValue}"`);
+        return false;
+      }
+    }
+  }
+
   return true;
 }
 
