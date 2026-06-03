@@ -160,6 +160,54 @@ const FollowUp = sequelize.define('FollowUp', {
   cancel_reason:    { type: DataTypes.STRING,  allowNull: true }
 });
 
+/**
+ * Model: ClosingPattern (Learning Bot — Pola Sukses dari Closing)
+ * Berisi teknik/pola yang berhasil membuat customer deal.
+ * Di-extract otomatis oleh AI setiap ada closing baru.
+ */
+const ClosingPattern = sequelize.define('ClosingPattern', {
+  id:             { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  agent_id:       { type: DataTypes.INTEGER, allowNull: true },
+  product_type:   { type: DataTypes.STRING,  defaultValue: 'generic' }, // 'dtf' | 'uv' | 'generic'
+  teknik:         { type: DataTypes.STRING,  allowNull: false },          // Nama teknik, e.g. "objection_handling"
+  contoh_kalimat: { type: DataTypes.TEXT,    allowNull: true },           // Kalimat CS yang efektif
+  konteks:        { type: DataTypes.TEXT,    allowNull: true },           // Kapan teknik ini dipakai
+  dampak:         { type: DataTypes.TEXT,    allowNull: true },           // Efek/hasil dari teknik ini
+  frequency:      { type: DataTypes.INTEGER, defaultValue: 1 },           // Berapa kali pola ini muncul
+  confidence:     { type: DataTypes.FLOAT,   defaultValue: 0.5 },         // 0.0-1.0 (naik seiring frequency)
+  is_active:      { type: DataTypes.BOOLEAN, defaultValue: true },        // Bisa dinonaktifkan manual
+  source_type:    { type: DataTypes.STRING,  defaultValue: 'auto' },      // 'auto' | 'dataset' | 'manual'
+  source_file:    { type: DataTypes.STRING,  allowNull: true },           // Nama file dataset sumber
+  last_seen_at:   { type: DataTypes.DATE,    defaultValue: Sequelize.NOW }
+});
+
+// Relasi Agent -> ClosingPattern
+BotAgent.hasMany(ClosingPattern, { foreignKey: 'agent_id' });
+ClosingPattern.belongsTo(BotAgent, { foreignKey: 'agent_id' });
+
+/**
+ * Model: ClosingAnalytic (Learning Bot — Rekam Jejak Analisis Closing)
+ * Menyimpan hasil analisis AI untuk setiap sesi percakapan yang closing.
+ */
+const ClosingAnalytic = sequelize.define('ClosingAnalytic', {
+  id:                   { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  store_wa_id:          { type: DataTypes.STRING,  allowNull: true },
+  contact_id:           { type: DataTypes.STRING,  allowNull: true },
+  agent_id:             { type: DataTypes.INTEGER, allowNull: true },
+  product_type:         { type: DataTypes.STRING,  defaultValue: 'generic' },
+  conversation_score:   { type: DataTypes.INTEGER, defaultValue: 0 },    // Skor kualitas 1-10
+  pesan_sampai_closing: { type: DataTypes.INTEGER, defaultValue: 0 },    // Jumlah pesan sampai deal
+  metode_bayar:         { type: DataTypes.STRING,  allowNull: true },    // 'COD' | 'Transfer'
+  alur_lengkap:         { type: DataTypes.BOOLEAN, defaultValue: false }, // Apakah alur 8 langkah terpenuhi
+  data_lengkap:         { type: DataTypes.BOOLEAN, defaultValue: false }, // Apakah data customer lengkap
+  ada_komplain:         { type: DataTypes.BOOLEAN, defaultValue: false }, // Apakah ada komplain
+  patterns_extracted:   { type: DataTypes.INTEGER, defaultValue: 0 },    // Berapa pola diekstrak
+  analysis_json:        { type: DataTypes.TEXT,    allowNull: true },    // Full JSON analysis
+  source_type:          { type: DataTypes.STRING,  defaultValue: 'production' }, // 'production' | 'dataset'
+  source_file:          { type: DataTypes.STRING,  allowNull: true },
+  analyzed_at:          { type: DataTypes.DATE,    defaultValue: Sequelize.NOW }
+});
+
 
 /**
  * Initialize & Sync Database (alter: true = auto-migrate safely)
@@ -352,6 +400,20 @@ async function initDB() {
     await safeAddColumn('FollowUps', 'sent_at', { type: DataTypes.DATE, allowNull: true });
     await safeAddColumn('FollowUps', 'cancel_reason', { type: DataTypes.STRING, allowNull: true });
 
+    // Learning Bot System (2026-06-03)
+    // ClosingPattern columns
+    await safeAddColumn('ClosingPatterns', 'agent_id', { type: DataTypes.INTEGER, allowNull: true });
+    await safeAddColumn('ClosingPatterns', 'product_type', { type: DataTypes.STRING, defaultValue: 'generic' });
+    await safeAddColumn('ClosingPatterns', 'source_type', { type: DataTypes.STRING, defaultValue: 'auto' });
+    await safeAddColumn('ClosingPatterns', 'source_file', { type: DataTypes.STRING, allowNull: true });
+    // ClosingAnalytic columns
+    await safeAddColumn('ClosingAnalytics', 'product_type', { type: DataTypes.STRING, defaultValue: 'generic' });
+    await safeAddColumn('ClosingAnalytics', 'alur_lengkap', { type: DataTypes.BOOLEAN, defaultValue: false });
+    await safeAddColumn('ClosingAnalytics', 'data_lengkap', { type: DataTypes.BOOLEAN, defaultValue: false });
+    await safeAddColumn('ClosingAnalytics', 'ada_komplain', { type: DataTypes.BOOLEAN, defaultValue: false });
+    await safeAddColumn('ClosingAnalytics', 'source_type', { type: DataTypes.STRING, defaultValue: 'production' });
+    await safeAddColumn('ClosingAnalytics', 'source_file', { type: DataTypes.STRING, allowNull: true });
+
     // Smart Label System (2026-05-25)
     // Menyimpan label WA aktif per kontak sebagai JSON array untuk visibilitas dashboard
     await safeAddColumn('ChatSummaries', 'wa_labels', { type: DataTypes.TEXT, defaultValue: '[]' });
@@ -393,5 +455,7 @@ module.exports = {
   ChatSummary,
   PausedContact,
   FollowUp,
+  ClosingPattern,
+  ClosingAnalytic,
   initDB
 };

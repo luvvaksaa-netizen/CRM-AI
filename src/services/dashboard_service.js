@@ -410,22 +410,46 @@ function initDashboard(port = 3000) {
   app.get('/api/summaries', async (req, res) => {
     try {
       const { ChatSummary, Store } = require('../database/index');
-      const { storeId, status } = req.query;
+      const { storeId, status, page, limit, search } = req.query;
+
+      const pageNum  = Math.max(1, parseInt(page)  || 1);
+      const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 20));
+      const offset   = (pageNum - 1) * limitNum;
+
       const where = {};
       if (storeId) where.store_wa_id = storeId;
 
-      const summaries = await ChatSummary.findAll({
+      // Filter by status keyword (e.g. ?status=closing)
+      // We do this in JS because SQLite LIKE is not reliable for multi-line text
+      // First get total count, then paginate
+      let allSummaries = await ChatSummary.findAll({
         where,
         order: [['last_updated', 'DESC']],
         include: [{ model: Store, attributes: ['name', 'wa_id'] }]
       });
 
-      // Filter by status keyword if requested (e.g. ?status=closing)
-      const filtered = status
-        ? summaries.filter(s => (s.summary || '').toLowerCase().includes(`status: ${status.toLowerCase()}`))
-        : summaries;
+      // Apply status filter
+      if (status) {
+        allSummaries = allSummaries.filter(s =>
+          (s.summary || '').toLowerCase().includes(`status: ${status.toLowerCase()}`)
+        );
+      }
 
-      res.json(filtered);
+      // Apply search filter (by contact name or phone)
+      if (search && search.trim()) {
+        const q = search.trim().toLowerCase();
+        allSummaries = allSummaries.filter(s =>
+          (s.contact_name || '').toLowerCase().includes(q) ||
+          (s.contact_phone || '').toLowerCase().includes(q) ||
+          (s.contact_id || '').toLowerCase().includes(q)
+        );
+      }
+
+      const total      = allSummaries.length;
+      const totalPages = Math.ceil(total / limitNum) || 1;
+      const data       = allSummaries.slice(offset, offset + limitNum);
+
+      res.json({ data, total, page: pageNum, totalPages, limit: limitNum });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }
@@ -798,16 +822,189 @@ function initDashboard(port = 3000) {
     }
   });
 
+  // ============================================================
+  // 🧠 LEARNING CENTER APIs — Continuous Improvement System
+  // ============================================================
+
+  /**
+   * GET /api/learning/stats
+   * Statistik ringkas Learning Bot: total pattern, avg score, top teknik, dll.
+   */
+  app.get('/api/learning/stats', async (req, res) => {
+    try {
+      const { getLearningStats } = require('./learning_service');
+      const { agentId } = req.query;
+      const stats = await getLearningStats(agentId ? parseInt(agentId) : null);
+      res.json(stats);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/learning/patterns
+   * Ambil semua pattern untuk tampilan di dashboard.
+   * Query: ?agentId=1&productType=dtf&activeOnly=true
+   */
+  app.get('/api/learning/patterns', async (req, res) => {
+    try {
+      const { ClosingPattern } = require('../database/index');
+      const { Op } = require('sequelize');
+      const { agentId, productType, activeOnly } = req.query;
+
+      const where = {};
+      if (agentId) where.agent_id = parseInt(agentId);
+      if (productType) where.product_type = productType;
+      if (activeOnly === 'true') where.is_active = true;
+
+      const patterns = await ClosingPattern.findAll({
+        where,
+        order: [['confidence', 'DESC'], ['frequency', 'DESC']],
+        limit: 100
+      });
+
+      res.json(patterns.map(p => ({
+        id: p.id,
+        agent_id: p.agent_id,
+        product_type: p.product_type,
+        teknik: p.teknik,
+        contoh_kalimat: p.contoh_kalimat,
+        konteks: p.konteks,
+        dampak: p.dampak,
+        frequency: p.frequency,
+        confidence: Math.round((p.confidence || 0.5) * 100),
+        is_active: p.is_active,
+        source_type: p.source_type,
+        source_file: p.source_file,
+        last_seen_at: p.last_seen_at,
+        createdAt: p.createdAt
+      })));
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * PATCH /api/learning/patterns/:id/toggle
+   * Aktifkan atau nonaktifkan satu pattern.
+   */
+  app.patch('/api/learning/patterns/:id/toggle', authorize('admin'), async (req, res) => {
+    try {
+      const { togglePattern } = require('./learning_service');
+      const { is_active } = req.body;
+      const result = await togglePattern(parseInt(req.params.id), is_active);
+      res.json(result);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * DELETE /api/learning/patterns/:id
+   * Hapus satu pattern permanen.
+   */
+  app.delete('/api/learning/patterns/:id', authorize('admin'), async (req, res) => {
+    try {
+      const { ClosingPattern } = require('../database/index');
+      const pattern = await ClosingPattern.findByPk(req.params.id);
+      if (!pattern) return res.status(404).json({ success: false, message: 'Pattern tidak ditemukan' });
+      await pattern.destroy();
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * GET /api/learning/analytics
+   * Ambil riwayat analisis closing (ClosingAnalytics).
+   */
+  app.get('/api/learning/analytics', async (req, res) => {
+    try {
+      const { ClosingAnalytic } = require('../database/index');
+      const { agentId, sourceType, limit } = req.query;
+
+      const where = {};
+      if (agentId) where.agent_id = parseInt(agentId);
+      if (sourceType) where.source_type = sourceType;
+
+      const analytics = await ClosingAnalytic.findAll({
+        where,
+        order: [['analyzed_at', 'DESC']],
+        limit: limit ? parseInt(limit) : 50
+      });
+
+      res.json(analytics);
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  /**
+   * POST /api/learning/seed
+   * Proses ulang dataset yang ada (admin only).
+   * Body: { agentId: number }
+   */
+  app.post('/api/learning/seed', authorize('admin'), async (req, res) => {
+    try {
+      const path = require('path');
+      const fs = require('fs');
+      const { processDatasetFile } = require('./learning_service');
+
+      const agentId = req.body.agentId || null;
+      const datasetsDir = path.join(process.cwd(), 'docs', 'datasets');
+
+      if (!fs.existsSync(datasetsDir)) {
+        return res.status(404).json({ success: false, message: 'Folder datasets tidak ditemukan' });
+      }
+
+      const datasetFiles = fs.readdirSync(datasetsDir).filter(f => f.endsWith('.txt'));
+
+      if (datasetFiles.length === 0) {
+        return res.json({ success: true, message: 'Tidak ada file dataset ditemukan', processed: 0 });
+      }
+
+      // Kembalikan response segera, proses di background
+      res.json({
+        success: true,
+        message: `Memproses ${datasetFiles.length} file dataset di background...`,
+        files: datasetFiles
+      });
+
+      // Proses background (non-blocking)
+      (async () => {
+        for (const fileName of datasetFiles) {
+          const filePath = path.join(datasetsDir, fileName);
+          await processDatasetFile(filePath, agentId);
+          await new Promise(r => setTimeout(r, 2000)); // Jeda antar file
+        }
+        logger.info(`[Learning] ✅ Seed ${datasetFiles.length} dataset selesai di background.`);
+      })().catch(e => logger.warn(`[Learning] Seed error: ${e.message}`));
+
+    } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // GET: Get all follow-ups for a specific store
   app.get('/api/followups/:storeId', async (req, res) => {
     try {
       const { getFollowUps } = require('./followup_service');
-      const { status, limit } = req.query;
-      const followUps = await getFollowUps(req.params.storeId, {
+      const { status, page, limit } = req.query;
+      const pageNum  = Math.max(1, parseInt(page)  || 1);
+      const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 30));
+
+      // Get all for count, then slice for pagination
+      const all = await getFollowUps(req.params.storeId, {
         status: status || undefined,
-        limit: limit ? parseInt(limit, 10) : 100
+        limit: 9999 // get all, paginate in JS to avoid count query
       });
-      res.json(followUps);
+
+      const total      = all.length;
+      const totalPages = Math.ceil(total / limitNum) || 1;
+      const data       = all.slice((pageNum - 1) * limitNum, pageNum * limitNum);
+
+      res.json({ data, total, page: pageNum, totalPages, limit: limitNum });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }

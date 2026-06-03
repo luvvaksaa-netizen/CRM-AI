@@ -393,7 +393,7 @@ Setelah LANGKAH 8 selesai (termasuk mengirim Promo Paket Bundling Back to School
 
 ```
 
-Kategori Bisnis: Cetak Label Nama UV DTF (Stiker Keras/Timbul/Anti Air)
+Kategori Bisnis: Cetak Label Nama DTF UV (Stiker Keras/Timbul/Anti Air)
 
 1. DETAIL PRODUK & HARGA:
 • Paket Stiker UV DTF Timbul: Isi 60 pcs per paket, harga Rp 39.000,-

@@ -544,6 +544,10 @@
     <div class="nav-btn" onclick="switchView('analytics')" id="nav-analytics">
         <i class="fas fa-chart-line"></i><span>Analitik</span>
     </div>
+    <!-- LEARNING CENTER -->
+    <div class="nav-btn" onclick="switchView('learning')" id="nav-learning" title="Learning Center — Bot Makin Pintar">
+        <i class="fas fa-graduation-cap"></i><span>Learning</span>
+    </div>
     <div class="nav-btn" onclick="switchView('connect')" id="nav-connect">
         <i class="fas fa-qrcode"></i><span>Koneksi</span>
     </div>
@@ -627,15 +631,36 @@
             <div class="page-header d-flex justify-content-between align-items-center">
                 <div>
                     <h2 class="fw-bold m-0" style="color:var(--clr-primary)"><i class="fas fa-list-check me-3"></i>Rekap Pembahasan</h2>
-                    <p class="text-muted m-0">Ringkasan pembicaraan & status deal per pelanggan</p>
+                    <p class="text-muted m-0">Ringkasan pembicaraan &amp; status deal per pelanggan</p>
                 </div>
-                <div class="d-flex gap-2 align-items-center">
-                    <select id="summaryStoreFilter" class="form-select border shadow-sm" style="width: auto; min-width: 180px; font-weight: 500;" onchange="renderSummaries()">
+                <div class="d-flex gap-2 align-items-center flex-wrap">
+                    <!-- Search Box -->
+                    <div class="input-group" style="width:220px;">
+                        <span class="input-group-text bg-white border"><i class="fas fa-search text-muted" style="font-size:0.8rem"></i></span>
+                        <input type="text" id="summarySearch" class="form-control border-start-0" placeholder="Cari nama / nomor..." oninput="debouncedLoadSummaries()" style="font-size:0.85rem;">
+                    </div>
+                    <!-- Status Filter -->
+                    <select id="summaryStatusFilter" class="form-select border shadow-sm" style="width:auto;min-width:160px;font-weight:500;" onchange="loadSummaries(1)">
+                        <option value="">📋 Semua Status</option>
+                        <option value="closing">✅ Closing</option>
+                        <option value="menunggu transfer">💸 Menunggu Transfer</option>
+                        <option value="menunggu rekap">📝 Menunggu Rekap</option>
+                        <option value="gali kebutuhan">🎯 Gali Kebutuhan</option>
+                        <option value="opening">🆕 Opening</option>
+                        <option value="cancel">❌ Cancel</option>
+                    </select>
+                    <select id="summaryStoreFilter" class="form-select border shadow-sm" style="width: auto; min-width: 180px; font-weight: 500;" onchange="loadSummaries(1)">
                         <option value="">🏷️ Semua Toko</option>
                     </select>
                     <button class="btn btn-light border" onclick="openLabelManager()"><i class="fas fa-tags me-2"></i>Kelola Label</button>
-                    <button class="btn btn-primary" onclick="loadSummaries()"><i class="fas fa-sync-alt me-2"></i>Segarkan</button>
+                    <button class="btn btn-primary" onclick="loadSummaries(1, true)"><i class="fas fa-sync-alt me-2"></i>Segarkan</button>
                 </div>
+            </div>
+
+            <!-- Info bar -->
+            <div class="d-flex justify-content-between align-items-center my-3 px-1" id="summaryInfoBar" style="font-size:0.82rem;color:#64748b;display:none!important;">
+                <span id="summaryInfoText">Menampilkan semua data</span>
+                <span id="summaryPageInfo" class="fw-semibold"></span>
             </div>
 
             <div id="summaryGrid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap:20px;">
@@ -643,6 +668,107 @@
                 <div class="empty-state m-auto p-5 text-center w-100" style="grid-column: 1 / -1;">
                     <i class="fas fa-spinner fa-spin fa-2x mb-3 text-primary"></i>
                     <p>Memuat data rekapan...</p>
+                </div>
+            </div>
+
+            <!-- Pagination Rekap -->
+            <div id="summaryPagination" class="d-flex justify-content-center align-items-center gap-2 mt-4 pb-2" style="display:none!important;">
+                <button id="summaryPrevBtn" class="btn btn-outline-secondary btn-sm px-3" onclick="loadSummaries(currentSummaryPage - 1)" disabled>
+                    <i class="fas fa-chevron-left me-1"></i>Prev
+                </button>
+                <div id="summaryPageNumbers" class="d-flex gap-1"></div>
+                <button id="summaryNextBtn" class="btn btn-outline-secondary btn-sm px-3" onclick="loadSummaries(currentSummaryPage + 1)" disabled>
+                    Next<i class="fas fa-chevron-right ms-1"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- === VIEW: LEARNING CENTER (NEW) === -->
+    <div class="view" id="view-learning">
+        <div class="page-view" style="background: linear-gradient(135deg, #f8faff 0%, #faf5ff 100%);">
+
+            <!-- Header -->
+            <div class="page-header d-flex justify-content-between align-items-center mb-4">
+                <div>
+                    <h2 class="fw-bold m-0" style="color:#7c3aed"><i class="fas fa-graduation-cap me-3"></i>Learning Center</h2>
+                    <p class="text-muted m-0 mt-1">Bot belajar otomatis dari setiap closing 🧠 — makin banyak closing, makin pintar bot</p>
+                </div>
+                <div class="d-flex gap-2">
+                    <select id="learningAgentFilter" class="form-select border shadow-sm" style="width:auto;min-width:160px;font-weight:500;" onchange="loadLearningData()">
+                        <option value="">🤖 Semua Agent</option>
+                    </select>
+                    <button class="btn btn-light border" onclick="loadLearningData()">
+                        <i class="fas fa-sync-alt me-2"></i>Refresh
+                    </button>
+                    <button class="btn btn-warning text-dark" onclick="seedDatasetsFromDashboard()" title="Proses ulang dataset closing dari folder docs/datasets">
+                        <i class="fas fa-database me-2"></i>Seed Datasets
+                    </button>
+                </div>
+            </div>
+
+            <!-- Stats Cards -->
+            <div class="row g-3 mb-4">
+                <div class="col-md-3">
+                    <div class="card-glass text-center p-4" style="border-top: 4px solid #7c3aed;">
+                        <div style="font-size:2rem; font-weight:800; color:#7c3aed" id="lc-total-patterns">—</div>
+                        <div class="text-muted small fw-bold mt-1" style="text-transform:uppercase;letter-spacing:1px;">Pola Tersimpan</div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card-glass text-center p-4" style="border-top: 4px solid #10b981;">
+                        <div style="font-size:2rem; font-weight:800; color:#10b981" id="lc-avg-score">—</div>
+                        <div class="text-muted small fw-bold mt-1" style="text-transform:uppercase;letter-spacing:1px;">Avg Score Bot</div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card-glass text-center p-4" style="border-top: 4px solid #f59e0b;">
+                        <div style="font-size:2rem; font-weight:800; color:#f59e0b" id="lc-total-analytics">—</div>
+                        <div class="text-muted small fw-bold mt-1" style="text-transform:uppercase;letter-spacing:1px;">Total Dianalisis</div>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="card-glass text-center p-4" style="border-top: 4px solid #3b82f6;">
+                        <div style="font-size:2rem; font-weight:800; color:#3b82f6" id="lc-avg-score-7d">—</div>
+                        <div class="text-muted small fw-bold mt-1" style="text-transform:uppercase;letter-spacing:1px;">Score 7 Hari</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row g-4">
+                <!-- KIRI: Pattern Library -->
+                <div class="col-lg-7">
+                    <div class="card-glass">
+                        <div class="d-flex justify-content-between align-items-center mb-4">
+                            <h5 class="fw-bold m-0"><i class="fas fa-star me-2" style="color:#f59e0b"></i>Pola Sukses dari Closing Nyata</h5>
+                            <div class="d-flex gap-2">
+                                <select id="lcPatternFilter" class="form-select form-select-sm" style="width:auto;" onchange="filterPatterns()">
+                                    <option value="all">Semua Produk</option>
+                                    <option value="dtf">DTF (Label Baju)</option>
+                                    <option value="uv">UV (Stiker Keras)</option>
+                                    <option value="generic">Generic</option>
+                                </select>
+                                <select id="lcStatusFilter" class="form-select form-select-sm" style="width:auto;" onchange="filterPatterns()">
+                                    <option value="all">Semua Status</option>
+                                    <option value="active">Aktif saja</option>
+                                    <option value="inactive">Nonaktif saja</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div id="lcPatternList">
+                            <div class="empty-state py-5"><i class="fas fa-spinner fa-spin"></i><p class="mt-3">Memuat pola...</p></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- KANAN: Riwayat Analisis -->
+                <div class="col-lg-5">
+                    <div class="card-glass">
+                        <h5 class="fw-bold mb-4"><i class="fas fa-chart-bar me-2" style="color:#7c3aed"></i>Riwayat Analisis Closing</h5>
+                        <div id="lcAnalyticsList">
+                            <div class="empty-state py-5"><i class="fas fa-spinner fa-spin"></i><p class="mt-3">Memuat analitik...</p></div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -656,12 +782,20 @@
                     <h2 class="fw-bold m-0" style="color:var(--clr-primary)"><i class="fas fa-history me-3"></i>Follow-Up Otomatis</h2>
                     <p class="text-muted m-0">Antrian pesan re-engagement berkala untuk customer yang belum closing</p>
                 </div>
-                <div class="d-flex gap-2 align-items-center">
-                    <select id="followupStoreFilter" class="form-select border shadow-sm" style="width:auto;min-width:160px;font-weight:500;" onchange="loadFollowUps()">
+                <div class="d-flex gap-2 align-items-center flex-wrap">
+                    <!-- Filter Status -->
+                    <select id="followupStatusFilter" class="form-select border shadow-sm" style="width:auto;min-width:150px;font-weight:500;" onchange="loadFollowUps(1)">
+                        <option value="">📋 Semua Status</option>
+                        <option value="pending">⏳ Pending</option>
+                        <option value="sent">✅ Terkirim</option>
+                        <option value="replied">💬 Dibalas</option>
+                        <option value="cancelled">❌ Dibatalkan</option>
+                    </select>
+                    <select id="followupStoreFilter" class="form-select border shadow-sm" style="width:auto;min-width:160px;font-weight:500;" onchange="loadFollowUps(1)">
                         <option value="">🏪 Semua Akun WA</option>
                     </select>
                     <button class="btn btn-light border" onclick="openFollowUpConfig()"><i class="fas fa-cog me-2"></i>Konfigurasi</button>
-                    <button class="btn btn-primary" onclick="loadFollowUps()"><i class="fas fa-sync-alt me-2"></i>Segarkan</button>
+                    <button class="btn btn-primary" onclick="loadFollowUps(1, true)"><i class="fas fa-sync-alt me-2"></i>Segarkan</button>
                 </div>
             </div>
 
@@ -693,12 +827,29 @@
                 </div>
             </div>
 
+            <!-- Info + Page info -->
+            <div class="d-flex justify-content-between align-items-center mb-3 px-1" style="font-size:0.82rem;color:#64748b;">
+                <span id="fuInfoText">Menampilkan semua antrian</span>
+                <span id="fuPageInfo" class="fw-semibold"></span>
+            </div>
+
             <!-- List Grid -->
             <div id="followupList" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap:20px;">
                 <div class="empty-state m-auto p-5 text-center w-100" style="grid-column: 1 / -1;">
                     <i class="fas fa-spinner fa-spin fa-2x mb-3 text-primary"></i>
                     <p>Memuat antrian follow-up...</p>
                 </div>
+            </div>
+
+            <!-- Pagination Follow-Up -->
+            <div id="fuPagination" class="d-flex justify-content-center align-items-center gap-2 mt-4 pb-2" style="display:none!important;">
+                <button id="fuPrevBtn" class="btn btn-outline-secondary btn-sm px-3" onclick="loadFollowUps(currentFuPage - 1)" disabled>
+                    <i class="fas fa-chevron-left me-1"></i>Prev
+                </button>
+                <div id="fuPageNumbers" class="d-flex gap-1"></div>
+                <button id="fuNextBtn" class="btn btn-outline-secondary btn-sm px-3" onclick="loadFollowUps(currentFuPage + 1)" disabled>
+                    Next<i class="fas fa-chevron-right ms-1"></i>
+                </button>
             </div>
         </div>
     </div>
@@ -817,17 +968,27 @@
                     <h2 class="fw-bold m-0" style="color:var(--clr-primary)"><i class="fas fa-chart-line me-3"></i>Analytics Dashboard</h2>
                     <p class="text-muted m-0">Live CRM Performance & Intelligence Metrics</p>
                 </div>
-                <div class="d-flex gap-2">
-                    <select id="analyticsDateFilter" class="form-select border shadow-sm" style="width: auto; min-width: 150px;" onchange="loadAnalytics()">
+                <div class="d-flex gap-2 align-items-center flex-wrap">
+                    <select id="analyticsDateFilter" class="form-select border shadow-sm" style="width: auto; min-width: 160px;" onchange="onAnalyticsDateChange()">
                         <option value="">⏳ Semua Waktu</option>
                         <option value="today">📅 Hari Ini</option>
                         <option value="yesterday">📆 Kemarin</option>
                         <option value="7days">🗓️ 7 Hari Terakhir</option>
+                        <option value="30days">📆 30 Hari Terakhir</option>
+                        <option value="thismonth">📅 Bulan Ini</option>
+                        <option value="lastmonth">📅 Bulan Lalu</option>
+                        <option value="custom">🗓️ Pilih Tanggal...</option>
                     </select>
+                    <!-- Custom Date Range (muncul hanya saat "Pilih Tanggal" dipilih) -->
+                    <div id="analyticsCustomRange" class="d-flex gap-2 align-items-center" style="display:none!important;">
+                        <input type="date" id="analyticsCustomStart" class="form-control border shadow-sm" style="width:145px;font-size:0.85rem;" onchange="loadAnalytics()">
+                        <span class="text-muted fw-semibold">s/d</span>
+                        <input type="date" id="analyticsCustomEnd" class="form-control border shadow-sm" style="width:145px;font-size:0.85rem;" onchange="loadAnalytics()">
+                    </div>
                     <select id="analyticsStoreFilter" class="form-select border shadow-sm" style="width: auto; min-width: 180px;" onchange="loadAnalytics()">
                         <option value="">🏪 Semua Toko</option>
                     </select>
-                    <button class="btn btn-primary" onclick="loadAnalytics()"><i class="fas fa-sync-alt me-2"></i>Refresh</button>
+                    <button class="btn btn-primary" onclick="loadAnalytics(true)"><i class="fas fa-sync-alt me-2"></i>Refresh</button>
                 </div>
             </div>
 
@@ -1303,6 +1464,7 @@
     async function init() {
         await loadAgents();
         await loadStores();
+        populateLearningAgentFilter(); // 🧠 Learning Center agent filter
         const chatBox = document.getElementById('chatMessages');
         chatBox.addEventListener('scroll', () => {
             if (chatBox.scrollTop < 80 && chatPagination.hasMore && !chatPagination.loading) {
@@ -1549,54 +1711,123 @@
     }
 
     // ============================================================
-    // TAHAP 4: REKAP PEMBAHASAN UI (Live Insights)
+    // CACHE LAYER (SWR-style, TTL 30 detik)
+    // Mencegah redundant DB queries saat navigasi antar tab.
     // ============================================================
-    let allSummaries = [];
+    const _apiCache = {};
+    const CACHE_TTL_MS = 30 * 1000;
 
-    async function loadSummaries() {
-        const grid = document.getElementById('summaryGrid');
-        try {
-            const res = await fetch('/api/summaries');
-            allSummaries = await res.json();
-            populateSummaryStoreFilter();
-            renderSummaries();
-        } catch (e) { grid.innerHTML = '<div class="text-danger p-4">Gagal memuat rekap.</div>'; }
+    async function cachedFetch(url, forceRefresh = false) {
+        const now = Date.now();
+        if (!forceRefresh && _apiCache[url] && (now - _apiCache[url].ts) < CACHE_TTL_MS) {
+            return _apiCache[url].data;
+        }
+        const res  = await fetch(url);
+        const data = await res.json();
+        _apiCache[url] = { data, ts: now };
+        return data;
     }
 
-    function populateSummaryStoreFilter() {
+    function invalidateCache(prefix) {
+        Object.keys(_apiCache).forEach(k => { if (k.startsWith(prefix)) delete _apiCache[k]; });
+    }
+
+    // ============================================================
+    // PAGINATION HELPER — buat tombol halaman angka
+    // ============================================================
+    function buildPaginationControls(containerId, totalPages, currentPage, onClickFn) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        container.innerHTML = '';
+        const maxVisible = 5;
+        let start = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+        let end   = Math.min(totalPages, start + maxVisible - 1);
+        if (end - start < maxVisible - 1) start = Math.max(1, end - maxVisible + 1);
+
+        for (let p = start; p <= end; p++) {
+            const btn = document.createElement('button');
+            btn.className = `btn btn-sm px-3 ${p === currentPage ? 'btn-primary' : 'btn-outline-secondary'}`;
+            btn.textContent = p;
+            btn.onclick = () => onClickFn(p);
+            container.appendChild(btn);
+        }
+    }
+
+    // ============================================================
+    // TAHAP 4: REKAP PEMBAHASAN UI (Paginated + Search + Cache)
+    // ============================================================
+    let currentSummaryPage = 1;
+    const SUMMARY_LIMIT = 20;
+    let _summaryDebounceTimer = null;
+
+    function debouncedLoadSummaries() {
+        clearTimeout(_summaryDebounceTimer);
+        _summaryDebounceTimer = setTimeout(() => loadSummaries(1), 350);
+    }
+
+    async function loadSummaries(page = 1, forceRefresh = false) {
+        if (forceRefresh) invalidateCache('/api/summaries');
+        currentSummaryPage = Math.max(1, page);
+        const grid = document.getElementById('summaryGrid');
+        if (page === 1 || forceRefresh) {
+            grid.innerHTML = '<div class="empty-state m-auto p-5 text-center w-100" style="grid-column:1/-1;"><i class="fas fa-spinner fa-spin fa-2x mb-3 text-primary"></i><p>Memuat...</p></div>';
+        }
+
+        const storeId  = document.getElementById('summaryStoreFilter')?.value || '';
+        const status   = document.getElementById('summaryStatusFilter')?.value || '';
+        const search   = (document.getElementById('summarySearch')?.value || '').trim();
+
+        const params = new URLSearchParams({ page: currentSummaryPage, limit: SUMMARY_LIMIT });
+        if (storeId) params.set('storeId', storeId);
+        if (status)  params.set('status', status);
+        if (search)  params.set('search', search);
+
+        const url = `/api/summaries?${params}`;
+
+        try {
+            const result = await cachedFetch(url, forceRefresh);
+
+            // Populate store filter on first load
+            if (currentSummaryPage === 1 && !storeId && !status && !search) {
+                populateSummaryStoreFilter(result.data || []);
+            }
+
+            renderSummaries(result.data || [], result);
+        } catch (e) {
+            grid.innerHTML = '<div class="text-danger p-4">Gagal memuat rekap.</div>';
+        }
+    }
+
+    function populateSummaryStoreFilter(data = []) {
         const filter = document.getElementById('summaryStoreFilter');
         if (!filter) return;
         const currentVal = filter.value;
         filter.innerHTML = '<option value="">🏷️ Semua Toko</option>';
-        
         const uniqueStores = {};
-        allSummaries.forEach(s => {
-            if (s.Store) {
-                uniqueStores[s.Store.wa_id] = s.Store.name;
-            }
-        });
-
+        data.forEach(s => { if (s.Store) uniqueStores[s.Store.wa_id] = s.Store.name; });
         Object.entries(uniqueStores).forEach(([wa_id, name]) => {
             const opt = document.createElement('option');
-            opt.value = wa_id;
-            opt.innerText = name;
+            opt.value = wa_id; opt.innerText = name;
             filter.appendChild(opt);
         });
-        
         if (uniqueStores[currentVal]) filter.value = currentVal;
     }
 
-    function renderSummaries() {
+    function renderSummaries(summaries = [], meta = {}) {
         const grid = document.getElementById('summaryGrid');
-        const filterId = document.getElementById('summaryStoreFilter')?.value;
-        
-        let summaries = allSummaries;
-        if (filterId) {
-            summaries = summaries.filter(s => s.store_wa_id === filterId);
-        }
+        const { total = 0, page = 1, totalPages = 1 } = meta;
+
+        // Info bar
+        const infoBar  = document.getElementById('summaryInfoBar');
+        const infoText = document.getElementById('summaryInfoText');
+        const pageInfo = document.getElementById('summaryPageInfo');
+        if (infoBar) infoBar.style.display = 'flex';
+        if (infoText) infoText.textContent = `${total} rekap ditemukan`;
+        if (pageInfo) pageInfo.textContent = totalPages > 1 ? `Hal ${page} dari ${totalPages}` : '';
 
         if (!summaries || summaries.length === 0) {
             grid.innerHTML = '<div class="empty-state m-auto p-5 text-center w-100" style="grid-column: 1 / -1;"><i class="fas fa-comment-slash"></i><p>Belum ada rekapan diskusi sesuai filter.</p></div>';
+            document.getElementById('summaryPagination').style.display = 'none';
             return;
         }
         grid.innerHTML = '';
@@ -1604,21 +1835,12 @@
             const div = document.createElement('div');
             div.className = 'card-glass p-4';
             div.style.position = 'relative';
-            
             const displayName = getContactDisplayName(s.contact_id, s.contact_name, s);
             const initial = (displayName.replace(/[^a-z0-9]/gi, '').substring(0, 2) || 'WA').toUpperCase();
-
-            // Tampilkan nomor WA
             let waNumber = '';
-            if (s.contact_phone) {
-                waNumber = s.contact_phone.replace(/\D/g, ''); 
-            } else {
-                const rawId = (s.contact_id || '').split('@')[0];
-                if (/^\d{8,}$/.test(rawId)) waNumber = rawId;
-            }
+            if (s.contact_phone) { waNumber = s.contact_phone.replace(/\D/g, ''); }
+            else { const rawId = (s.contact_id || '').split('@')[0]; if (/^\d{8,}$/.test(rawId)) waNumber = rawId; }
             const waDisplay = waNumber ? `+${waNumber}` : '(nomor belum terdeteksi)';
-            
-            // Generate Label Badges dari DB (jika ada)
             let labelsHtml = '';
             try {
                 const labels = s.wa_labels ? JSON.parse(s.wa_labels) : [];
@@ -1636,9 +1858,7 @@
                     labelsHtml += '</div>';
                 }
             } catch(e) {}
-
             const storeBadge = s.Store ? `<div style="position:absolute; top:12px; right:12px; background:var(--clr-primary); color:white; padding:4px 10px; font-size:0.7rem; border-radius:10px; font-weight:600;"><i class="fas fa-store me-1"></i>${escapeHtml(s.Store.name)}</div>` : '';
-
             div.innerHTML = `
                 ${storeBadge}
                 <div class="d-flex justify-content-between align-items-start ${labelsHtml ? 'mb-1' : 'mb-3'}">
@@ -1661,6 +1881,15 @@
             `;
             grid.appendChild(div);
         });
+
+        // Pagination controls
+        const pagEl = document.getElementById('summaryPagination');
+        const prevBtn = document.getElementById('summaryPrevBtn');
+        const nextBtn = document.getElementById('summaryNextBtn');
+        if (pagEl) pagEl.style.display = totalPages > 1 ? 'flex' : 'none';
+        if (prevBtn) prevBtn.disabled = page <= 1;
+        if (nextBtn) nextBtn.disabled = page >= totalPages;
+        buildPaginationControls('summaryPageNumbers', totalPages, page, (p) => loadSummaries(p));
     }
 
     // Fungsi navigasi langsung dari Rekap ke halaman Chat
@@ -3091,7 +3320,7 @@
 
     socket.on('followUpUpdated', ({ storeWaId }) => {
         if (storeWaId === currentStoreId && document.getElementById('view-followups').classList.contains('active')) {
-            loadFollowUps();
+            loadFollowUps(currentFuPage || 1);
         }
     });
 
@@ -3138,8 +3367,9 @@
         // Context-aware loading
         if (id === 'agents') loadAgents();
         if (id === 'media')  loadMedia();
-        if (id === 'summaries') loadSummaries();
+        if (id === 'summaries') loadSummaries(1);
         if (id === 'analytics') loadAnalytics();
+        if (id === 'learning') loadLearningData();
         if (id === 'followups') {
             // Populate store filter untuk followup jika belum
             const selFilter = document.getElementById('followupStoreFilter');
@@ -3160,87 +3390,134 @@
         }
     }
 
-    // Follow-Up JS functions
-    async function loadFollowUps() {
-        if (!currentStoreId) return;
-        const grid = document.getElementById('followupList');
-        try {
-            // Load Stats
-            const statsRes = await fetch(`/api/followups/stats/${currentStoreId}`);
-            const stats = await statsRes.json();
-            document.getElementById('fu-stat-pending').innerText = stats.pending || 0;
-            document.getElementById('fu-stat-sent').innerText = stats.sent || 0;
-            document.getElementById('fu-stat-replied').innerText = stats.replied || 0;
-            document.getElementById('fu-stat-total').innerText = stats.total || 0;
+    // ============================================================
+    // FOLLOW-UP JS (Paginated + Filter Status + Cache)
+    // ============================================================
+    let currentFuPage = 1;
+    const FU_LIMIT = 30;
 
-            // Load List
-            const listRes = await fetch(`/api/followups/${currentStoreId}`);
-            const list = await listRes.json();
-            renderFollowUps(list);
+    async function loadFollowUps(page = 1, forceRefresh = false) {
+        if (forceRefresh) invalidateCache('/api/followups');
+        currentFuPage = Math.max(1, page);
+        const grid = document.getElementById('followupList');
+
+        // Populate store filter saat pertama kali
+        const selFilter = document.getElementById('followupStoreFilter');
+        if (selFilter && selFilter.options.length <= 1) {
+            stores.forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s.wa_id; opt.innerText = s.name;
+                selFilter.appendChild(opt);
+            });
+        }
+
+        const storeId    = selFilter?.value || currentStoreId || '';
+        const statusFilt = document.getElementById('followupStatusFilter')?.value || '';
+
+        try {
+            // Stats: selalu fresh (tidak di-cache karena kecil dan sering berubah)
+            if (storeId) {
+                const statsRes = await cachedFetch(`/api/followups/stats/${storeId}`, forceRefresh);
+                document.getElementById('fu-stat-pending').innerText = statsRes.pending || 0;
+                document.getElementById('fu-stat-sent').innerText    = statsRes.sent    || 0;
+                document.getElementById('fu-stat-replied').innerText = statsRes.replied || 0;
+                document.getElementById('fu-stat-total').innerText   = statsRes.total   || 0;
+            }
+
+            // Load List (paginated)
+            if (!storeId) {
+                grid.innerHTML = '<div class="empty-state m-auto p-5 text-center w-100" style="grid-column:1/-1;"><i class="fas fa-store"></i><p>Pilih akun WA terlebih dahulu.</p></div>';
+                return;
+            }
+
+            const params = new URLSearchParams({ page: currentFuPage, limit: FU_LIMIT });
+            if (statusFilt) params.set('status', statusFilt);
+            const fuUrl = `/api/followups/${storeId}?${params}`;
+
+            const result = await cachedFetch(fuUrl, forceRefresh);
+            renderFollowUps(result.data || result, result);
         } catch (e) {
             grid.innerHTML = '<div class="text-danger p-4">Gagal memuat antrian follow-up.</div>';
         }
     }
 
-    function renderFollowUps(list) {
+    function renderFollowUps(list, meta = {}) {
         const grid = document.getElementById('followupList');
+        const { total = list?.length || 0, page = 1, totalPages = 1 } = meta;
+
+        // Update info bar
+        const infoText = document.getElementById('fuInfoText');
+        const pageInfo = document.getElementById('fuPageInfo');
+        if (infoText) infoText.textContent = `${total} antrian follow-up`;
+        if (pageInfo) pageInfo.textContent = totalPages > 1 ? `Hal ${page} dari ${totalPages}` : '';
+
         if (!list || list.length === 0) {
-            grid.innerHTML = '<div class="empty-state m-auto p-5 text-center w-100" style="grid-column: 1 / -1;"><i class="fas fa-history"></i><p>Tidak ada antrian follow-up saat ini.</p></div>';
+            grid.innerHTML = '<div class="empty-state m-auto p-5 text-center w-100" style="grid-column: 1 / -1;"><i class="fas fa-history"></i><p>Tidak ada antrian follow-up sesuai filter.</p></div>';
+            document.getElementById('fuPagination').style.display = 'none';
             return;
         }
         grid.innerHTML = '';
         list.forEach(item => {
             const div = document.createElement('div');
             div.className = 'card-glass p-4 d-flex flex-column justify-content-between';
-            div.style = 'border-left: 4px solid ' + (item.status === 'pending' ? 'var(--clr-warning)' : (item.status === 'sent' ? 'var(--clr-accent)' : 'var(--clr-primary)')) + ' !important;';
-            
-            const stageBadge = `<span class="badge bg-light text-dark border px-2 py-1" style="font-size:0.7rem">Tahap ${item.stage}</span>`;
-            const statusBadge = `<span class="badge ${item.status === 'pending' ? 'bg-warning' : (item.status === 'sent' ? 'bg-success' : 'bg-secondary')} text-white px-2 py-1" style="font-size:0.7rem">${item.status.toUpperCase()}</span>`;
-            
-            const actionBtn = item.status === 'pending'
+            const borderColor = item.status === 'pending' ? 'var(--clr-warning)'
+                              : item.status === 'sent'    ? 'var(--clr-accent)'
+                              : item.status === 'replied' ? 'var(--clr-primary)'
+                              : '#94a3b8';
+            div.style = `border-left: 4px solid ${borderColor} !important;`;
+
+            const stageBadge  = `<span class="badge bg-light text-dark border px-2 py-1" style="font-size:0.7rem">Tahap ${item.stage}</span>`;
+            const statusColor = item.status === 'pending' ? 'bg-warning text-dark'
+                               : item.status === 'sent'   ? 'bg-success'
+                               : item.status === 'replied'? 'bg-primary'
+                               : 'bg-secondary';
+            const statusBadge = `<span class="badge ${statusColor} px-2 py-1" style="font-size:0.7rem">${item.status.toUpperCase()}</span>`;
+            const actionBtn   = item.status === 'pending'
                 ? `<button class="btn btn-sm btn-outline-danger mt-3 align-self-end" onclick="cancelFollowUp(${item.id})"><i class="fas fa-times me-1"></i>Batalkan FU</button>`
                 : '';
-
             const timeStr = item.status === 'pending'
-                ? `Jadwal: ${moment(item.scheduled_at).format('DD MMM, HH:mm')} (${moment(item.scheduled_at).fromNow()})`
-                : (item.status === 'sent'
-                    ? `Terkirim: ${moment(item.sent_at || item.updatedAt).format('DD MMM, HH:mm')}`
-                    : `Batal: ${item.cancel_reason || 'Customer merespons'}`);
-
+                ? `<i class="fas fa-clock me-1 text-warning"></i>Jadwal: ${moment(item.scheduled_at).format('DD MMM, HH:mm')} &bull; <em>${moment(item.scheduled_at).fromNow()}</em>`
+                : item.status === 'sent'
+                    ? `<i class="fas fa-check-circle me-1 text-success"></i>Terkirim: ${moment(item.sent_at || item.updatedAt).format('DD MMM, HH:mm')}`
+                    : `<i class="fas fa-ban me-1 text-muted"></i>${item.cancel_reason || 'Customer merespons'}`;
             div.innerHTML = `
                 <div class="d-flex justify-content-between align-items-center mb-3">
                     <h6 class="fw-bold m-0 text-primary">${escapeHtml(item.contact_name || 'Customer')}</h6>
                     <div class="d-flex gap-1">${stageBadge}${statusBadge}</div>
                 </div>
                 <div style="font-size:0.8rem; color:#64748b;" class="mb-2">
-                    <i class="fas fa-user-circle me-1"></i> ID: ${escapeHtml(item.contact_id)}
+                    <i class="fas fa-user-circle me-1"></i> ${escapeHtml(item.contact_id)}
                 </div>
                 <div style="font-size:0.85rem; color:#475569; background:#f8fafc; padding:10px; border-radius:8px; border: 1px solid #e2e8f0; white-space:pre-wrap;" class="mb-2">
                     <strong>Konteks Terakhir:</strong>\n${escapeHtml(item.last_chat_context || 'Belum ada konteks')}
                 </div>
-                <div class="text-muted" style="font-size:0.75rem;">
-                    <i class="fas fa-clock me-1"></i> ${timeStr}
-                </div>
+                <div class="text-muted" style="font-size:0.75rem;">${timeStr}</div>
                 ${actionBtn}
             `;
             grid.appendChild(div);
         });
+
+        // Pagination controls
+        const pagEl  = document.getElementById('fuPagination');
+        const prevBtn = document.getElementById('fuPrevBtn');
+        const nextBtn = document.getElementById('fuNextBtn');
+        if (pagEl)   pagEl.style.display = totalPages > 1 ? 'flex' : 'none';
+        if (prevBtn) prevBtn.disabled = page <= 1;
+        if (nextBtn) nextBtn.disabled = page >= totalPages;
+        buildPaginationControls('fuPageNumbers', totalPages, page, (p) => loadFollowUps(p));
     }
 
     async function cancelFollowUp(id) {
         if (!confirm('Apakah Anda yakin ingin membatalkan follow-up ini?')) return;
         try {
-            const res = await fetch(`/api/followups/cancel/${id}`, { method: 'POST' });
+            const res  = await fetch(`/api/followups/cancel/${id}`, { method: 'POST' });
             const data = await res.json();
             if (data.success) {
                 toast('Follow-up berhasil dibatalkan!', 'success');
-                loadFollowUps();
-            } else {
-                toast(data.message, 'error');
-            }
-        } catch (e) {
-            toast('Gagal membatalkan follow-up.', 'error');
-        }
+                invalidateCache('/api/followups');
+                loadFollowUps(currentFuPage);
+            } else { toast(data.message, 'error'); }
+        } catch (e) { toast('Gagal membatalkan follow-up.', 'error'); }
     }
 
     // Browser Back/Forward — navigasi antar view tanpa reload
@@ -3251,67 +3528,108 @@
         _skipPushState = false;
     });
 
-    function loadAnalytics() {
-        const btn = document.querySelector('button[onclick="loadAnalytics()"]');
+    // ============================================================
+    // ANALYTICS — Extended Date Filter + Cache
+    // ============================================================
+
+    // Toggle tampilan custom date range picker
+    function onAnalyticsDateChange() {
+        const val       = document.getElementById('analyticsDateFilter')?.value;
+        const rangeDiv  = document.getElementById('analyticsCustomRange');
+        if (rangeDiv) rangeDiv.style.display = val === 'custom' ? 'flex' : 'none';
+        if (val !== 'custom') loadAnalytics();
+    }
+
+    function _buildAnalyticsDateRange(dateFilter) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        let start, end;
+
+        switch (dateFilter) {
+            case 'today':
+                start = today;
+                end   = new Date(today); end.setDate(end.getDate() + 1);
+                break;
+            case 'yesterday':
+                start = new Date(today); start.setDate(start.getDate() - 1);
+                end   = today;
+                break;
+            case '7days':
+                start = new Date(today); start.setDate(start.getDate() - 7);
+                end   = new Date();
+                break;
+            case '30days':
+                start = new Date(today); start.setDate(start.getDate() - 30);
+                end   = new Date();
+                break;
+            case 'thismonth':
+                start = new Date(today.getFullYear(), today.getMonth(), 1);
+                end   = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59);
+                break;
+            case 'lastmonth':
+                start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+                end   = new Date(today.getFullYear(), today.getMonth(), 0, 23, 59, 59);
+                break;
+            case 'custom': {
+                const s = document.getElementById('analyticsCustomStart')?.value;
+                const e = document.getElementById('analyticsCustomEnd')?.value;
+                if (s) start = new Date(s);
+                if (e) { end = new Date(e); end.setHours(23, 59, 59, 999); }
+                break;
+            }
+            default: break;
+        }
+        return { start, end };
+    }
+
+    function loadAnalytics(forceRefresh = false) {
+        if (forceRefresh) invalidateCache('/api/analytics/overview');
+        const btn = document.querySelector('button[onclick="loadAnalytics(true)"]');
         if (btn) btn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Loading...';
-        
-        const storeId = document.getElementById('analyticsStoreFilter')?.value;
+
+        const storeId    = document.getElementById('analyticsStoreFilter')?.value;
         const dateFilter = document.getElementById('analyticsDateFilter')?.value;
-        
+
         const query = [];
         if (storeId) query.push('store_wa_id=' + storeId);
-        
-        if (dateFilter) {
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            
-            let start, end;
-            if (dateFilter === 'today') {
-                start = today;
-                end = new Date(today);
-                end.setDate(end.getDate() + 1);
-            } else if (dateFilter === 'yesterday') {
-                start = new Date(today);
-                start.setDate(start.getDate() - 1);
-                end = today;
-            } else if (dateFilter === '7days') {
-                start = new Date(today);
-                start.setDate(start.getDate() - 7);
-                end = new Date();
-            }
-            
+
+        if (dateFilter && dateFilter !== 'custom') {
+            const { start, end } = _buildAnalyticsDateRange(dateFilter);
             if (start && end) {
                 query.push('startDate=' + start.toISOString());
-                query.push('endDate=' + end.toISOString());
+                query.push('endDate='   + end.toISOString());
+            }
+        } else if (dateFilter === 'custom') {
+            const { start, end } = _buildAnalyticsDateRange('custom');
+            if (start && end) {
+                query.push('startDate=' + start.toISOString());
+                query.push('endDate='   + end.toISOString());
+            } else {
+                // Custom tapi belum diisi — skip fetch
+                if (btn) btn.innerHTML = '<i class="fas fa-sync-alt me-2"></i>Refresh';
+                return;
             }
         }
-        
-        const qs = query.length ? '?' + query.join('&') : '';
 
-        fetch('/api/analytics/overview' + qs)
-            .then(res => res.json())
+        const qs  = query.length ? '?' + query.join('&') : '';
+        const url = '/api/analytics/overview' + qs;
+
+        cachedFetch(url, forceRefresh)
             .then(data => {
                 if (btn) btn.innerHTML = '<i class="fas fa-sync-alt me-2"></i>Refresh';
                 if (data.error) throw new Error(data.error);
 
                 document.getElementById('kpi-total-leads').textContent = data.summary.totalLeads;
-                
+
                 const closingEl = document.getElementById('kpi-closing-rate');
                 closingEl.textContent = data.summary.closingRate + '%';
-                if (data.summary.closingRate > 0) {
-                    closingEl.classList.remove('text-muted');
-                    closingEl.classList.add('text-success');
-                } else {
-                    closingEl.classList.add('text-muted');
-                    closingEl.classList.remove('text-success');
-                }
-                
+                closingEl.classList.toggle('text-success', data.summary.closingRate > 0);
+                closingEl.classList.toggle('text-muted',   data.summary.closingRate === 0);
+
                 document.getElementById('kpi-ai-handling').textContent = data.summary.aiHandlingRate + '%';
-                document.getElementById('kpi-ai-vs-cs').textContent = `AI ${data.summary.aiReplies} | CS ${data.summary.csReplies}`;
-                
-                const wt = data.statusBreakdown.menunggu_transfer || 0;
-                document.getElementById('kpi-transfer-pending').textContent = wt;
-                
+                document.getElementById('kpi-ai-vs-cs').textContent    = `AI ${data.summary.aiReplies} | CS ${data.summary.csReplies}`;
+                document.getElementById('kpi-transfer-pending').textContent = data.statusBreakdown.menunggu_transfer || 0;
+
                 renderFunnel(data.statusBreakdown, data.summary.totalLeads, qs);
                 renderTrendChart(data.trend);
                 renderStoreAnalyticsTable(data.perStore);
@@ -3652,11 +3970,216 @@
     }
 
     // ============================================================
+    // 🧠 LEARNING CENTER
+    // ============================================================
+    let lcAllPatterns = [];
+
+    async function loadLearningData() {
+        const agentId = document.getElementById('learningAgentFilter')?.value || '';
+        try {
+            // Load stats
+            const statsRes = await fetch(`/api/learning/stats${agentId ? '?agentId=' + agentId : ''}`);
+            const stats = await statsRes.json();
+
+            document.getElementById('lc-total-patterns').innerText = stats.totalPatterns ?? '—';
+            document.getElementById('lc-avg-score').innerText = stats.avgScore ? stats.avgScore + '/10' : '—';
+            document.getElementById('lc-total-analytics').innerText = stats.totalAnalytics ?? '—';
+            document.getElementById('lc-avg-score-7d').innerText = stats.avgScoreLast7Days ? stats.avgScoreLast7Days + '/10' : '—';
+
+            // Load all patterns
+            const pUrl = `/api/learning/patterns${agentId ? '?agentId=' + agentId : ''}`;
+            const pRes = await fetch(pUrl);
+            lcAllPatterns = await pRes.json();
+            filterPatterns();
+
+            // Render analytics
+            renderAnalyticsList(stats.recentAnalytics || []);
+
+        } catch (e) {
+            toast('Gagal memuat data learning: ' + e.message, 'error');
+        }
+    }
+
+    function filterPatterns() {
+        const productFilter = document.getElementById('lcPatternFilter')?.value || 'all';
+        const statusFilter = document.getElementById('lcStatusFilter')?.value || 'all';
+
+        let filtered = lcAllPatterns;
+        if (productFilter !== 'all') filtered = filtered.filter(p => p.product_type === productFilter);
+        if (statusFilter === 'active') filtered = filtered.filter(p => p.is_active);
+        if (statusFilter === 'inactive') filtered = filtered.filter(p => !p.is_active);
+
+        renderPatternList(filtered);
+    }
+
+    function renderPatternList(patterns) {
+        const container = document.getElementById('lcPatternList');
+        if (!patterns || patterns.length === 0) {
+            container.innerHTML = `<div class="empty-state py-5"><i class="fas fa-graduation-cap" style="color:#7c3aed;opacity:0.3"></i><p class="mt-3">Belum ada pola tersimpan.<br><small>Jalankan "Seed Datasets" untuk mulai atau tunggu closing pertama.</small></p></div>`;
+            return;
+        }
+        container.innerHTML = patterns.map((p, i) => renderPatternCard(p, i)).join('');
+    }
+
+    function renderPatternCard(p, index) {
+        const conf = p.confidence || 0;
+        const confColor = conf >= 75 ? '#10b981' : conf >= 55 ? '#f59e0b' : '#94a3b8';
+        const productBadge = p.product_type === 'dtf'
+            ? `<span class="badge" style="background:#dbeafe;color:#1d4ed8;">DTF Baju</span>`
+            : p.product_type === 'uv'
+            ? `<span class="badge" style="background:#fef3c7;color:#92400e;">UV Stiker</span>`
+            : `<span class="badge" style="background:#f1f5f9;color:#64748b;">Generic</span>`;
+        const sourceBadge = p.source_type === 'dataset'
+            ? `<span class="badge" style="background:#ede9fe;color:#7c3aed;font-size:0.6rem;">dari dataset</span>`
+            : `<span class="badge" style="background:#d1fae5;color:#065f46;font-size:0.6rem;">dari closing live</span>`;
+        const activeBadge = p.is_active
+            ? `<span class="badge bg-success-subtle text-success" style="font-size:0.6rem;">Aktif</span>`
+            : `<span class="badge bg-secondary-subtle text-secondary" style="font-size:0.6rem;">Nonaktif</span>`;
+
+        return `
+        <div class="pattern-card mb-3 p-3 rounded-3" style="border: 1px solid ${p.is_active ? '#e0e7ff' : '#f1f5f9'}; background: ${p.is_active ? '#fafbff' : '#f8fafc'}; transition:0.2s;">
+            <div class="d-flex justify-content-between align-items-start mb-2">
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    ${productBadge}
+                    ${sourceBadge}
+                    ${activeBadge}
+                    <span class="fw-bold" style="color:#0f172a;font-size:0.9rem;">${p.teknik.replace(/_/g, ' ')}</span>
+                </div>
+                <div class="d-flex gap-1 flex-shrink-0">
+                    <button class="btn btn-sm" style="padding:3px 8px;font-size:0.7rem;border:1px solid #e2e8f0;" onclick="togglePatternActive(${p.id}, ${!p.is_active})" title="${p.is_active ? 'Nonaktifkan' : 'Aktifkan'}">
+                        <i class="fas fa-${p.is_active ? 'eye-slash' : 'eye'}"></i>
+                    </button>
+                    <button class="btn btn-sm" style="padding:3px 8px;font-size:0.7rem;border:1px solid #fee2e2;color:#ef4444;" onclick="deletePattern(${p.id})" title="Hapus">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            </div>
+
+            ${p.contoh_kalimat ? `
+            <div class="p-2 rounded-2 mb-2" style="background:#f0f4ff;border-left:3px solid #7c3aed;font-size:0.82rem;color:#1e293b;font-style:italic;">
+                "${p.contoh_kalimat.slice(0, 150)}${p.contoh_kalimat.length > 150 ? '...' : ''}"
+            </div>` : ''}
+
+            ${p.konteks ? `<div class="text-muted" style="font-size:0.75rem;"><i class="fas fa-info-circle me-1" style="color:#7c3aed"></i><strong>Kapan dipakai:</strong> ${p.konteks}</div>` : ''}
+            ${p.dampak ? `<div class="text-muted mt-1" style="font-size:0.75rem;"><i class="fas fa-arrow-trend-up me-1" style="color:#10b981"></i><strong>Efeknya:</strong> ${p.dampak}</div>` : ''}
+
+            <div class="d-flex align-items-center justify-content-between mt-2 pt-2" style="border-top:1px solid #f1f5f9;">
+                <div class="d-flex align-items-center gap-3">
+                    <small class="text-muted">Terbukti <strong>${p.frequency}x</strong></small>
+                    <div class="d-flex align-items-center gap-1">
+                        <div style="width:60px;height:6px;background:#f1f5f9;border-radius:4px;overflow:hidden;">
+                            <div style="width:${conf}%;height:100%;background:${confColor};border-radius:4px;"></div>
+                        </div>
+                        <small style="color:${confColor};font-weight:700;">${conf}%</small>
+                    </div>
+                </div>
+                <small class="text-muted" style="font-size:0.65rem;">${p.source_file || 'production'}</small>
+            </div>
+        </div>`;
+    }
+
+    function renderAnalyticsList(analytics) {
+        const container = document.getElementById('lcAnalyticsList');
+        if (!analytics || analytics.length === 0) {
+            container.innerHTML = `<div class="empty-state py-5"><i class="fas fa-chart-bar" style="opacity:0.3"></i><p class="mt-3">Belum ada analisis closing tersimpan.</p></div>`;
+            return;
+        }
+        container.innerHTML = analytics.map(a => {
+            const score = a.conversation_score || 0;
+            const scoreColor = score >= 8 ? '#10b981' : score >= 6 ? '#f59e0b' : '#ef4444';
+            const prodLabel = a.product_type === 'dtf' ? 'DTF' : a.product_type === 'uv' ? 'UV' : 'Generic';
+            const dateStr = a.analyzed_at ? new Date(a.analyzed_at).toLocaleDateString('id-ID', {day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : '—';
+
+            return `
+            <div class="d-flex align-items-start gap-3 p-3 mb-2 rounded-3" style="background:#f8fafc;border:1px solid #f1f5f9;">
+                <div class="text-center flex-shrink-0" style="width:48px;">
+                    <div style="font-size:1.4rem;font-weight:900;color:${scoreColor};">${score}</div>
+                    <div style="font-size:0.6rem;color:#94a3b8;text-transform:uppercase;letter-spacing:1px;">score</div>
+                </div>
+                <div class="flex-grow-1 min-w-0">
+                    <div class="d-flex align-items-center gap-2 mb-1">
+                        <span class="badge" style="background:${a.product_type==='dtf'?'#dbeafe':'#fef3c7'};color:${a.product_type==='dtf'?'#1d4ed8':'#92400e'};font-size:0.6rem;">${prodLabel}</span>
+                        <span class="badge" style="background:${a.source_type==='dataset'?'#ede9fe':'#d1fae5'};color:${a.source_type==='dataset'?'#7c3aed':'#065f46'};font-size:0.6rem;">${a.source_type}</span>
+                        ${a.metode_bayar ? `<span class="badge bg-light text-dark border" style="font-size:0.6rem;">${a.metode_bayar}</span>` : ''}
+                    </div>
+                    <div class="d-flex gap-3 flex-wrap">
+                        ${a.alur_lengkap ? '<span style="font-size:0.7rem;color:#10b981"><i class="fas fa-check me-1"></i>Alur lengkap</span>' : '<span style="font-size:0.7rem;color:#ef4444"><i class="fas fa-times me-1"></i>Alur belum lengkap</span>'}
+                        ${a.data_lengkap ? '<span style="font-size:0.7rem;color:#10b981"><i class="fas fa-check me-1"></i>Data lengkap</span>' : ''}
+                        <span style="font-size:0.7rem;color:#64748b"><i class="fas fa-comment me-1"></i>${a.pesan_sampai_closing || '?'} pesan</span>
+                        <span style="font-size:0.7rem;color:#64748b"><i class="fas fa-lightbulb me-1"></i>${a.patterns_extracted || 0} pola</span>
+                    </div>
+                    <div class="text-muted mt-1" style="font-size:0.65rem;">${a.source_file || ''} &bull; ${dateStr}</div>
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    async function togglePatternActive(patternId, newStatus) {
+        try {
+            const res = await fetch(`/api/learning/patterns/${patternId}/toggle`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ is_active: newStatus })
+            });
+            const data = await res.json();
+            if (data.success) {
+                toast(newStatus ? 'Pattern diaktifkan' : 'Pattern dinonaktifkan');
+                loadLearningData();
+            } else { throw new Error(data.error || 'Gagal'); }
+        } catch (e) { toast('Error: ' + e.message, 'error'); }
+    }
+
+    async function deletePattern(patternId) {
+        if (!confirm('Hapus pattern ini? Tindakan tidak bisa dibatalkan.')) return;
+        try {
+            const res = await fetch(`/api/learning/patterns/${patternId}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) {
+                toast('Pattern berhasil dihapus');
+                loadLearningData();
+            } else { throw new Error(data.error || 'Gagal'); }
+        } catch (e) { toast('Error: ' + e.message, 'error'); }
+    }
+
+    async function seedDatasetsFromDashboard() {
+        const agentId = document.getElementById('learningAgentFilter')?.value || null;
+        if (!confirm('Proses ulang semua dataset di docs/datasets/ ?\nIni akan memanggil OpenAI dan membutuhkan beberapa menit.')) return;
+        try {
+            const res = await fetch('/api/learning/seed', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ agentId: agentId ? parseInt(agentId) : null })
+            });
+            const data = await res.json();
+            if (data.success) {
+                toast(`✅ ${data.message}`, 'success');
+                setTimeout(() => loadLearningData(), 5000);
+            } else { throw new Error(data.message || 'Gagal'); }
+        } catch (e) { toast('Error: ' + e.message, 'error'); }
+    }
+
+    function populateLearningAgentFilter() {
+        const sel = document.getElementById('learningAgentFilter');
+        if (!sel) return;
+        // Remove existing agent options
+        while (sel.options.length > 1) sel.remove(1);
+        agents.forEach(a => {
+            const opt = new Option(`🤖 ${a.name || a.bot_name}`, a.id);
+            sel.add(opt);
+        });
+    }
+
+    // ============================================================
+    // TOAST
+    // ============================================================
+    function toast_DUMMY() {} // placeholder removed above — keeping structure intact
+
+    // ============================================================
     // KICKOFF
     // ============================================================
     // Restore view dari URL hash saat pertama kali load (deep link support)
     const _initHash = location.hash.replace('#/', '').trim();
-    const _validViews = ['chat', 'agents', 'bot', 'media', 'summaries', 'analytics', 'followups', 'connect', 'system'];
+    const _validViews = ['chat', 'agents', 'bot', 'media', 'summaries', 'analytics', 'followups', 'learning', 'connect', 'system'];
     if (_initHash && _validViews.includes(_initHash) && _initHash !== 'chat') {
         // Tunda agar init() selesai load data terlebih dahulu
         setTimeout(() => switchView(_initHash), 300);

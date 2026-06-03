@@ -40,6 +40,7 @@ const STATUS_LABEL_MAP = [
 ];
 
 // Label yang DIHAPUS saat status berubah ke closing (tidak relevan lagi)
+// PENTING: 'COD' sengaja TIDAK dihapus — CS butuh info metode pembayaran setelah closing
 const LABELS_TO_REMOVE_ON_CLOSING = [
   'Hot Lead', 'AI Lead Aktif', 'AI Lead Baru',
   'Menunggu Transfer', 'Menunggu Rekap', 'Menunggu Alamat', 'Cancel'
@@ -50,6 +51,20 @@ const LABELS_TO_REMOVE_ON_CANCEL = [
   'Hot Lead', 'AI Lead Aktif', 'AI Lead Baru',
   'Menunggu Transfer', 'Menunggu Rekap', 'Menunggu Alamat', 'Closing', 'COD'
 ];
+
+// ══════════════════════════════════════════════════════════════════
+// FIX #4 — LABEL LOCK (IMMUTABLE)
+// Label-label ini TIDAK BOLEH pernah dihapus atau ditimpa oleh update
+// summary berikutnya (misal: saat bot follow-up, label Closing tidak boleh
+// berubah menjadi "AI Lead Aktif" hanya karena summary di-regenerate).
+// ══════════════════════════════════════════════════════════════════
+const IMMUTABLE_LABELS = new Set(['Closing', 'Cancel']);
+
+// Label funnel (status perjalanan) yang BOLEH ditimpa saat status berubah
+const FUNNEL_LABELS = new Set([
+  'AI Lead Baru', 'AI Lead Aktif', 'Hot Lead',
+  'Menunggu Rekap', 'Menunggu Alamat', 'Menunggu Transfer'
+]);
 
 // Field WA_LABELS di rekap — format: WA_LABELS: [label1, label2]
 const WA_LABELS_FIELD_RE = /^WA_LABELS:\s*\[([^\]]*)\]/im;
@@ -109,9 +124,13 @@ function isCancelStatus(summaryText) {
 }
 
 /**
- * FIX #3 — PRE-CLOSING VALIDATION GATE
+ * FIX #3 + #2 — PRE-CLOSING VALIDATION GATE (DIPERKUAT)
  * Validasi apakah data pesanan sudah cukup lengkap sebelum label Closing diizinkan.
- * Mencegah bot melabeli Closing padahal data (Nama, Varian, Warna, Jumlah, Alamat) belum lengkap.
+ * Mencegah bot melabeli Closing padahal:
+ *   - Nama customer / Varian / Jumlah / Alamat / Metode Bayar belum ada
+ *   - TEKS LABEL (nama yang akan dicetak) belum diisi
+ *   - ONGKIR belum dicek (nominal harus sudah ada, sesuai SOP tidak boleh kosong)
+ *   - DETAIL PER NAMA belum jelas
  * @param {string} summaryText - Teks rekap dari AI
  * @returns {boolean} true jika closing boleh diterapkan
  */
@@ -129,6 +148,13 @@ function isClosingDataComplete(summaryText) {
     { regex: /JUMLAH:\s*(?!belum\b)(.+)/i, label: 'Jumlah' },
     { regex: /ALAMAT:\s*(?!belum\b)(.+)/i, label: 'Alamat' },
     { regex: /METODE BAYAR:\s*(Transfer|COD)/i, label: 'Metode Bayar' },
+    // FIX #2A: Nama yang dicetak wajib ada sebelum closing
+    { regex: /TEKS LABEL:\s*(?!belum\b)(.+)/i, label: 'Teks Label (nama cetak)' },
+    // FIX #2B: Ongkir wajib ada nominalnya (Rp ...) — sesuai SOP tidak boleh kosong
+    // Cek: ada "Rp" di field ONGKIR, atau ada "gratis" / "0" yang eksplisit
+    { regex: /ONGKIR:\s*(Rp\s?\d|[Gg]ratis|subsidi|0\s?rupiah|tidak ada ongkir)/i, label: 'Ongkir (harus ada nominal atau keterangan gratis)' },
+    // FIX #2C: Detail per nama wajib ada (bukan hanya jumlah total)
+    { regex: /DETAIL PER NAMA:\s*(?!belum\b)(.+)/i, label: 'Detail Per Nama' },
   ];
 
   // Field WARNA hanya wajib untuk DTF — UV tidak ada pilihan warna
@@ -224,6 +250,31 @@ async function applyLabelsFromSummary(storeWaId, contactId, summaryText, waClien
       }
     }
 
+    // 5. 🧠 LEARNING BOT TRIGGER — Jika ada label Closing, analisis percakapan
+    //    untuk ekstrak pola sukses. Non-blocking, berjalan di background.
+    const hasClosingLabel = labelNames.some(l => l.toLowerCase() === 'closing');
+    if (hasClosingLabel) {
+      try {
+        const { onClosingDetected } = require('./learning_service');
+        // Ambil agent_id dari store jika tersedia
+        let agentId = null;
+        try {
+          const { Store } = require('../database/index');
+          const store = await Store.findOne({ where: { wa_id: storeWaId } });
+          agentId = store?.agent_id || null;
+        } catch (_) {}
+
+        // Jalankan di background — tidak block response utama
+        onClosingDetected(storeWaId, contactId, agentId)
+          .catch(e => logger.warn(`[SmartLabel] Learning trigger error: ${e.message}`));
+
+        logger.info(`[SmartLabel] 🧠 Learning trigger fired untuk [${contactId}]`);
+      } catch (learningErr) {
+        // Non-critical — jangan sampai crash flow label
+        logger.warn(`[SmartLabel] Gagal trigger learning: ${learningErr.message}`);
+      }
+    }
+
   } catch (err) {
     // Non-critical — jangan crash flow utama
     logger.warn(`[SmartLabel] Gagal apply label untuk [${contactId}]: ${err.message}`);
@@ -250,7 +301,7 @@ async function _persistLabelsToDb(storeWaId, contactId, labelNames, ChatSummary)
 
     if (record) {
       // ════════════════════════════════════════════════════════════
-      // FIX #1 — IDEMPOTENCY GUARD FOR CLOSING
+      // FIX #1 — IDEMPOTENCY GUARD FOR CLOSING (diperkuat)
       // Jika label Closing sudah pernah dicatat sebelumnya,
       // JANGAN timpa timestamp-nya. Ini menjaga konsistensi
       // tanggal closing di analitik.
@@ -260,12 +311,38 @@ async function _persistLabelsToDb(storeWaId, contactId, labelNames, ChatSummary)
         existingTimestamps = JSON.parse(record.label_timestamps || '{}');
       } catch (_) {}
 
+      // FIX #4 — IMMUTABLE LABEL LOCK
+      // Jika record sudah punya label immutable (Closing / Cancel),
+      // label-label funnel (AI Lead Aktif, Menunggu Rekap, dst.) TIDAK BOLEH
+      // menimpa atau menggantikannya. Ini mencegah label Closing turun kembali
+      // ke "AI Lead Aktif" saat bot follow-up atau summary di-regenerate.
+      let existingLabels = [];
+      try {
+        existingLabels = JSON.parse(record.wa_labels || '[]');
+      } catch (_) {}
+
+      const hasImmutableLabel = existingLabels.some(l => IMMUTABLE_LABELS.has(l));
+
+      // Jika sudah locked: filter label baru — hanya izinkan label non-funnel
+      // (misal: bisa tambah "COD" ke kontak yang sudah "Closing", tapi tidak
+      //  boleh tambah "AI Lead Aktif" atau "Menunggu Rekap")
+      let effectiveLabelNames = labelNames;
+      if (hasImmutableLabel) {
+        const incomingFunnelLabels = labelNames.filter(l => FUNNEL_LABELS.has(l));
+        if (incomingFunnelLabels.length > 0) {
+          logger.info(`[SmartLabel] 🔒 Label LOCK aktif untuk [${contactId}] — menolak downgrade funnel: ${incomingFunnelLabels.join(', ')}`);
+          effectiveLabelNames = labelNames.filter(l => !FUNNEL_LABELS.has(l));
+          // Jika tidak ada label tersisa yang valid, tidak perlu update sama sekali
+          if (effectiveLabelNames.length === 0) return;
+        }
+      }
+
       // FIX #2 — FULL MERGE (tidak pernah hapus timestamp lama)
       // Gabungkan semua timestamp lama dengan yang baru.
       // Label baru mendapat timestamp sekarang,
       // label lama TETAP mempertahankan timestamp aslinya.
       const mergedTimestamps = { ...existingTimestamps };
-      for (const lbl of labelNames) {
+      for (const lbl of effectiveLabelNames) {
         if (!mergedTimestamps[lbl]) {
           // Label baru: catat sekarang
           mergedTimestamps[lbl] = Date.now();
@@ -275,11 +352,7 @@ async function _persistLabelsToDb(storeWaId, contactId, labelNames, ChatSummary)
 
       // Gabungkan wa_labels: pertahankan label lama yang masih relevan
       // (label baru di-append, tidak replace total)
-      let existingLabels = [];
-      try {
-        existingLabels = JSON.parse(record.wa_labels || '[]');
-      } catch (_) {}
-      const mergedLabels = [...new Set([...existingLabels, ...labelNames])];
+      const mergedLabels = [...new Set([...existingLabels, ...effectiveLabelNames])];
 
       record.wa_labels = JSON.stringify(mergedLabels);
       record.label_timestamps = JSON.stringify(mergedTimestamps);

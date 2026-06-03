@@ -174,11 +174,25 @@ async function _evaluateContact({
     });
     const summaryText = summaryRecord?.summary || '';
 
-    if (isConversationClosed(summaryText)) {
-        logger.info(`[BotActivation] [${contactId}] sudah closing — skip semua aksi.`);
+    // FIX #4 — Cek wa_labels dari DB DULU (lebih akurat dari parse teks summary).
+    // Ini mencegah kasus di mana label sudah "Closing" di DB tapi summary
+    // belum sempat terupdate — bot tetap bisa follow-up ke kontak yg sudah deal.
+    let isClosedByLabel = false;
+    try {
+        const rawLabels = summaryRecord?.wa_labels;
+        if (rawLabels) {
+            const labelsArr = JSON.parse(rawLabels);
+            const closedLabels = ['Closing', 'Cancel'];
+            isClosedByLabel = labelsArr.some(l => closedLabels.includes(l));
+        }
+    } catch (_) {}
+
+    if (isClosedByLabel || isConversationClosed(summaryText)) {
+        logger.info(`[BotActivation] [${contactId}] sudah closing (via ${isClosedByLabel ? 'wa_labels DB' : 'summary text'}) — skip semua aksi.`);
         _lastEvalResult.skipped = true;
         return;
     }
+
 
     // 2. Cek apakah CS manual sudah membalas selama bot OFF (24 jam terakhir)
     const csManualReplies = await ChatMessage.findAll({

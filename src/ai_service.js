@@ -20,6 +20,7 @@ const { getSendableMedia, getKnowledgeMedia } = require('./services/media_servic
 const { MediaAsset } = require('./database/index');
 
 const openai = new OpenAI({ apiKey: config.OPENAI_API_KEY });
+const { buildLearningPromptSection } = require('./services/learning_service');
 
 // === RESPONSE TYPE CONSTANTS ===
 const RESPONSE_TYPE = {
@@ -328,6 +329,16 @@ async function _processAIResponse(userMessage, history = [], store = null, agent
             ? configuredLabels.map(label => `- ${label}`).join('\n')
             : '(Belum ada label otomatis yang dikonfigurasi untuk agen ini)';
 
+        // ── LEARNING BOT: Pola sukses dari closing nyata ─────────────────────
+        // Diambil dari ClosingPatterns DB — berisi teknik terbukti dari CS Mbak Dea
+        // Diinject ke prompt agar bot makin hari makin pintar secara otomatis
+        let learningSection = '';
+        try {
+            learningSection = await buildLearningPromptSection(agentId, kind);
+        } catch (_learningErr) {
+            // Non-critical — jangan sampai fail prompt karena learning service error
+        }
+
         // ── TIMESTAMP AWARENESS (untuk AI, bukan untuk teks balasan) ─────────
         const nowStr = moment().format('dddd, DD MMMM YYYY HH:mm');
 
@@ -363,6 +374,7 @@ ${catalogSection}
 LABEL OTOMATIS YANG BOLEH DIPAKAI:
 ${labelSection}
 
+${learningSection ? learningSection + '\n' : ''}
 ═══════════════════════════════════════════
 FLEKSIBILITAS PRODUK (WAJIB DIIKUTI):
 ═══════════════════════════════════════════
@@ -697,9 +709,12 @@ PANDUAN SITUASI TIDAK TERDUGA:
     Panggil tool "tambahkan_label_chat" saat milestone tercapai:
     - Customer konfirmasi pesanan / minta rekap → "Menunggu Rekap"
     - Customer sudah memberikan alamat lengkap → "Menunggu Alamat"
-    - Customer setuju harga, minta rekening → "Menunggu Transfer"
-    - Customer konfirmasi sudah transfer → "Closing"
+    - Customer setuju harga, minta rekening (Transfer) → "Menunggu Transfer"
+    - Customer menyatakan COD → "COD"
+    - Customer COD konfirmasi deal (setelah rekap dikirim) → ["COD", "Closing"]
+    - Customer konfirmasi sudah transfer (ada bukti transfer) → "Closing"
     - Customer antusias tapi belum order → "Hot Lead"
+    ⚠️ PENTING: Label "COD" harus TETAP ADA bahkan setelah Closing — jangan pernah hapus label COD.
 
 --- [KETERANGAN PENTING: KEPRIBADIAN & STRATEGI SALES] ---
 ${sysPrompt}
@@ -991,7 +1006,17 @@ ATURAN PENTING untuk field WA_LABELS:
 - JIKA pesanan NON-COD (Transfer) dan belum ada bukti transfer → WA_LABELS: [Menunggu Transfer]. JANGAN BERIKAN jika COD!
 - JIKA pesanan COD dan customer SUDAH KONFIRMASI DEAL → WA_LABELS: [Closing, COD]
 - JIKA pesanan TRANSFER dan customer SUDAH MENGIRIM BUKTI TRANSFER → WA_LABELS: [Closing]
-- JIKA customer membatalkan pesanan atau tidak jadi beli → WA_LABELS: [Cancel] dan STATUS: cancel` },
+- JIKA customer membatalkan pesanan atau tidak jadi beli → WA_LABELS: [Cancel] dan STATUS: cancel
+
+ATURAN KRITIS — STATUS "closing" HANYA BOLEH DIISI JIKA:
+✅ TEKS LABEL sudah terisi (nama cetak sudah ada, bukan "belum")
+✅ ONGKIR sudah ada nominalnya (tulis nominal Rp atau tulis "Gratis" — sesuai SOP tidak boleh hanya "belum dicek")
+✅ DETAIL PER NAMA sudah jelas (pembagian nama+jumlah, bukan "belum")
+✅ METODE BAYAR sudah jelas (Transfer atau COD)
+✅ REKAP sudah dikirim ke customer dan customer sudah KONFIRMASI
+
+Jika ada satu saja kondisi di atas belum terpenuhi, JANGAN tulis STATUS: closing.
+Tulis status yang paling akurat (misal: menunggu rekap, gali kebutuhan, menunggu alamat, dsb).` },
                 { role: "user", content: `Berikut riwayat chatnya, buatkan rekapannya:\n\n${historyText}` }
             ],
             temperature: 0.2 // Lebih stabil dan konsisten untuk format terstruktur
