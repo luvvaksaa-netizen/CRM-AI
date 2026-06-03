@@ -4380,7 +4380,8 @@
                 : statusLbl === 'Menunggu TF' ? '#f59e0b' : '#64748b';
 
             const phone = item.contact_phone && item.contact_phone !== '-' ? item.contact_phone : '-';
-            const produk = (item.produk || '-').replace(/label\s*dtf/i, 'DTF').replace(/stiker\s*uv/i, 'UV').split('(')[0].trim();
+            // Hanya hapus teks dalam kurung jika ada (misal "(baju/kain)"), tapi biarkan nama produk utuh
+            const produk = (item.produk || '-').replace(/\s*\([^)]*\)/g, '').trim();
             const teksLabel = item.teks_label || '-';
             const jumlah = item.jumlah || '-';
             const ongkir = item.ongkir || '-';
