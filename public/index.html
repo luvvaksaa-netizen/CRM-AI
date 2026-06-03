@@ -4348,6 +4348,7 @@
     function renderClosingTable(data) {
         const tbody = document.getElementById('closingTableBody');
         if (!tbody) return;
+        window._currentClosingData = data; // Cache data for detail modal
         if (!data || data.length === 0) {
             tbody.innerHTML = `<tr><td colspan="10" class="text-center py-5">
                 <i class="fas fa-clipboard-check fa-2x mb-3 d-block" style="opacity:0.25;color:#10b981"></i>
@@ -4356,7 +4357,7 @@
             return;
         }
 
-        tbody.innerHTML = data.map(item => {
+        tbody.innerHTML = data.map((item, index) => {
             const date = item.closing_date ? new Date(item.closing_date).toLocaleDateString('id-ID', {
                 day: '2-digit', month: 'short', year: 'numeric'
             }) : '-';
@@ -4384,7 +4385,7 @@
             const jumlah = item.jumlah || '-';
             const ongkir = item.ongkir || '-';
 
-            return `<tr style="cursor:pointer;font-size:0.85rem;" onclick="showClosingDetail(${JSON.stringify(JSON.stringify(item))})">
+            return `<tr style="cursor:pointer;font-size:0.85rem;" onclick="showClosingDetail(${index})">
                 <td style="padding:12px 20px;">
                     <div style="font-weight:600;color:#1e293b;">${date}</div>
                     <div style="font-size:0.72rem;color:#94a3b8;">${time}</div>
@@ -4413,7 +4414,7 @@
                 </td>
                 <td style="padding:12px 16px;" onclick="event.stopPropagation()">
                     <button class="btn btn-sm btn-light border" style="font-size:0.72rem;padding:3px 10px;"
-                        onclick="showClosingDetail(${JSON.stringify(JSON.stringify(item))})">
+                        onclick="showClosingDetail(${index})">
                         <i class="fas fa-eye me-1"></i>Detail
                     </button>
                 </td>
@@ -4421,8 +4422,8 @@
         }).join('');
     }
 
-    function showClosingDetail(itemJson) {
-        const item = JSON.parse(itemJson);
+    function showClosingDetail(index) {
+        const item = window._currentClosingData[index];
         closingDetailData = item;
         const labels = item.wa_labels || [];
         const metodeBadge = item.metode === 'COD'
