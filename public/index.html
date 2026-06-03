@@ -4490,24 +4490,38 @@
         modal.show();
     }
 
-    function openClosingChat() {
+    async function openClosingChat() {
         if (!closingDetailData) return;
         const { contact_id, store_wa_id } = closingDetailData;
-        // Ambil store dari selector aktif
-        const storeToUse = store_wa_id || activeStore;
-        switchView('chat');
-        // Cari kontak di convList dan klik
-        setTimeout(() => {
-            const items = document.querySelectorAll('.conv-item');
-            for (const item of items) {
-                if (item.dataset.contactId === contact_id) {
-                    item.click();
-                    break;
-                }
-            }
-        }, 500);
+        
         const modal = bootstrap.Modal.getInstance(document.getElementById('modalClosingDetail'));
         if (modal) modal.hide();
+
+        switchView('chat');
+
+        // Jika beda toko, switch dulu ke toko yang benar
+        if (store_wa_id && currentStoreId !== store_wa_id) {
+            await switchStore(store_wa_id);
+        }
+
+        // Cari di sidebar
+        let found = false;
+        const items = document.querySelectorAll('.conv-item');
+        for (const item of items) {
+            if (item.dataset.contactId === contact_id) {
+                item.click();
+                found = true;
+                break;
+            }
+        }
+
+        // Jika tidak ada di list (karena paginasi/lama), paksa muat chatnya
+        if (!found) {
+            currentContactId = contact_id;
+            // set active state on UI elements
+            document.querySelectorAll('.conv-item').forEach(el => el.classList.remove('active'));
+            loadContactMessages(contact_id);
+        }
     }
 
     function filterClosingMethod(method, btn) {
