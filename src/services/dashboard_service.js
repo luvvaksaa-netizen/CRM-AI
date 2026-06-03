@@ -652,18 +652,36 @@ function initDashboard(port = 3000) {
       let totalLeads = 0;
 
       for (const s of allSummaries) {
+        // Total Leads dihitung berdasar kapan lead DIBUAT (first interaction)
         const createdTime = new Date(s.createdAt).getTime();
-        if (createdTime >= sDateMs && createdTime <= eDateMs) totalLeads++;
+        if (createdTime >= sDateMs && createdTime <= eDateMs) {
+          totalLeads++;
+        }
 
-        const status = detectStatus(s);
-        if (status) {
-          // Tentukan waktu label: dari label_timestamps → last_updated → createdAt
-          let ts = {};
-          try { ts = JSON.parse(s.label_timestamps || '{}'); } catch(_){}
-          const labelName = LABEL_NAMES[status];
-          const labelTime = ts[labelName] || new Date(s.last_updated || s.createdAt).getTime();
-          if (labelTime >= sDateMs && labelTime <= eDateMs) {
-            statusCounts[status]++;
+        let ts = {};
+        try { ts = JSON.parse(s.label_timestamps || '{}'); } catch(_){}
+
+        let hasLabelTimestamp = false;
+        
+        // 1. Cek semua history dari label_timestamps (Funnel Historis)
+        for (const [key, labelName] of Object.entries(LABEL_NAMES)) {
+          if (ts[labelName]) {
+            hasLabelTimestamp = true;
+            // Jika status ini dicapai pada rentang waktu yang difilter, hitung!
+            if (ts[labelName] >= sDateMs && ts[labelName] <= eDateMs) {
+              statusCounts[key]++;
+            }
+          }
+        }
+
+        // 2. Fallback untuk data lama yang belum punya label_timestamps
+        if (!hasLabelTimestamp) {
+          const status = detectStatus(s);
+          if (status) {
+            const fallbackTime = new Date(s.last_updated || s.createdAt).getTime();
+            if (fallbackTime >= sDateMs && fallbackTime <= eDateMs) {
+              statusCounts[status]++;
+            }
           }
         }
       }
@@ -690,16 +708,19 @@ function initDashboard(port = 3000) {
       }
       for (const s of allSummaries) {
         const dayKey = new Date(s.createdAt).toISOString().slice(0, 10);
-        if (trendMap[dayKey]) {
-          trendMap[dayKey].leads++;
-          const status = detectStatus(s);
-          if (status === 'closing') {
-            let ts = {};
-            try { ts = JSON.parse(s.label_timestamps || '{}'); } catch(_){}
-            const labelTime = ts['Closing'] || new Date(s.last_updated || s.createdAt).getTime();
-            const closeKey = new Date(labelTime).toISOString().slice(0, 10);
+        if (trendMap[dayKey]) trendMap[dayKey].leads++;
+        
+        let ts = {};
+        try { ts = JSON.parse(s.label_timestamps || '{}'); } catch(_){}
+        if (ts['Closing']) {
+            const closeKey = new Date(ts['Closing']).toISOString().slice(0, 10);
             if (trendMap[closeKey]) trendMap[closeKey].closing++;
-          }
+        } else {
+            // Fallback
+            if (detectStatus(s) === 'closing') {
+                const closeKey = new Date(s.last_updated || s.createdAt).toISOString().slice(0, 10);
+                if (trendMap[closeKey]) trendMap[closeKey].closing++;
+            }
         }
       }
       const trend = Object.values(trendMap);
@@ -716,12 +737,16 @@ function initDashboard(port = 3000) {
         let storeTotalLeads = 0, storeClosing = 0;
         for (const s of storeSum) {
           if (new Date(s.createdAt).getTime() >= sDateMs && new Date(s.createdAt).getTime() <= eDateMs) storeTotalLeads++;
-          const status = detectStatus(s);
-          if (status === 'closing') {
-            let ts = {};
-            try { ts = JSON.parse(s.label_timestamps || '{}'); } catch(_){}
-            const lt = ts['Closing'] || new Date(s.last_updated || s.createdAt).getTime();
-            if (lt >= sDateMs && lt <= eDateMs) storeClosing++;
+          
+          let ts = {};
+          try { ts = JSON.parse(s.label_timestamps || '{}'); } catch(_){}
+          if (ts['Closing']) {
+            if (ts['Closing'] >= sDateMs && ts['Closing'] <= eDateMs) storeClosing++;
+          } else {
+            if (detectStatus(s) === 'closing') {
+              const labelTime = new Date(s.last_updated || s.createdAt).getTime();
+              if (labelTime >= sDateMs && labelTime <= eDateMs) storeClosing++;
+            }
           }
         }
         
@@ -817,26 +842,34 @@ function initDashboard(port = 3000) {
           continue;
         }
 
-        // Hybrid detection
-        let matchedLabels = [];
-        try { matchedLabels = JSON.parse(s.wa_labels || '[]'); } catch(_){}
         const targetLabelName = LABEL_NAMES[label];
         if (!targetLabelName) continue;
 
-        let hasLabel = matchedLabels.includes(targetLabelName);
-        // Fallback regex
-        if (!hasLabel && STATUS_REGEX[label]) {
-          hasLabel = STATUS_REGEX[label].test(s.summary || '');
-        }
-        if (!hasLabel) continue;
-
         let ts = {};
         try { ts = JSON.parse(s.label_timestamps || '{}'); } catch(_){}
-        const labelTime = ts[targetLabelName] || new Date(s.last_updated || s.createdAt).getTime();
-        if (labelTime >= sDateMs && labelTime <= eDateMs) {
-          leads.push(s);
+
+        let hasLabelTimestamp = !!ts[targetLabelName];
+        let labelTime = ts[targetLabelName];
+
+        if (!hasLabelTimestamp) {
+          // Fallback untuk data lama
+          let matchedLabels = [];
+          try { matchedLabels = JSON.parse(s.wa_labels || '[]'); } catch(_){}
+          let hasLabel = matchedLabels.includes(targetLabelName);
+          if (!hasLabel && STATUS_REGEX[label]) {
+            hasLabel = STATUS_REGEX[label].test(s.summary || '');
+          }
+          if (hasLabel) {
+            labelTime = new Date(s.last_updated || s.createdAt).getTime();
+            hasLabelTimestamp = true; // Anggap punya timestamp valid
+          }
         }
-      }
+
+        if (hasLabelTimestamp) {
+          if (labelTime >= sDateMs && labelTime <= eDateMs) {
+            leads.push(s);
+          }
+        }
 
       leads.sort((a, b) => new Date(b.last_updated) - new Date(a.last_updated));
 
