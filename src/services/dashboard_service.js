@@ -870,6 +870,7 @@ function initDashboard(port = 3000) {
             leads.push(s);
           }
         }
+      }
 
       leads.sort((a, b) => new Date(b.last_updated) - new Date(a.last_updated));
 
