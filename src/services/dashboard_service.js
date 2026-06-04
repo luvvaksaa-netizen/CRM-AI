@@ -1807,6 +1807,34 @@ async function updateStorePhone(storeId, phone) {
   }
 }
 
+/**
+ * Retry helper khusus untuk operasi SQLite yang bisa terkena SQLITE_BUSY.
+ * Strategi: exponential backoff — 100ms, 300ms, 700ms, 1500ms, 3000ms (max 5 attempt).
+ * @param {Function} fn - Async function yang akan dijalankan
+ * @param {number} maxAttempts
+ */
+async function _withSQLiteRetry(fn, maxAttempts = 5) {
+  const delays = [100, 300, 700, 1500, 3000];
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const isBusy = err.message && (
+        err.message.includes('SQLITE_BUSY') ||
+        err.message.includes('SQLITE_LOCKED') ||
+        err.message.includes('database is locked')
+      );
+      if (isBusy && attempt < maxAttempts) {
+        const wait = delays[attempt - 1] || 3000;
+        logger.warn(`[DB] SQLITE_BUSY — retry ke-${attempt} setelah ${wait}ms...`);
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
+      throw err; // Lempar ke caller jika bukan busy, atau sudah max attempt
+    }
+  }
+}
+
 async function addToChatHistory(storeId, msg) {
   try {
     // ═══ DEDUP GUARD ═══
@@ -1864,15 +1892,17 @@ async function addToChatHistory(storeId, msg) {
 
     let chatMsg;
     if (waMessageId) {
-      // Gunakan findOrCreate untuk mencegah race condition duplikat
-      const [record, created] = await ChatMessage.findOrCreate({
-        where: { wa_message_id: waMessageId },
-        defaults: messageData
-      });
+      // Gunakan findOrCreate dengan retry SQLITE_BUSY untuk mencegah race condition duplikat
+      const [record, created] = await _withSQLiteRetry(() =>
+        ChatMessage.findOrCreate({
+          where: { wa_message_id: waMessageId },
+          defaults: messageData
+        })
+      );
       if (!created) return; // Sudah ada, skip
       chatMsg = record;
     } else {
-      chatMsg = await ChatMessage.create(messageData);
+      chatMsg = await _withSQLiteRetry(() => ChatMessage.create(messageData));
     }
 
     if (io) io.emit('newMessage', { storeId, msg: chatMsg.dataValues });

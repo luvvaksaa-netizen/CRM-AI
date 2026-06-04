@@ -8,19 +8,20 @@ const sequelize = new Sequelize({
   dialect: 'sqlite',
   storage: path.join(DATA_DIR, 'database.sqlite'),
   logging: false,
-  // Retry otomatis saat database locked (default SQLite = 0ms, ini set 15 detik)
+  // Retry otomatis saat database locked.
+  // 30 detik = cukup untuk menunggu v2-core release lock.
   dialectOptions: {
-    busyTimeout: 15000
+    busyTimeout: 30000
   },
-  // Connection pool: SQLite sebaiknya 1 koneksi write agar tidak race
+  // Connection pool: SQLite harus 1 koneksi agar tidak ada race antar query
   pool: {
     max: 1,
     min: 0,
-    acquire: 30000,
+    acquire: 35000,
     idle: 10000
   },
   retry: {
-    max: 3  // Retry query otomatis 3x jika gagal
+    max: 5  // Retry query otomatis 5x jika gagal
   }
 });
 
@@ -365,9 +366,21 @@ async function initDB() {
     await sequelize.authenticate();
     
     // TAHAP 1 UPGRADE (Anti-Lock Database): Aktifkan WAL Mode + busy_timeout
+    // WAL (Write-Ahead Logging) memungkinkan read concurrent saat ada write aktif.
+    // busy_timeout: SQLite akan retry otomatis selama N ms sebelum lempar SQLITE_BUSY.
     await sequelize.query('PRAGMA journal_mode=WAL;');
-    await sequelize.query('PRAGMA busy_timeout=15000;');
+    await sequelize.query('PRAGMA busy_timeout=30000;');  // 30 detik
     await sequelize.query('PRAGMA synchronous=NORMAL;');  // Performa lebih baik dengan WAL
+    await sequelize.query('PRAGMA cache_size=-8000;');    // 8MB cache
+    await sequelize.query('PRAGMA wal_autocheckpoint=100;'); // Checkpoint tiap 100 pages
+    
+    // WAL Checkpoint Periodik: Jalankan setiap 5 menit untuk mencegah WAL file membesar.
+    // File WAL yang besar membuat writer baru menunggu lebih lama → lebih sering BUSY.
+    setInterval(async () => {
+      try {
+        await sequelize.query('PRAGMA wal_checkpoint(PASSIVE);');
+      } catch (_) { /* non-critical */ }
+    }, 5 * 60 * 1000);
     
     // 1. Sync Standard (Hanya buat tabel jika belum ada)
     await sequelize.sync(); 
