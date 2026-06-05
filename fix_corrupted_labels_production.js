@@ -1,17 +1,9 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 
-// Pastikan file ini menunjuk ke database production Anda di server
-// Default Legacy Database Path:
 const dbPath = path.join(__dirname, 'data', 'database.sqlite');
-
 console.log(`[PEMBERSIHAN DATA] Menghubungkan ke database: ${dbPath}`);
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) {
-    console.error('Gagal terhubung ke database:', err.message);
-    process.exit(1);
-  }
-});
+const db = new sqlite3.Database(dbPath);
 
 function checkIncomplete(str) {
     if (!str) return true;
@@ -19,7 +11,6 @@ function checkIncomplete(str) {
     return s === '-' || s === '.' || s === 'belum' || s.includes('[') || s.includes(']');
 }
 
-// Fungsi bantu untuk mengekstrak data dari summary_raw
 function parseSummaryField(text, field) {
     if (!text) return '';
     const regex = new RegExp(`^${field}\\s*:\\s*(.*)$`, 'im');
@@ -30,7 +21,7 @@ function parseSummaryField(text, field) {
     return '';
 }
 
-db.all('SELECT store_wa_id, contact_id, wa_labels, label_timestamps, contact_name, summary FROM ChatSummaries', (err, rows) => {
+db.all('SELECT store_wa_id, contact_id, wa_labels, label_timestamps, contact_name, summary FROM ChatSummaries', async (err, rows) => {
   if (err) {
     console.error('Gagal mengambil data ChatSummaries:', err.message);
     process.exit(1);
@@ -39,72 +30,76 @@ db.all('SELECT store_wa_id, contact_id, wa_labels, label_timestamps, contact_nam
   let fixedCodCount = 0;
   let fixedIncompleteCount = 0;
   
-  rows.forEach(row => {
+  for (const row of rows) {
     let labels = [];
     let timestamps = {};
     try {
         labels = JSON.parse(row.wa_labels || '[]');
         timestamps = JSON.parse(row.label_timestamps || '{}');
     } catch (e) {
-        return;
+        continue;
     }
     
     let isModified = false;
     let newLabels = [...labels];
     let newTimestamps = { ...timestamps };
 
-    // Ekstrak metode bayar dan alamat dari summary text
     const txt = row.summary || '';
     const metodeBayar = parseSummaryField(txt, 'METODE BAYAR');
     const isCOD = labels.includes('COD') || /COD|bayar\s*di\s*tempat/i.test(metodeBayar);
     const alamat = parseSummaryField(txt, 'ALAMAT');
+    const isTransfer = labels.includes('Transfer') || /Transfer/i.test(metodeBayar);
 
-    // 1. KOREKSI COD BERSATUS MENUNGGU TRANSFER
+    // KOREKSI 1: COD BERSATUS MENUNGGU TRANSFER
     if (isCOD && newLabels.includes('Menunggu Transfer')) {
         newLabels = newLabels.filter(l => l !== 'Menunggu Transfer');
-        delete newTimestamps['Menunggu Transfer']; // Bersihkan juga dari log historis analytics
+        delete newTimestamps['Menunggu Transfer'];
         if (!newLabels.includes('Closing')) {
             newLabels.push('Closing');
-            if (!newTimestamps['Closing']) newTimestamps['Closing'] = Date.now();
+            newTimestamps['Closing'] = Date.now();
         }
         fixedCodCount++;
         isModified = true;
     }
 
-    // 2. KOREKSI DATA BELUM LENGKAP YANG BURU-BURU CLOSING
-    const isIncomplete = checkIncomplete(row.contact_name) || checkIncomplete(alamat);
-    if (isIncomplete && (newLabels.includes('Closing') || newLabels.includes('Menunggu Transfer') || newLabels.includes('Selesai'))) {
-        // Hapus status closing/menunggu transfer karena data masih ngawur
+    // KOREKSI 2: DATA BELUM LENGKAP YANG BURU-BURU CLOSING ATAU MENUNGGU TRANSFER
+    // Deteksi dengan cara yang persis sama dengan audit diagnostik
+    const s_lower = (row.contact_name + ' ' + txt).toLowerCase();
+    let corrupted = s_lower.includes('[nama]') || s_lower.includes('nama: -') || s_lower.includes('alamat: -') || s_lower.includes('belum');
+    
+    // Atau jika checkIncomplete menemukannya
+    if (checkIncomplete(row.contact_name) || checkIncomplete(alamat)) {
+        corrupted = true;
+    }
+
+    if (corrupted && (newLabels.includes('Closing') || newLabels.includes('Menunggu Transfer') || newLabels.includes('Selesai'))) {
         newLabels = newLabels.filter(l => l !== 'Closing' && l !== 'Menunggu Transfer' && l !== 'Selesai');
         delete newTimestamps['Closing'];
         delete newTimestamps['Menunggu Transfer'];
         delete newTimestamps['Selesai'];
         
-        // Kembalikan statusnya ke Menunggu Rekap atau Hot Lead agar CS bisa follow up
         if (!newLabels.includes('Menunggu Rekap')) {
             newLabels.push('Menunggu Rekap');
-            if (!newTimestamps['Menunggu Rekap']) newTimestamps['Menunggu Rekap'] = Date.now();
+            newTimestamps['Menunggu Rekap'] = Date.now();
         }
         fixedIncompleteCount++;
         isModified = true;
     }
 
     if (isModified) {
-        db.run('UPDATE ChatSummaries SET wa_labels = ?, label_timestamps = ? WHERE store_wa_id = ? AND contact_id = ?', 
-            [JSON.stringify(newLabels), JSON.stringify(newTimestamps), row.store_wa_id, row.contact_id], 
-            (err2) => {
-                if (err2) {
-                    console.error(`Gagal update row ${row.contact_id}:`, err2.message);
-                }
+        await new Promise((resolve) => {
+            db.run('UPDATE ChatSummaries SET wa_labels = ?, label_timestamps = ? WHERE store_wa_id = ? AND contact_id = ?', 
+                [JSON.stringify(newLabels), JSON.stringify(newTimestamps), row.store_wa_id, row.contact_id], 
+                (err2) => {
+                    if (err2) console.error(`Gagal update row ${row.contact_id}:`, err2.message);
+                    resolve();
+            });
         });
     }
-  });
+  }
   
-  setTimeout(() => {
-    console.log(`\n✅ [SELESAI] Database berhasil dibersihkan!`);
-    console.log(`- Total data COD salah label (Menunggu TF) yang diperbaiki: ${fixedCodCount} chat`);
-    console.log(`- Total data belum lengkap (Buru-buru Closing) yang ditendang kembali ke CS (Menunggu Rekap): ${fixedIncompleteCount} chat`);
-    console.log(`Sekarang CS Manusia Anda tidak akan emosi lagi karena datanya sudah valid 100%.`);
-    db.close();
-  }, 3000);
+  console.log(`\n✅ [SELESAI] Database berhasil dibersihkan!`);
+  console.log(`- Total COD salah label (Menunggu TF) diperbaiki: ${fixedCodCount} chat`);
+  console.log(`- Total data bodong (Buru-buru Closing) di-downgrade ke Menunggu Rekap: ${fixedIncompleteCount} chat`);
+  db.close();
 });
