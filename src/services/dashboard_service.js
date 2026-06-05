@@ -526,12 +526,32 @@ function initDashboard(port = 3000) {
         };
       });
 
+      // --- SANITIZE LEGACY DATA (Mencegah "Menunggu TF" pada "COD" & menyaring data belum lengkap) ---
+      let cleanEnriched = enriched.filter(e => {
+          const checkIncomplete = (str) => {
+              if (!str) return true;
+              const s = str.toLowerCase().trim();
+              return s === '-' || s === '.' || s === 'belum' || s.includes('[') || s.includes(']');
+          };
+          // Jika data belum lengkap, jangan munculkan di halaman Closing meskipun AI dulu salah melabeli
+          if (checkIncomplete(e.contact_name) || checkIncomplete(e.alamat)) {
+              return false;
+          }
+          
+          // Jika COD, hapus label "Menunggu Transfer" jika ada
+          if (e.metode === 'COD' && e.wa_labels.includes('Menunggu Transfer')) {
+              e.wa_labels = e.wa_labels.filter(lbl => lbl !== 'Menunggu Transfer');
+              if (!e.wa_labels.includes('Closing')) e.wa_labels.push('Closing');
+          }
+          return true;
+      });
+
       // Filter berdasarkan method (COD / transfer / all)
-      let filtered = enriched;
+      let filtered = cleanEnriched;
       if (method === 'COD') {
-        filtered = enriched.filter(e => e.metode === 'COD');
+        filtered = cleanEnriched.filter(e => e.metode === 'COD');
       } else if (method === 'transfer') {
-        filtered = enriched.filter(e => e.metode === 'Transfer');
+        filtered = cleanEnriched.filter(e => e.metode === 'Transfer');
       }
 
       // Filter berdasarkan tanggal
