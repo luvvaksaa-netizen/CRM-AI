@@ -648,6 +648,7 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
     const typingDelay = Math.min(calculateTypingDelay(primaryTextForDelay), 4500);
 
     // 8. Eksekusi Tool Khusus Non-Pesan (misal: Auto-Label)
+    let aiPausedBot = false;
     if (aiResult.tool_calls && aiResult.tool_calls.length > 0) {
         for (const tc of aiResult.tool_calls) {
             if (tc.function.name === 'tambahkan_label_chat') {
@@ -668,6 +669,7 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
                 try {
                     const args = JSON.parse(tc.function.arguments || '{}');
                     await pauseBotForContact(storeWaId, contactId);
+                    aiPausedBot = true;
                     logger.info(`[${storeWaId}] AI mem-pause bot untuk [${contactId}]: ${args.reason || 'perlu CS manusia'}`);
                 } catch (e) {
                     logger.warn(`[${storeWaId}] AI gagal mem-pause bot: ${e.message}`);
@@ -683,7 +685,7 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
     try {
         // TAHAP AKHIR: Cek status toggle satu kali lagi SEBELUM benar-benar mengirim.
         // Jika CS mematikan toggle selama masa "delay mengetik" atau pemrosesan AI, BATALKAN PENGIRIMAN.
-        if (pausedContacts.has(`${storeWaId}_${contactId}`)) {
+        if (pausedContacts.has(`${storeWaId}_${contactId}`) && !aiPausedBot) {
             logger.warn(`[${storeWaId}] HARD STOP: Pengiriman pesan AI digugurkan karena Toggle dimatikan secara manual oleh CS untuk [${contactId}]`);
             return;
         }

@@ -550,7 +550,23 @@ function initDashboard(port = 3000) {
       const totalPages = Math.ceil(total / limitNum) || 1;
       const data       = filtered.slice((pageNum - 1) * limitNum, pageNum * limitNum);
 
-      res.json({ data, total, page: pageNum, totalPages, limit: limitNum });
+      // Kalkulasi stats secara global untuk data terfilter (bukan hanya 1 page)
+      const stats = { total: 0, transfer: 0, cod: 0, pending: 0 };
+      filtered.forEach(d => {
+         const labels = d.wa_labels || [];
+         const isClosingLabel = labels.includes('Closing') || labels.includes('Selesai');
+         const isClosingStatus = (d.status || '').toLowerCase() === 'closing' || (d.status || '').toLowerCase() === 'selesai';
+         const isMenungguTF = labels.includes('Menunggu Transfer');
+         
+         const isActualClosing = (isClosingLabel || isClosingStatus) && !isMenungguTF;
+         
+         if (isActualClosing) stats.total++;
+         if (d.metode === 'Transfer' && !isMenungguTF) stats.transfer++;
+         if (d.metode === 'COD') stats.cod++;
+         if (isMenungguTF) stats.pending++;
+      });
+
+      res.json({ data, total, page: pageNum, totalPages, limit: limitNum, stats });
     } catch (e) {
       res.status(500).json({ error: e.message });
     }

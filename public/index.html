@@ -4328,7 +4328,16 @@
 
             renderClosingTable(data);
             updateClosingPagination(page, totalPages, total);
-            updateClosingStats(data);
+            
+            // Gunakan global stats dari API jika ada, jika tidak fallback ke perhitungan lokal
+            if (result.stats) {
+                document.getElementById('clStat-total').innerText = result.stats.total;
+                document.getElementById('clStat-transfer').innerText = result.stats.transfer;
+                document.getElementById('clStat-cod').innerText = result.stats.cod;
+                document.getElementById('clStat-pending').innerText = result.stats.pending;
+            } else {
+                updateClosingStats(data);
+            }
         } catch (e) {
             if (tbody) tbody.innerHTML = `<tr><td colspan="10" class="text-center py-4 text-danger"><i class="fas fa-exclamation-circle me-2"></i>Gagal memuat: ${e.message}</td></tr>`;
         }

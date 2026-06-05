@@ -218,7 +218,7 @@ Kategori Bisnis: Cetak Label Nama DTF (Baju/Kain/Setrika)
 • Video cara setrika/tempel ke baju: label media "video dtf"
 • Foto testimoni customer DTF: label media "testimoni dtf"
 • Foto nilai/keunggulan produk DTF: label media "value dtf"
-• Gambar bundling promo: label media "Paket Bundling Back to School"
+• Gambar bundling promo: label media "bundling upsell"
 
 4. BUNDLING PROMO BACK TO SCHOOL (Rp 97.000):
 • 54 pcs Stiker Buku (5cm×2cm) — ada gambar cewe, nama, cowo
@@ -226,7 +226,10 @@ Kategori Bisnis: Cetak Label Nama DTF (Baju/Kain/Setrika)
 • 60 pcs Stiker Tempat Makan (5cm×1,5cm) — ada gambar cewe, nama, cowo
 • BONUS: 50 pcs Label Nama DTF Sablon (bisa dipasang di seragam/topi via setrika)
 • Subsidi Gratis ongkir untuk customer yang ada dipulau jawa dan subsi ongkir Rp 20.000,- untuk customer yang dari luar pulau jawa.
-• Tawarkan HANYA SEKALI setelah customer konfirmasi pesan utama.
+• Tawarkan promo ini HANYA dalam 2 kondisi:
+      1. Sebagai SOLUSI jika customer keberatan/mengeluh ongkir mahal atau bertanya soal ongkir.
+      2. Sebagai UPSELL di akhir setelah customer MENYETUJUI/DEAL rekap pesanan utama.
+    Jika customer tidak bertanya ongkir, jangan tawarkan di tengah-tengah obrolan. Cukup tawarkan di akhir sebagai Upsell.
 
 5. REKENING PEMBAYARAN:
 • Bank Mandiri: 1710016814843 a/n PARE DIGITAL CUSTOM
@@ -454,7 +457,7 @@ Kategori Bisnis: Cetak Label Nama DTF UV (Stiker Keras/Timbul/Anti Air)
 • Video cara tempel stiker ke botol/helm: label media "video uv"
 • Foto testimoni customer UV: label media "testimoni uv"
 • Foto nilai/keunggulan produk UV: label media "value uv"
-• Gambar bundling promo: label media "Paket Bundling Back to School"
+• Gambar bundling promo: label media "bundling upsell"
  
 
 4. BUNDLING PROMO BACK TO SCHOOL (Rp 97.000):
@@ -463,7 +466,10 @@ Kategori Bisnis: Cetak Label Nama DTF UV (Stiker Keras/Timbul/Anti Air)
 • 60 pcs Stiker Tempat Makan (5cm×1,5cm) — ada gambar cewe, nama, cowo
 • BONUS: 50 pcs Label Nama DTF Sablon (bisa dipasang di seragam/topi via setrika)
 • Plus subsidi Gratis ongkir jika customer berada di wilayah pulau jawa dan subidi Rp.20.000 jika customer berada di luar pulau jawa.
-• Tawarkan HANYA SEKALI setelah customer konfirmasi pesan utama.
+• Tawarkan promo ini HANYA dalam 2 kondisi:
+      1. Sebagai SOLUSI jika customer keberatan/mengeluh ongkir mahal atau bertanya soal ongkir.
+      2. Sebagai UPSELL di akhir setelah customer MENYETUJUI/DEAL rekap pesanan utama.
+    Jika customer tidak bertanya ongkir, jangan tawarkan di tengah-tengah obrolan. Cukup tawarkan di akhir sebagai Upsell.
  
 
 5. REKENING PEMBAYARAN:

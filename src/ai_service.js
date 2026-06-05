@@ -77,12 +77,13 @@ function sanitizeTextOutput(text = '') {
     return lines.replace(/\n{3,}/g, '\n\n').trim();
 }
 
-function inferAgentProductKind(agent = {}, mediaResults = []) {
+function inferAgentProductKind(agent = {}) {
+    // HANYA cek konteks agen itu sendiri (bukan media global)
+    // agar agen DTF tidak terdeteksi sebagai UV hanya karena ada media UV di katalog global.
     const haystack = [
         agent.name,
         agent.system_prompt,
-        agent.product_knowledge,
-        ...mediaResults.map(item => item?.media?.label)
+        agent.product_knowledge
     ].join(' ').toLowerCase();
 
     if (/\buv\b|stiker keras|timbul|botol|helm|tumbler/.test(haystack)) return 'uv';
@@ -154,8 +155,8 @@ function _autoInjectMedia(content, kind, sendableMedia) {
     return results.length > 0 ? results : null;
 }
 
-function buildFastMediaReply(agent, mediaResults = [], interactionCount = 1) {
-    const kind = inferAgentProductKind(agent, mediaResults);
+function buildFastMediaReply(agent, interactionCount = 1) {
+    const kind = inferAgentProductKind(agent);
     
     // Variasi copywriting agar tidak dianggap SPAM oleh WhatsApp (anti-banned)
     const uvVariations = [
@@ -323,7 +324,7 @@ async function _processAIResponse(userMessage, history = [], store = null, agent
             : '(Tidak ada media yang bisa dikirim)';
 
         // Deteksi jenis produk agent (dtf/uv/generic) — dipakai auto-inject & fast reply
-        const kind = inferAgentProductKind(agent, sendableMedia.map(m => ({ media: m })));
+        const kind = inferAgentProductKind(agent);
 
         const labelSection = configuredLabels.length > 0
             ? configuredLabels.map(label => `- ${label}`).join('\n')
@@ -445,8 +446,9 @@ Kumpulkan data berikut secara NATURAL dan BERURUTAN, satu pertanyaan per giliran
      Sampaikan: "Untuk pemesanan 3 paket atau lebih wajib transfer dulu ya bund 😊"
 
 ⛔ DILARANG LONCAT KE ALAMAT/ONGKIR SEBELUM VARIAN SUDAH DIPILIH!
-Urutan WAJIB DTF: Nama → Varian → Warna → Jumlah → Metode Bayar → Alamat → Ongkir.
-Urutan WAJIB UV: Nama → Varian (Cowok/Cewek/Polos) → Jumlah → Metode Bayar → Alamat → Ongkir.
+Urutan WAJIB DTF: Produk → Nama → Varian Font (1/2/3/4) → Warna → Jumlah → Metode Bayar → Alamat → Ongkir.
+Urutan WAJIB UV: Produk → Nama → Varian Gambar (Cowok/Cewek/Polos) → Jumlah → Metode Bayar → Alamat → Ongkir.
+⚠️ PENTING: JANGAN PERNAH menanyakan varian Font (1/2/3/4) untuk pesanan stiker UV! JANGAN PERNAH menanyakan varian (Cowok/Cewek/Polos) untuk pesanan DTF! Ikuti sesuai produknya!
 
 LANGKAH 3 — MINTA ALAMAT LENGKAP:
 Minta alamat dengan format LENGKAP dan TANPA SINGKATAN agar cek ongkir akurat:
@@ -456,7 +458,7 @@ Minta alamat dengan format LENGKAP dan TANPA SINGKATAN agar cek ongkir akurat:
 
 LANGKAH 4 — CEK ONGKIR:
 - Setelah dapat alamat LENGKAP, WAJIB gunakan tool cek_ongkir.
-- Harga ongkir yang keluar dari tool LANGSUNG sampaikan ke customer APA ADANYA. TIDAK ADA POTONGAN.
+- Harga ongkir yang keluar dari tool LANGSUNG sampaikan ke customer APA ADANYA. TIDAK ADA GRATIS ONGKIR.
 - Jika customer KEBERATAN/KOMPLAIN ongkir mahal → Berikan diskon Rp 3.000 saja. Contoh: "Khusus hari ini ongkirnya kita potong jadi Rp [harga - 3000] ya bund 😊"
 - Jika customer TIDAK keberatan → Tetap gunakan harga ongkir dari tool.
 
@@ -494,32 +496,73 @@ ATURAN REKAP PENTING:
 - Jika customer tiba-tiba transfer tanpa bilang COD/NON COD → Pengiriman = NON COD.
 - Jika customer menyebut COD → Pengiriman = COD, JANGAN pernah minta bukti transfer.
 
-LANGKAH 6 — CLOSING:
-- Jika customer konfirmasi "IYA" atau "sudah sesuai" → closing, ucapkan terima kasih.
-- Kirim estimasi pengiriman setelah konfirmasi:
+LANGKAH 6 — CLOSING (BACA DENGAN SEKSAMA, JANGAN SKIP!):
 
-Berikut estimasi pengerjaan:
-LUNAS/Transfer: PO 2-3 hari
-COD: PO 3-4 hari
+⚠️ ALUR BERBEDA untuk COD dan TRANSFER. Jangan dicampur!
 
+━━━ JIKA CUSTOMER COD: ━━━
+Customer konfirmasi "IYA" pada rekap → Langsung:
+1. Kirim ucapan terima kasih yang hangat
+2. Kirim estimasi di bawah ini (WAJIB, JANGAN DILEWAT!)
+3. Panggil tool tambahkan_label_chat dengan: ["COD", "Closing"]
+4. Panggil tool matikan_bot_kontak
+
+Teks estimasi yang WAJIB dikirim untuk COD:
+"Terima kasih bund, pesanannya sudah kami catat! 🎉
+Estimasi pengerjaan COD: 3-4 hari.
 Estimasi pengiriman:
-Pulau Jawa: 3-5 hari
-Pulau Bali: 5-6 hari
-Pulau Sumatra: 7-8 hari kerja
-Pulau Kalimantan/Sulawesi: 8-9 hari kerja
+📦 Pulau Jawa: 3-5 hari
+📦 Pulau Bali: 5-6 hari
+📦 Pulau Sumatra: 7-8 hari kerja
+📦 Pulau Kalimantan/Sulawesi: 8-9 hari kerja
+Nanti kurir akan menghubungi bunda ya 🙏"
 
-- Gunakan tool tambahkan_label_chat: ["COD", "Closing"] atau ["Menunggu Transfer", "Closing"]
-- Gunakan tool matikan_bot_kontak agar CS manusia yang melanjutkan proses.
+━━━ JIKA CUSTOMER TRANSFER: ━━━
+Customer konfirmasi "IYA" pada rekap → Lakukan BERTAHAP:
+
+TAHAP A (Saat customer konfirmasi):
+1. Kirim ucapan terima kasih + instruksi transfer
+2. Panggil tool tambahkan_label_chat dengan: ["Menunggu Transfer"] SAJA (jangan "Closing" dulu!)
+3. JANGAN matikan bot — bot masih harus menunggu bukti TF!
+
+Teks TAHAP A yang WAJIB dikirim:
+"Terima kasih bund sudah konfirmasi! 🙏
+Silakan transfer ke rekening berikut ya bund:
+🏦 Bank Mandiri: 1710016814843 a/n PARE DIGITAL CUSTOM
+🏦 Bank BCA: 0333965841 a/n PARE DIGITAL CUSTOM
+
+Setelah transfer, mohon kirimkan bukti transfernya ya bund 😊"
+
+TAHAP B (Saat customer mengirim foto/bukti transfer):
+Kamu akan menerima konteks: [AI-VISION: ...struk transfer / screenshot...] atau customer bilang "sudah transfer".
+→ WAJIB lakukan semua ini:
+1. Ucapkan terima kasih atas pembayaran yang sudah masuk
+2. Kirim estimasi pengerjaan + estimasi pengiriman (WAJIB!)
+3. Panggil tool tambahkan_label_chat dengan: ["Transfer", "Closing"]
+   (Kedua label ini berdampingan: "Transfer" = info metode bayar, "Closing" = status selesai)
+4. Panggil tool matikan_bot_kontak
+
+Teks TAHAP B yang WAJIB dikirim:
+"Alhamdulillah, bukti transfernya sudah kami terima bund! 🎉
+Estimasi pengerjaan Transfer: 2-3 hari.
+Estimasi pengiriman:
+📦 Pulau Jawa: 3-5 hari
+📦 Pulau Bali: 5-6 hari
+📦 Pulau Sumatra: 7-8 hari kerja
+📦 Pulau Kalimantan/Sulawesi: 8-9 hari kerja
+Ditunggu ya bund, semoga produknya sesuai harapan 🙏"
+
+⛔ DILARANG KERAS:
+- Memanggil matikan_bot_kontak saat TRANSFER tanpa bukti TF dulu
+- Diam/tidak membalas saat customer konfirmasi (harus selalu kirim estimasi!)
+- Menandai Closing untuk Transfer sebelum ada bukti transfer dari customer
 
 LANGKAH 7 — UPSELLING (1 kali saja setelah rekap dikonfirmasi):
 Tawarkan Paket Back to School Rp 97.000:
-✅ 54 pcs stiker buku
-✅ 42 pcs stiker alat tulis
-✅ 60 pcs stiker tempat makan
-✅ 50 pcs label nama DTF BONUS
-Plus subsidi ongkir (gratis untuk Jawa, Rp 20.000 untuk luar Jawa)
+✅ 54 pcs stiker buku, 42 pcs stiker alat tulis, 60 pcs stiker tempat makan, BONUS 50 pcs label nama DTF.
+⚠️ PROMO ONGKIR KHUSUS UPSELLING: Hanya jika customer membeli Paket Back to School ini, berikan subsidi ongkir (gratis untuk Jawa, potongan Rp 20.000 untuk luar Jawa).
 Kirim gambar via tool: label "Paket Bundling Back to School"
-Tawarkan HANYA SEKALI setelah closing utama.
+Tawarkan HANYA SEKALI setelah closing utama. JANGAN PERNAH MENAWARKAN GRATIS ONGKIR INI PADA SAAT CEK ONGKIR REGULER (Langkah 4)!
 
 ═══════════════════════════════════════════
 DILARANG KERAS (DRACONIAN RULES):
@@ -531,12 +574,13 @@ DILARANG KERAS (DRACONIAN RULES):
 - DILARANG minta bukti transfer jika customer COD.
 - DILARANG buat customer marah — empati dulu, solusi kemudian.
 - DILARANG menulis paragraf panjang — MAKSIMAL 2 BUBBLE per respon!
-- DILARANG KERAS memberikan potongan ongkir Rp 20.000 atau diskon besar. Potongan HANYA Rp 3.000 dan HANYA jika customer keberatan.
+- DILARANG KERAS memberikan potongan ongkir Rp 20.000, subsidi ongkir, atau gratis ongkir pada order reguler. Subsidi itu HANYA BERLAKU JIKA MEMBELI PAKET BACK TO SCHOOL (Langkah 7)! Potongan reguler HANYA Rp 3.000 dan HANYA jika customer keberatan.
 - DILARANG KERAS menerima COD untuk pesanan 3 paket (150 pcs) atau lebih. Wajib Transfer mutlak. Jangan pernah memberikan rekap COD jika jumlah paket >= 3.
 - DILARANG KERAS mengirim rekapitulasi form jika ke-5 data belum lengkap.
   🔵 DTF: (Nama, Varian, Warna, Jumlah, Alamat) SEMUA wajib.
   🟧 UV: (Nama, Varian Cowok/Cewek/Polos, Jumlah, Alamat) — WARNA TIDAK DIPERLUKAN untuk UV!
 - DILARANG KERAS menanya warna untuk pesanan UV — warna UV sudah fixed sesuai desain.
+- DILARANG KERAS menawarkan varian Cowok/Cewek/Polos kepada pemesan label baju (DTF). DTF menggunakan Varian Font!
 
 ═══════════════════════════════════════════
 STATUS PERCAKAPAN & INSTRUKSI KONTEKSTUAL:
@@ -921,7 +965,7 @@ ${sysPrompt}
                 responseMessage = secondResponse.choices[0].message;
                 finalContent = responseMessage.content;
             } else if (canFastReturnMedia && !finalContent) {
-                finalContent = buildFastMediaReply(agent, mediaResults, interactionCount);
+                finalContent = buildFastMediaReply(agent, interactionCount);
             }
 
             if (mediaResults.length > 0) {

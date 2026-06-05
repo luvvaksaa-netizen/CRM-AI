@@ -9,8 +9,8 @@ terpakai di follow-up otomatis, dan sebagai knowledge AI.
 ## ⚠️ ATURAN PENTING SEBELUM UPLOAD
 
 1. **Label HARUS persis seperti di tabel** (huruf kecil, spasi tepat).
-2. 🌟 **UPDATE TERBARU (GLOBAL MEDIA):** Semua media sekarang saling berbagi lintas agen! Artinya, jika Anda mengupload "katalog uv" ke Agen 2, Agen 1 otomatis bisa mengirimkannya ke customer jika diminta. Anda TIDAK PERLU lagi mengupload media yang sama di dua agen berbeda.
-3. Gambar bundling **"bundling upsell"** cukup di-upload ke **SALAH SATU** agent saja, keduanya otomatis bisa menggunakannya.
+2. 🌟 **PENTING (ISOLASI MEDIA):** Media kini 100% dipisah per agen agar tidak ada salah kirim produk. Jika Anda punya 2 agen yang butuh media yang sama (misal gambar bundling), Anda WAJIB meng-upload gambar tersebut ke masing-masing agen.
+3. Gambar bundling **"bundling upsell"** WAJIB di-upload ke **KEDUA** agen agar agen DTF maupun UV bisa menawarkannya.
 4. Setelah upload, tunggu hingga status menjadi ✅ **"Analisis Vision AI Selesai"**.
 
 ---
@@ -158,10 +158,7 @@ A: Hapus media tersebut dan upload ulang dengan label yang benar. Bot tidak akan
 A: Ya, tapi sistem akan mengambil yang pertama ditemukan. Sebaiknya 1 label = 1 file untuk konsistensi.
 
 **Q: Gambar bundling upsell perlu di-upload ke kedua agent?**
-A: TIDAK PERLU. Cukup upload ke salah satu agent saja (misal Agent DTF). Karena sistem sekarang menggunakan **Global Media Access**, Agent UV akan otomatis bisa mengirimnya selama labelnya persis `bundling upsell`.
-
-**Q: Kalau customer di Agent DTF tiba-tiba minta katalog UV, apakah bot bisa ngirim?**
-A: YA! Bot DTF akan otomatis mencari gambar berlabel `katalog uv` di seluruh sistem (termasuk yang Anda upload di Agent UV), lalu mengirimkannya ke customer. Inilah keunggulan sistem cross-selling otomatis.
+A: YA! Karena media sekarang dipisah per agen secara ketat (isolasi media), Anda wajib meng-upload `bundling upsell` ke Agent DTF dan Agent UV jika ingin keduanya bisa menawarkan promo tersebut.
 
 **Q: Video pemasangan untuk Agent UV saja atau DTF juga?**
 A: Agent UV membutuhkan "video pemasangan" (cara tempel stiker). Agent DTF sudah pakai "video dtf" untuk tujuan yang sama (cara setrika). Jadi tidak perlu upload "video pemasangan" ke Agent DTF.
