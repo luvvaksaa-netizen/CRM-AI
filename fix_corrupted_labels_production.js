@@ -2,8 +2,8 @@ const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 
 // Pastikan file ini menunjuk ke database production Anda di server
-// Default v2-core path:
-const dbPath = path.join(__dirname, 'v2-core', 'backend', 'data', 'database.sqlite');
+// Default production path:
+const dbPath = path.join(__dirname, 'database-production.sqlite');
 
 console.log(`[PEMBERSIHAN DATA] Menghubungkan ke database: ${dbPath}`);
 const db = new sqlite3.Database(dbPath, (err) => {
