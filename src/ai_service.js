@@ -1079,13 +1079,15 @@ ATURAN WA_LABELS (pilih berdasarkan STATUS):
 - Batal/tidak jadi → [Cancel] dan STATUS: cancel
 
 ATURAN KRITIS — STATUS "closing" HANYA BOLEH DIISI JIKA:
+✅ NAMA CUSTOMER sudah ada (bukan "belum")
+✅ ALAMAT sudah ada lengkap (bukan "belum" atau "-")
 ✅ TEKS LABEL sudah ada (bukan "belum")
 ✅ ONGKIR sudah ada nominal Rp (bukan "belum dicek")
 ✅ DETAIL PER NAMA sudah jelas
 ✅ METODE BAYAR sudah jelas (Transfer atau COD)
 ✅ REKAP sudah dikirim dan customer sudah konfirmasi
 
-Jika satu saja belum terpenuhi, tulis status yang paling akurat (menunggu rekap, gali kebutuhan, dst).` },
+Jika satu saja dari syarat di atas belum terpenuhi, tulis status yang paling akurat (menunggu rekap, gali kebutuhan, dst).` },
                 { role: "user", content: `Berikut riwayat chatnya, buatkan rekapannya:\n\n${historyText}` }
             ],
             temperature: 0.2 // Lebih stabil dan konsisten untuk format terstruktur
