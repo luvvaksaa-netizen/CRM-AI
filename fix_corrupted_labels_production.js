@@ -18,7 +18,7 @@ function checkIncomplete(str) {
     return s === '-' || s === '.' || s === 'belum' || s.includes('[') || s.includes(']');
 }
 
-db.all('SELECT id, wa_labels, contact_name, alamat, metode, summary FROM ChatSummaries', (err, rows) => {
+db.all('SELECT id, wa_labels, label_timestamps, contact_name, alamat, metode, summary FROM ChatSummaries', (err, rows) => {
   if (err) {
     console.error('Gagal mengambil data ChatSummaries:', err.message);
     process.exit(1);
@@ -29,19 +29,26 @@ db.all('SELECT id, wa_labels, contact_name, alamat, metode, summary FROM ChatSum
   
   rows.forEach(row => {
     let labels = [];
+    let timestamps = {};
     try {
         labels = JSON.parse(row.wa_labels || '[]');
+        timestamps = JSON.parse(row.label_timestamps || '{}');
     } catch (e) {
         return;
     }
     
     let isModified = false;
     let newLabels = [...labels];
+    let newTimestamps = { ...timestamps };
 
     // 1. KOREKSI COD BERSATUS MENUNGGU TRANSFER
     if (row.metode === 'COD' && newLabels.includes('Menunggu Transfer')) {
         newLabels = newLabels.filter(l => l !== 'Menunggu Transfer');
-        if (!newLabels.includes('Closing')) newLabels.push('Closing');
+        delete newTimestamps['Menunggu Transfer']; // Bersihkan juga dari log historis analytics
+        if (!newLabels.includes('Closing')) {
+            newLabels.push('Closing');
+            if (!newTimestamps['Closing']) newTimestamps['Closing'] = Date.now();
+        }
         fixedCodCount++;
         isModified = true;
     }
@@ -51,17 +58,21 @@ db.all('SELECT id, wa_labels, contact_name, alamat, metode, summary FROM ChatSum
     if (isIncomplete && (newLabels.includes('Closing') || newLabels.includes('Menunggu Transfer') || newLabels.includes('Selesai'))) {
         // Hapus status closing/menunggu transfer karena data masih ngawur
         newLabels = newLabels.filter(l => l !== 'Closing' && l !== 'Menunggu Transfer' && l !== 'Selesai');
+        delete newTimestamps['Closing'];
+        delete newTimestamps['Menunggu Transfer'];
+        delete newTimestamps['Selesai'];
         
         // Kembalikan statusnya ke Menunggu Rekap atau Hot Lead agar CS bisa follow up
         if (!newLabels.includes('Menunggu Rekap')) {
             newLabels.push('Menunggu Rekap');
+            if (!newTimestamps['Menunggu Rekap']) newTimestamps['Menunggu Rekap'] = Date.now();
         }
         fixedIncompleteCount++;
         isModified = true;
     }
 
     if (isModified) {
-        db.run('UPDATE ChatSummaries SET wa_labels = ? WHERE id = ?', [JSON.stringify(newLabels), row.id], (err2) => {
+        db.run('UPDATE ChatSummaries SET wa_labels = ?, label_timestamps = ? WHERE id = ?', [JSON.stringify(newLabels), JSON.stringify(newTimestamps), row.id], (err2) => {
             if (err2) {
                 console.error(`Gagal update row ${row.id}:`, err2.message);
             }
