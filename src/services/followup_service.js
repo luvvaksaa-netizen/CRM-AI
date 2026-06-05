@@ -361,6 +361,7 @@ async function executeFollowUp(followUp) {
  * Jadwalkan follow-up stage berikutnya setelah stage saat ini berhasil dikirim.
  */
 async function scheduleNextStage(currentFollowUp) {
+    const nextStage = currentFollowUp.stage + 1;
     const config = await getFollowUpConfig(currentFollowUp.store_wa_id);
     const nextTemplate = config[nextStage];
     if (!nextTemplate) return;
