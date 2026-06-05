@@ -19,7 +19,18 @@ function checkIncomplete(str) {
     return s === '-' || s === '.' || s === 'belum' || s.includes('[') || s.includes(']');
 }
 
-db.all('SELECT id, wa_labels, label_timestamps, contact_name, alamat, metode, summary FROM ChatSummaries', (err, rows) => {
+// Fungsi bantu untuk mengekstrak data dari summary_raw
+function parseSummaryField(text, field) {
+    if (!text) return '';
+    const regex = new RegExp(`^${field}\\s*:\\s*(.*)$`, 'im');
+    const match = text.match(regex);
+    if (match) {
+        return match[1].trim();
+    }
+    return '';
+}
+
+db.all('SELECT store_wa_id, contact_id, wa_labels, label_timestamps, contact_name, summary FROM ChatSummaries', (err, rows) => {
   if (err) {
     console.error('Gagal mengambil data ChatSummaries:', err.message);
     process.exit(1);
@@ -42,8 +53,14 @@ db.all('SELECT id, wa_labels, label_timestamps, contact_name, alamat, metode, su
     let newLabels = [...labels];
     let newTimestamps = { ...timestamps };
 
+    // Ekstrak metode bayar dan alamat dari summary text
+    const txt = row.summary || '';
+    const metodeBayar = parseSummaryField(txt, 'METODE BAYAR');
+    const isCOD = labels.includes('COD') || /COD|bayar\s*di\s*tempat/i.test(metodeBayar);
+    const alamat = parseSummaryField(txt, 'ALAMAT');
+
     // 1. KOREKSI COD BERSATUS MENUNGGU TRANSFER
-    if (row.metode === 'COD' && newLabels.includes('Menunggu Transfer')) {
+    if (isCOD && newLabels.includes('Menunggu Transfer')) {
         newLabels = newLabels.filter(l => l !== 'Menunggu Transfer');
         delete newTimestamps['Menunggu Transfer']; // Bersihkan juga dari log historis analytics
         if (!newLabels.includes('Closing')) {
@@ -55,7 +72,7 @@ db.all('SELECT id, wa_labels, label_timestamps, contact_name, alamat, metode, su
     }
 
     // 2. KOREKSI DATA BELUM LENGKAP YANG BURU-BURU CLOSING
-    const isIncomplete = checkIncomplete(row.contact_name) || checkIncomplete(row.alamat);
+    const isIncomplete = checkIncomplete(row.contact_name) || checkIncomplete(alamat);
     if (isIncomplete && (newLabels.includes('Closing') || newLabels.includes('Menunggu Transfer') || newLabels.includes('Selesai'))) {
         // Hapus status closing/menunggu transfer karena data masih ngawur
         newLabels = newLabels.filter(l => l !== 'Closing' && l !== 'Menunggu Transfer' && l !== 'Selesai');
@@ -73,10 +90,12 @@ db.all('SELECT id, wa_labels, label_timestamps, contact_name, alamat, metode, su
     }
 
     if (isModified) {
-        db.run('UPDATE ChatSummaries SET wa_labels = ?, label_timestamps = ? WHERE id = ?', [JSON.stringify(newLabels), JSON.stringify(newTimestamps), row.id], (err2) => {
-            if (err2) {
-                console.error(`Gagal update row ${row.id}:`, err2.message);
-            }
+        db.run('UPDATE ChatSummaries SET wa_labels = ?, label_timestamps = ? WHERE store_wa_id = ? AND contact_id = ?', 
+            [JSON.stringify(newLabels), JSON.stringify(newTimestamps), row.store_wa_id, row.contact_id], 
+            (err2) => {
+                if (err2) {
+                    console.error(`Gagal update row ${row.contact_id}:`, err2.message);
+                }
         });
     }
   });
