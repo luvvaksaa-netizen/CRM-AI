@@ -369,7 +369,8 @@ async function _runClosingAnalysis({ storeWaId, contactId, agentId, chatText, so
         const checkIncomplete = (str) => {
             if (!str) return false;
             const s = str.toLowerCase();
-            return s.includes('[') || s.includes(']') || s.includes('belum') || s.includes('nama: -') || s.includes('alamat: -');
+            // Menggunakan regex presisi: deteksi [nama] atau field belum terisi, dan tidak mendeteksi kata "belum" yang wajar dalam kalimat
+            return /\[nama\]|\[alamat\]|\[kota\]|nama\s*:\s*(\-|belum|kosong|0)|alamat\s*:\s*(\-|belum|kosong)/i.test(s);
         };
         const hasIncompleteText = checkIncomplete(fullChatText);
 
