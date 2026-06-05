@@ -1,9 +1,10 @@
 # ============================================================
-# DOCKERFILE FOR WHATSAPP AI CRM (Final GLIBC Fix)
+# DOCKERFILE - Multi-stage build for smaller production image
 # ============================================================
-FROM node:20-bookworm
 
-# 1. Install Dependencies Sistem dengan Tool Kompilasi Lengkap
+# --- Build stage ---
+FROM node:20-slim AS builder
+
 RUN apt-get update && apt-get install -y \
     chromium \
     ffmpeg \
@@ -14,30 +15,48 @@ RUN apt-get update && apt-get install -y \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Konfigurasi Puppeteer
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
-# 3. Direktori Kerja
 WORKDIR /usr/src/app
 
-# Set DATA_DIR agar mengarah langsung ke Volume Railway Anda yang sudah terpasang
-ENV DATA_DIR=/usr/src/app/.wwebjs_auth
-
-# 4. Install Dependencies & PAKSA BUILD DARI SOURCE
-# Ini adalah kunci untuk mengatasi error GLIBC
+# Install dependencies first (layer caching)
 COPY package*.json ./
-RUN npm install --build-from-source sqlite3
-
-# 5. Install sisa package lainnya
 RUN npm install
 
-# 6. Copy Source Code
+# Copy source and build
 COPY . .
 
-# 7. Persiapan Folder Data & Volume Lock
-RUN mkdir -p .wwebjs_auth/uploads && chmod -R 777 .wwebjs_auth
+# --- Production stage ---
+FROM node:20-slim
 
-# 8. Expose & Start
-EXPOSE 3000
+RUN apt-get update && apt-get install -y \
+    chromium \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
+ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV NODE_ENV=production
+ENV DATA_DIR=/usr/src/app/.wwebjs_auth
+
+WORKDIR /usr/src/app
+
+# Copy only production artifacts from builder
+COPY --from=builder /usr/src/app/node_modules ./node_modules
+COPY --from=builder /usr/src/app .
+
+# Create data directory with correct permissions
+RUN mkdir -p .wwebjs_auth/uploads && \
+    groupadd -r appuser && \
+    useradd -r -g appuser -d /usr/src/app -s /sbin/nologin appuser && \
+    chown -R appuser:appuser /usr/src/app
+
+USER appuser
+
+EXPOSE 3001
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD node -e "require('http').get('http://localhost:3001/health', r => { process.exit(r.statusCode === 200 ? 0 : 1) }).on('error', () => process.exit(1))"
+
 CMD ["node", "index.js"]

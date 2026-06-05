@@ -1822,9 +1822,9 @@
                         <div style="background:var(--clr-bg); width:45px; height:45px; border-radius:12px; display:flex; align-items:center; justify-content:center; color:var(--clr-primary); margin-right:12px;">
                             <i class="fas fa-robot"></i>
                         </div>
-                        <h6 class="fw-bold m-0">${a.name}</h6>
+                        <h6 class="fw-bold m-0">${escapeHtml(a.name)}</h6>
                     </div>
-                    <p class="text-muted" style="font-size:0.8rem; flex-grow:1;">${a.system_prompt ? a.system_prompt.substring(0, 80) + '...' : 'Belum ada prompt.'}</p>
+                    <p class="text-muted" style="font-size:0.8rem; flex-grow:1;">${escapeHtml(a.system_prompt ? a.system_prompt.substring(0, 80) + '...' : 'Belum ada prompt.')}</p>
                     <div class="mt-3 pt-3 border-top d-flex justify-content-between align-items-center">
                         <small class="text-primary fw-bold">Edit Otak <i class="fas fa-arrow-right ms-1"></i></small>
                         <small class="badge bg-light text-dark border">${stores.filter(s => s.agent_id === a.id).length} Device</small>
@@ -2000,7 +2000,7 @@
                 </div>
                 ${labelsHtml}
                 <div class="bg-light p-3 rounded-3 border mb-3" style="font-size:0.9rem; color:#334155; line-height:1.6; white-space:pre-wrap; border-left:4px solid var(--clr-primary) !important;">${escapeHtml(s.summary)}</div>
-                <button class="btn btn-sm btn-outline-primary w-100" onclick="deepLinkToChat('${s.store_wa_id}', '${s.contact_id}')">
+                <button class="btn btn-sm btn-outline-primary w-100 btn-deeplink" data-store-wa-id="${s.store_wa_id}" data-contact-id="${s.contact_id}">
                     <i class="fas fa-external-link-alt me-1"></i> Buka Chat
                 </button>
             `;
@@ -3838,7 +3838,7 @@
                         <td><span class="badge bg-light text-dark border">${lead.store_name}</span></td>
                         <td><div class="small text-muted"><i class="far fa-clock me-1"></i>${formatTimeAgo(lead.last_updated)}</div></td>
                         <td class="text-end pe-4">
-                            <button class="btn btn-sm btn-primary rounded-pill px-3" onclick="openChatFromAnalytics('${lead.store_wa_id}', '${lead.contact_id}')">Chat</button>
+                            <button class="btn btn-sm btn-primary rounded-pill px-3 btn-chatfromanalytics" data-store-wa-id="${lead.store_wa_id}" data-contact-id="${lead.contact_id}">Chat</button>
                         </td>
                     `;
                     tbody.appendChild(tr);
@@ -4335,8 +4335,20 @@
     }
 
     function updateClosingStats(data) {
-        const total = data.length;
-        const transfer = data.filter(d => d.metode === 'Transfer').length;
+        // "Total Closing" = hanya yang benar-benar Closing (sudah deal selesai)
+        // BUKAN Menunggu Transfer — mereka belum closing, baru janji mau bayar!
+        const actualClosing = data.filter(d => {
+            const labels = d.wa_labels || [];
+            const isClosingLabel = labels.includes('Closing') || labels.includes('Selesai');
+            const isClosingStatus = (d.status || '').toLowerCase() === 'closing'
+                || (d.status || '').toLowerCase() === 'selesai';
+            const isMenungguTF = labels.includes('Menunggu Transfer');
+            // Masuk closing hanya jika punya label Closing/Selesai,
+            // DAN bukan sekadar Menunggu Transfer saja
+            return (isClosingLabel || isClosingStatus) && !isMenungguTF;
+        });
+        const total = actualClosing.length;
+        const transfer = data.filter(d => d.metode === 'Transfer' && !(d.wa_labels || []).includes('Menunggu Transfer')).length;
         const cod = data.filter(d => d.metode === 'COD').length;
         const pending = data.filter(d => (d.wa_labels || []).includes('Menunggu Transfer')).length;
         document.getElementById('clStat-total').innerText = total;
@@ -4609,6 +4621,27 @@
     }
 
     init();
+
+    // Security: delegated event listeners (avoid inline onclick with unsanitized data)
+    document.addEventListener('click', function(e) {
+        const btn = e.target.closest('.btn-deeplink');
+        if (btn) {
+            const storeWaId = btn.dataset.storeWaId;
+            const contactId = btn.dataset.contactId;
+            if (storeWaId && contactId) {
+                deepLinkToChat(storeWaId, contactId);
+            }
+            return;
+        }
+        const analyticsBtn = e.target.closest('.btn-chatfromanalytics');
+        if (analyticsBtn) {
+            const storeWaId = analyticsBtn.dataset.storeWaId;
+            const contactId = analyticsBtn.dataset.contactId;
+            if (storeWaId && contactId) {
+                openChatFromAnalytics(storeWaId, contactId);
+            }
+        }
+    });
 </script>
 
     <!-- Analytics Leads Modal -->
