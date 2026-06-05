@@ -364,14 +364,24 @@ async function _runClosingAnalysis({ storeWaId, contactId, agentId, chatText, so
         // JANGAN simpan pola agar bot tidak belajar dari closing palsu/tidak lengkap.
         // ─────────────────────────────────────────────────────────────
         const MINIMUM_QUALITY_SCORE = 6.0;
+        
+        // Hard-coded Regex Check untuk mencegah halusinasi AI tentang "data lengkap"
+        const checkIncomplete = (str) => {
+            if (!str) return false;
+            const s = str.toLowerCase();
+            return s.includes('[') || s.includes(']') || s.includes('belum') || s.includes('nama: -') || s.includes('alamat: -');
+        };
+        const hasIncompleteText = checkIncomplete(fullChatText);
+
         const isQualified = finalScore >= MINIMUM_QUALITY_SCORE
                          && analysis.alur_lengkap === true
-                         && analysis.data_lengkap === true;
+                         && analysis.data_lengkap === true
+                         && !hasIncompleteText;
 
         if (!isQualified) {
             logger.warn(
                 `[Learning] ⛔ Quality Gate GAGAL untuk [${contactId || sourceFile || 'dataset'}]. ` +
-                `Score: ${finalScore}/10, alur_lengkap: ${analysis.alur_lengkap}, data_lengkap: ${analysis.data_lengkap}. ` +
+                `Score: ${finalScore}/10, alur_lengkap: ${analysis.alur_lengkap}, data_lengkap: ${analysis.data_lengkap}, incomplete_text_detected: ${hasIncompleteText}. ` +
                 `Pola TIDAK disimpan untuk mencegah bot belajar dari data tidak valid.`
             );
             // Tetap simpan analytic record untuk monitoring — tapi tandai sebagai "rejected"
@@ -641,6 +651,9 @@ ${patternText}
 
 ⚡ INSTRUKSI: Gunakan teknik-teknik di atas sebagai referensi cara menjawab.
 Adaptasi secara natural ke konteks percakapan saat ini. Jangan copy-paste verbatim.
+
+⚠️ PERINGATAN KERAS: Gunakan teknik di atas HANYA JIKA tidak melanggar aturan pengumpulan data!
+JANGAN PERNAH gunakan teknik ini untuk loncat proses/buru-buru closing sebelum 5 syarat mutlak (Produk, Nama, Varian, Jumlah, Alamat) lengkap! Aturan rekap mutlak tetap berlaku!
 `.trim();
 }
 
