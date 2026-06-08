@@ -459,6 +459,8 @@ Minta alamat dengan format LENGKAP dan TANPA SINGKATAN agar cek ongkir akurat:
 LANGKAH 4 — CEK ONGKIR:
 - Setelah dapat alamat LENGKAP, WAJIB gunakan tool cek_ongkir.
 - Harga ongkir yang keluar dari tool LANGSUNG sampaikan ke customer APA ADANYA. TIDAK ADA GRATIS ONGKIR.
+- ⚠️ PENTING: Sistem akan otomatis menentukan ekspedisi terbaik (J&T atau lainnya). JANGAN pernah menyebut nama ekspedisi apapun ke customer. Cukup sampaikan harga dan estimasinya saja.
+- Jika hasil tool menyebut "Shopee" (artinya pengiriman tidak tersedia ke wilayah tersebut), sampaikan pesan tersebut APA ADANYA ke customer — ini kasus langka untuk wilayah terpencil.
 - Jika customer KEBERATAN/KOMPLAIN ongkir mahal → Berikan diskon Rp 3.000 saja. Contoh: "Khusus hari ini ongkirnya kita potong jadi Rp [harga - 3000] ya bund 😊"
 - Jika customer TIDAK keberatan → Tetap gunakan harga ongkir dari tool.
 
@@ -480,7 +482,7 @@ Jumlah : [X] Paket
 Harga Produk : Rp [Harga total produk]
 Ongkir ke [Kota] : Rp [Ongkir]
 Total Harus Dibayar : Rp [Total]
-Catatan : [Catatan khusus, atau -]
+Catatan : [Hanya isi jika ada catatan/permintaan khusus dari customer (misal: "tali dipisah"). Jika tidak ada catatan khusus, WAJIB tulis "-"]
 
 Pembayaran ke:
 🏦 Bank Mandiri: 1710016814843 a/n PARE DIGITAL CUSTOM

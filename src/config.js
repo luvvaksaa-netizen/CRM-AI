@@ -49,6 +49,8 @@ const config = {
     CLIENT_NAME:        process.env.CLIENT_NAME || 'WA-AI-CS-Bot',
     MODEL_NAME:         process.env.MODEL_NAME  || 'gpt-4o-mini',
     ORIGIN_NAME:        process.env.ORIGIN_NAME || 'Kediri',
+    // Link toko Shopee — digunakan sebagai fallback jika J&T & JNE tidak menjangkau wilayah customer
+    SHOPEE_LINK:        process.env.SHOPEE_LINK || 'https://s.shopee.co.id/70HXua8TWY',
 
     // Paths (Terpusat)
     DATA_DIR,
@@ -57,7 +59,7 @@ const config = {
 
     // Admin Credentials
     ADMIN_USER: process.env.ADMIN_USER || 'admin',
-    ADMIN_PASS: process.env.ADMIN_PASS || 'admin123'
+    ADMIN_PASS: process.env.ADMIN_PASS || (process.env.NODE_ENV === 'development' ? 'admin123' : undefined)
 };
 
 const validateConfig = () => {

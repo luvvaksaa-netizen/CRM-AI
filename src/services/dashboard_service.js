@@ -472,13 +472,13 @@ function initDashboard(port = 3000) {
       });
 
       // Filter: hanya kontak yang sudah transfer / closing / selesai
-      const CLOSING_STATUSES = ['menunggu transfer', 'closing', 'selesai'];
+      const CLOSING_STATUSES = ['closing', 'selesai'];
       let closingList = allSummaries.filter(s => {
         const summaryLower = (s.summary || '').toLowerCase();
         // Prioritas: cek wa_labels dulu
         let labels = [];
         try { labels = JSON.parse(s.wa_labels || '[]'); } catch(_){}
-        const hasClosingLabel = labels.some(l => ['Closing', 'Menunggu Transfer', 'COD'].includes(l));
+        const hasClosingLabel = labels.includes('Closing') || labels.includes('Selesai');
         return hasClosingLabel || CLOSING_STATUSES.some(st => summaryLower.includes(`status: ${st}`));
       });
 
@@ -1370,7 +1370,7 @@ function initDashboard(port = 3000) {
 
     } catch (error) {
       logger.error(`[Settings] Gagal update ${req.params.storeId}: ${error.message}`);
-      res.status(500).json({ success: false, message: error.message });
+      console.error('API Error:', error); res.status(500).json({ success: false, message: 'Internal server error' });
     }
   });
 
@@ -1495,7 +1495,7 @@ function initDashboard(port = 3000) {
       });
       res.json({ success: true });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      console.error('API Error:', error); res.status(500).json({ success: false, message: 'Internal server error' });
     }
   });
 
@@ -1518,7 +1518,7 @@ function initDashboard(port = 3000) {
       await whatsappService.sendManualMedia(storeId, target.value, asset);
       res.json({ success: true });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      console.error('API Error:', error); res.status(500).json({ success: false, message: 'Internal server error' });
     }
   });
 
@@ -1554,7 +1554,7 @@ function initDashboard(port = 3000) {
         message: resolveError ? `Nomor belum ada di cache lokal (${resolveError.message}). Permintaan nomor asli sudah dikirim.` : 'Permintaan nomor asli sudah dikirim.'
       });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      console.error('API Error:', error); res.status(500).json({ success: false, message: 'Internal server error' });
     }
   });
 
@@ -1565,7 +1565,7 @@ function initDashboard(port = 3000) {
       const labels = await whatsappService.getLabels(req.params.storeId);
       res.json({ success: true, labels });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      console.error('API Error:', error); res.status(500).json({ success: false, message: 'Internal server error' });
     }
   });
 
@@ -1576,7 +1576,7 @@ function initDashboard(port = 3000) {
       const label = await whatsappService.createLabel(req.params.storeId, name, color);
       res.json({ success: true, label });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      console.error('API Error:', error); res.status(500).json({ success: false, message: 'Internal server error' });
     }
   });
 
@@ -1586,7 +1586,7 @@ function initDashboard(port = 3000) {
       const colors = await whatsappService.getLabelColorPalette(req.params.storeId);
       res.json({ success: true, colors });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      console.error('API Error:', error); res.status(500).json({ success: false, message: 'Internal server error' });
     }
   });
 
@@ -1597,7 +1597,7 @@ function initDashboard(port = 3000) {
       const label = await whatsappService.editLabel(req.params.storeId, req.params.labelId, { name, color });
       res.json({ success: true, label });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      console.error('API Error:', error); res.status(500).json({ success: false, message: 'Internal server error' });
     }
   });
 
@@ -1607,7 +1607,7 @@ function initDashboard(port = 3000) {
       const result = await whatsappService.deleteLabel(req.params.storeId, req.params.labelId);
       res.json({ success: true, result });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      console.error('API Error:', error); res.status(500).json({ success: false, message: 'Internal server error' });
     }
   });
 
@@ -1622,7 +1622,7 @@ function initDashboard(port = 3000) {
       const result = await whatsappService.addOrRemoveLabels(req.params.storeId, req.params.contactId, labelOps);
       res.json({ success: true, result });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      console.error('API Error:', error); res.status(500).json({ success: false, message: 'Internal server error' });
     }
   });
 
@@ -1634,7 +1634,7 @@ function initDashboard(port = 3000) {
       const result = await whatsappService.sendReaction(req.params.storeId, messageId, emoji);
       res.json({ success: true, result });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      console.error('API Error:', error); res.status(500).json({ success: false, message: 'Internal server error' });
     }
   });
 
@@ -1649,7 +1649,7 @@ function initDashboard(port = 3000) {
       });
       res.json({ success: true, result });
     } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
+      console.error('API Error:', error); res.status(500).json({ success: false, message: 'Internal server error' });
     }
   });
 
@@ -1726,7 +1726,7 @@ function initDashboard(port = 3000) {
     } catch (error) {
       if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
       logger.error(`Upload error: ${error.message}`);
-      res.status(500).json({ success: false, message: error.message });
+      console.error('API Error:', error); res.status(500).json({ success: false, message: 'Internal server error' });
     }
   });
 
@@ -1743,7 +1743,7 @@ function initDashboard(port = 3000) {
       if (io) io.emit('mediaUpdated', { agentId: req.params.agentId });
       res.json({ success: true, asset: asset.dataValues });
     } catch (error) {
-      res.status(400).json({ success: false, message: error.message });
+      console.error('API Error:', error); res.status(400).json({ success: false, message: 'Bad request' });
     }
   });
 
@@ -1755,7 +1755,7 @@ function initDashboard(port = 3000) {
       res.json({ success: true });
     } catch (error) {
       logger.error(`Delete media error: ${error.message}`);
-      res.status(400).json({ success: false, message: error.message });
+      console.error('API Error:', error); res.status(400).json({ success: false, message: 'Bad request' });
     }
   });
 
