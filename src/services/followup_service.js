@@ -131,8 +131,9 @@ async function processScheduledFollowUps() {
         try {
             await executeFollowUp(fu);
         } catch (err) {
-            logger.error(`[FollowUp] Gagal eksekusi stage-${fu.stage} untuk [${fu.contact_id}]: ${err.message}`);
-            await fu.update({ status: 'cancelled', cancel_reason: `Error: ${err.message}` });
+            const errMsg = err?.message || String(err) || 'Unknown error';
+            logger.error(`[FollowUp] Gagal eksekusi stage-${fu.stage} untuk [${fu.contact_id}]: ${errMsg}`);
+            await fu.update({ status: 'cancelled', cancel_reason: `Error: ${errMsg}` });
         }
 
         // Jeda random 2-5 menit antar-customer (jika masih ada antrian)
@@ -148,6 +149,8 @@ async function processScheduledFollowUps() {
  * Eksekusi satu follow-up: kirim media + teks ke WhatsApp.
  */
 async function executeFollowUp(followUp) {
+    // ── Normalisasi error ── helper untuk tangkap non-Error exceptions
+    const safeErrMsg = (e) => e?.message || String(e) || 'Unknown error';
     // 1. Guard: Cek apakah bot masih aktif
     const store = await Store.findOne({
         where: { wa_id: followUp.store_wa_id },
@@ -336,7 +339,9 @@ async function executeFollowUp(followUp) {
             emitFollowUpUpdate(followUp.store_wa_id);
             return; // Berhasil
         } catch (sendErr) {
-            const isRestartError = /null|evaluate|detached|not ready|belum siap/i.test(sendErr.message);
+            // Normalisasi error agar selalu ada .message (handle non-Error throws)
+            const sendErrMsg = sendErr?.message || String(sendErr) || 'Unknown error';
+            const isRestartError = /null|evaluate|detached|not ready|belum siap/i.test(sendErrMsg);
             const elapsed = Date.now() - startWait;
 
             if (isRestartError && elapsed < MAX_WAIT_RESTART_MS) {
@@ -347,7 +352,7 @@ async function executeFollowUp(followUp) {
             }
 
             // Gagal permanent — jadwal ulang 5 menit kemudian (bukan cancel)
-            logger.error(`[FollowUp] Gagal kirim stage-${followUp.stage}: ${sendErr.message}`);
+            logger.error(`[FollowUp] Gagal kirim stage-${followUp.stage}: ${sendErrMsg}`);
             const retryAt = new Date(Date.now() + 5 * 60 * 1000);
             await followUp.update({ scheduled_at: retryAt });
             logger.info(`[FollowUp] Follow-up stage-${followUp.stage} dijadwal ulang ke ${retryAt.toLocaleTimeString('id-ID')}`);

@@ -1872,11 +1872,25 @@ async function _withSQLiteRetry(fn, maxAttempts = 8) {
 }
 
 async function addToChatHistory(storeId, msg) {
+  // ═══ DEDUP GUARD ═══
+  // Jika pesan ini sudah ada di database (berdasarkan wa_message_id), skip.
+  // Ini mengatasi race condition antara _logBotReply dan message_create event.
+  const waMessageId = msg.wa_message_id || msg.id || null;
+
+  // Bangun data pesan terlebih dahulu untuk keperluan emit Socket (walau DB gagal)
+  // Ini memastikan browser SELALU menerima pesan baru secara real-time.
+  const fallbackMsgData = {
+    store_wa_id: storeId,
+    contact_id: msg.from,
+    wa_message_id: waMessageId,
+    sender_name: msg.isMe ? (msg.sender_name || 'CS Manual') : (msg.sender_name || 'Pelanggan'),
+    body: msg.body,
+    is_from_me: msg.isMe || false,
+    type: msg.type || 'chat',
+    timestamp: msg.timestamp || new Date()
+  };
+
   try {
-    // ═══ DEDUP GUARD ═══
-    // Jika pesan ini sudah ada di database (berdasarkan wa_message_id), skip.
-    // Ini mengatasi race condition antara _logBotReply dan message_create event.
-    const waMessageId = msg.wa_message_id || msg.id || null;
     if (waMessageId) {
       const existing = await ChatMessage.findOne({ where: { wa_message_id: waMessageId } });
       if (existing) return; // Sudah ada, tidak perlu insert ulang
@@ -1941,11 +1955,18 @@ async function addToChatHistory(storeId, msg) {
       chatMsg = await _withSQLiteRetry(() => ChatMessage.create(messageData));
     }
 
+    // ✅ DB berhasil — emit data lengkap dari DB ke browser
     if (io) io.emit('newMessage', { storeId, msg: chatMsg.dataValues });
   } catch (err) {
     // Tangkap UniqueConstraint error juga sebagai dedup fallback
-    if (err.name === 'SequelizeUniqueConstraintError') return;
-    logger.error(`addToChatHistory error: ${err.message}`);
+    if (err && err.name === 'SequelizeUniqueConstraintError') return;
+    const errMsg = err?.message || String(err) || 'Unknown error';
+    logger.error(`addToChatHistory error: ${errMsg}`);
+
+    // ✅ PERBAIKAN KRITIS: Walau DB gagal (SQLITE_BUSY), tetap emit ke browser
+    // agar chat SELALU muncul di dashboard secara real-time.
+    // Data akan di-load ulang dari DB saat user refresh.
+    if (io) io.emit('newMessage', { storeId, msg: fallbackMsgData });
   }
 }
 
