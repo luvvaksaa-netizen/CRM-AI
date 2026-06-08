@@ -1849,8 +1849,8 @@ async function updateStorePhone(storeId, phone) {
  * @param {Function} fn - Async function yang akan dijalankan
  * @param {number} maxAttempts
  */
-async function _withSQLiteRetry(fn, maxAttempts = 5) {
-  const delays = [100, 300, 700, 1500, 3000];
+async function _withSQLiteRetry(fn, maxAttempts = 8) {
+  const delays = [200, 500, 1000, 2000, 3000, 4000, 5000, 5000];
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       return await fn();
