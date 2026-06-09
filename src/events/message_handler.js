@@ -572,7 +572,7 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
     // 2. Ambil Riwayat Chat & Rekapan Sebelumnya
     const recentHistory = await ChatMessage.findAll({
         where: { contact_id: contactId, store_wa_id: storeWaId },
-        limit: 30,
+        limit: 50, // Dinaikkan dari 30→50 untuk mencegah amnesia AI saat chat panjang
         order: [['timestamp', 'DESC']]
     });
     const history = recentHistory.map(h => h.get({ plain: true })).reverse();

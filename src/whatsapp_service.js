@@ -245,7 +245,7 @@ function createWhatsAppClient(storeWaId) {
                 '--no-first-run',
                 '--disable-renderer-backgrounding',  // Hemat CPU saat tab tidak aktif
                 '--disable-backgrounding-occluded-windows',
-                '--js-flags=--max-old-space-size=256'  // Batasi JS heap per browser
+                '--js-flags=--max-old-space-size=512'  // Batasi JS heap per browser (dinaikkan agar tidak hang)
             ],
             headless: true,
             handleSIGINT: false,
