@@ -657,6 +657,9 @@
                         <option value="">🏷️ Semua Toko</option>
                     </select>
                     <button class="btn btn-light border" onclick="openLabelManager()"><i class="fas fa-tags me-2"></i>Kelola Label</button>
+                    <button class="btn btn-warning text-dark fw-semibold shadow-sm" onclick="openTransferInvestigator()" title="Cari customer berdasarkan nominal transfer">
+                        <i class="fas fa-search-dollar me-2"></i>Investigasi Transfer
+                    </button>
                     <button class="btn btn-primary" onclick="loadSummaries(1, true)"><i class="fas fa-sync-alt me-2"></i>Segarkan</button>
                 </div>
             </div>
@@ -1557,6 +1560,82 @@
     </div>
 </div>
 
+<!-- ======= MODAL: INVESTIGASI TRANSFER (Finance Tool) ======= -->
+<div class="modal fade" id="modalInvestigasiTransfer" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+        <div class="modal-content border-0 shadow-lg">
+            <div class="modal-header" style="background:linear-gradient(135deg,#f59e0b,#d97706);color:white;">
+                <div>
+                    <h5 class="modal-title fw-bold m-0"><i class="fas fa-search-dollar me-2"></i>Investigasi Transfer</h5>
+                    <small style="opacity:0.9">Lacak siapa customer yang mentransfer nominal tertentu</small>
+                </div>
+                <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body bg-light">
+                <!-- Input Form -->
+                <div class="card border-0 shadow-sm mb-4">
+                    <div class="card-body p-4">
+                        <div class="row g-3 align-items-end">
+                            <div class="col-md-4">
+                                <label class="form-label fw-semibold text-muted small">📅 Tanggal Transfer</label>
+                                <input type="date" id="investigasiDate" class="form-control shadow-sm">
+                                <div class="form-text">Kosongkan untuk semua tanggal</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label fw-semibold text-muted small">💰 Nominal Transfer (Rp)</label>
+                                <div class="input-group shadow-sm">
+                                    <span class="input-group-text fw-bold">Rp</span>
+                                    <input type="text" id="investigasiAmount" class="form-control" placeholder="mis: 285000" oninput="this.value=this.value.replace(/[^0-9.]/g,'')">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label fw-semibold text-muted small">🏪 Filter Toko</label>
+                                <select id="investigasiStore" class="form-select shadow-sm">
+                                    <option value="">Semua Toko</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="mt-3 d-flex gap-2">
+                            <button class="btn btn-warning fw-bold px-4" onclick="investigateTransfer()">
+                                <i class="fas fa-search me-2"></i>Lacak Sekarang
+                            </button>
+                            <button class="btn btn-outline-secondary" onclick="clearInvestigation()">
+                                <i class="fas fa-times me-2"></i>Reset
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tips -->
+                <div class="alert alert-info border-0 mb-3" style="font-size:0.85rem;" id="investigasiTips">
+                    <i class="fas fa-lightbulb me-2"></i>
+                    <strong>Cara pakai:</strong> Masukkan tanggal transfer (misal: 6 Juni) dan nominal (misal: 285000).
+                    Sistem akan mencari customer yang menyebut nominal itu di chat maupun rekap.
+                </div>
+
+                <!-- Results -->
+                <div id="investigasiResults" style="display:none;">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h6 class="fw-bold m-0" id="investigasiResultTitle">Hasil Pencarian</h6>
+                        <span class="badge bg-warning text-dark" id="investigasiResultCount">0 ditemukan</span>
+                    </div>
+                    <div id="investigasiResultCards"></div>
+                </div>
+
+                <!-- Loading state -->
+                <div id="investigasiLoading" style="display:none;" class="text-center py-5">
+                    <i class="fas fa-spinner fa-spin fa-2x text-warning mb-3"></i>
+                    <p class="text-muted">Memindai database chat &amp; rekap...</p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <small class="text-muted me-auto"><i class="fas fa-shield-alt me-1"></i>Data hanya dibaca, tidak ada yang diubah</small>
+                <button class="btn btn-secondary" data-bs-dismiss="modal">Tutup</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Toast Container -->
 <div id="toast-container"></div>
 
@@ -1888,6 +1967,148 @@
     function debouncedLoadSummaries() {
         clearTimeout(_summaryDebounceTimer);
         _summaryDebounceTimer = setTimeout(() => loadSummaries(1), 350);
+    }
+
+    // ============================================================
+    // INVESTIGASI TRANSFER — Finance Tool
+    // ============================================================
+    function openTransferInvestigator() {
+        // Pre-fill date to today
+        const today = new Date().toISOString().slice(0, 10);
+        document.getElementById('investigasiDate').value = today;
+        document.getElementById('investigasiAmount').value = '';
+        document.getElementById('investigasiResults').style.display = 'none';
+        document.getElementById('investigasiLoading').style.display = 'none';
+        document.getElementById('investigasiTips').style.display = '';
+
+        // Populate store filter
+        const sel = document.getElementById('investigasiStore');
+        sel.innerHTML = '<option value="">Semua Toko</option>';
+        (stores || []).forEach(s => {
+            const opt = document.createElement('option');
+            opt.value = s.wa_id; opt.textContent = s.name;
+            sel.appendChild(opt);
+        });
+        if (currentStoreId) sel.value = currentStoreId;
+
+        new bootstrap.Modal(document.getElementById('modalInvestigasiTransfer')).show();
+    }
+
+    async function investigateTransfer() {
+        const amount = (document.getElementById('investigasiAmount').value || '').trim();
+        const date   = (document.getElementById('investigasiDate').value || '').trim();
+        const storeId = (document.getElementById('investigasiStore').value || '').trim();
+
+        if (!amount) {
+            toast('Masukkan nominal transfer terlebih dahulu!', 'error');
+            document.getElementById('investigasiAmount').focus();
+            return;
+        }
+
+        document.getElementById('investigasiLoading').style.display = '';
+        document.getElementById('investigasiResults').style.display = 'none';
+        document.getElementById('investigasiTips').style.display = 'none';
+
+        try {
+            const params = new URLSearchParams({ amount });
+            if (date)    params.set('date', date);
+            if (storeId) params.set('storeId', storeId);
+
+            const res  = await fetch(`/api/summaries/investigate-transfer?${params}`);
+            const data = await res.json();
+
+            if (!res.ok) throw new Error(data.error || 'Gagal melakukan investigasi.');
+
+            document.getElementById('investigasiLoading').style.display = 'none';
+            renderInvestigationResults(data);
+        } catch (e) {
+            document.getElementById('investigasiLoading').style.display = 'none';
+            document.getElementById('investigasiTips').style.display = '';
+            toast('Investigasi gagal: ' + e.message, 'error');
+        }
+    }
+
+    function renderInvestigationResults(data) {
+        const resultsEl = document.getElementById('investigasiResults');
+        const titleEl   = document.getElementById('investigasiResultTitle');
+        const countEl   = document.getElementById('investigasiResultCount');
+        const cardsEl   = document.getElementById('investigasiResultCards');
+
+        titleEl.innerHTML = `Hasil untuk <strong>${escapeHtml(data.amount_formatted)}</strong>`
+            + (data.date_searched !== 'Semua Tanggal' ? ` &mdash; <span class="text-muted">${escapeHtml(data.date_searched)}</span>` : '');
+        countEl.textContent = `${data.total_found} ditemukan`;
+        countEl.className = data.total_found > 0 ? 'badge bg-success' : 'badge bg-secondary';
+
+        if (!data.results || data.results.length === 0) {
+            cardsEl.innerHTML = `
+                <div class="alert alert-warning border-0">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    <strong>Tidak ditemukan.</strong> Kemungkinan: nominal belum pernah disebutkan di chat, atau chat tanggal tersebut belum tersimpan di database.
+                    <hr class="my-2">
+                    <small>💡 Coba tanpa filter tanggal, atau coba nominal yang dibulatkan (misal: 285000 → 285).</small>
+                </div>`;
+        } else {
+            cardsEl.innerHTML = '';
+            data.results.forEach((r, i) => {
+                const sourceLabel = r.source === 'rekap'
+                    ? '<span class="badge bg-primary me-1"><i class="fas fa-file-alt me-1"></i>Dari Rekap</span>'
+                    : '<span class="badge bg-info text-dark me-1"><i class="fas fa-comment-dots me-1"></i>Dari Chat</span>';
+                const phone = r.contact_phone && r.contact_phone !== '-'
+                    ? `<span class="text-muted small"><i class="fab fa-whatsapp me-1 text-success"></i>+${r.contact_phone.replace(/\D/g, '')}</span>`
+                    : '<span class="text-muted small">Nomor belum terdeteksi</span>';
+
+                const msgSnippet = r.source === 'chat' && r.message_body
+                    ? `<div class="alert alert-info py-2 px-3 mt-2 mb-0" style="font-size:0.8rem;">
+                        <i class="fas fa-quote-left me-1 text-info"></i>
+                        <em>${escapeHtml(r.message_body)}</em>
+                        <div class="text-muted mt-1" style="font-size:0.75rem;">
+                            ${r.is_from_me ? '<i class="fas fa-reply me-1"></i>' + escapeHtml(r.sender_name || 'CS/Bot') : '<i class="fas fa-user me-1"></i>Customer'}
+                            &bull; ${r.message_timestamp ? moment(r.message_timestamp).format('D MMM HH:mm') : '-'}
+                        </div>
+                      </div>` : '';
+
+                const summarySnip = r.summary_snippet
+                    ? `<details class="mt-2"><summary class="small text-muted" style="cursor:pointer;">Lihat cuplikan rekap...</summary>
+                        <pre class="bg-light p-2 rounded mt-1" style="font-size:0.75rem;white-space:pre-wrap;max-height:150px;overflow-y:auto;">${escapeHtml(r.summary_snippet)}</pre>
+                       </details>` : '';
+
+                const card = document.createElement('div');
+                card.className = 'card border-0 shadow-sm mb-3';
+                card.innerHTML = `
+                    <div class="card-body p-3">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <div>
+                                ${sourceLabel}
+                                <h6 class="fw-bold d-inline mb-0">${escapeHtml(r.nama !== '-' ? r.nama : r.contact_name)}</h6>
+                            </div>
+                            <button class="btn btn-sm btn-outline-primary" onclick="deepLinkToChat('${escapeHtml(r.store_wa_id)}','${escapeHtml(r.contact_id)}');bootstrap.Modal.getInstance(document.getElementById('modalInvestigasiTransfer')).hide()">
+                                <i class="fas fa-external-link-alt me-1"></i>Buka Chat
+                            </button>
+                        </div>
+                        <div class="mb-2">${phone}</div>
+                        <div class="row g-2" style="font-size:0.82rem;">
+                            <div class="col-6 col-md-4"><span class="text-muted">Produk:</span> <strong>${escapeHtml(r.produk)}</strong></div>
+                            <div class="col-6 col-md-4"><span class="text-muted">Jumlah:</span> <strong>${escapeHtml(r.jumlah)}</strong></div>
+                            <div class="col-6 col-md-4"><span class="text-muted">Harga:</span> <strong>${escapeHtml(r.harga)}</strong></div>
+                            <div class="col-6 col-md-4"><span class="text-muted">Ongkir:</span> <strong>${escapeHtml(r.ongkir)}</strong></div>
+                            <div class="col-6 col-md-4"><span class="text-muted">Metode:</span> <strong>${escapeHtml(r.metode)}</strong></div>
+                            <div class="col-6 col-md-4"><span class="text-muted">Status:</span> <strong>${escapeHtml(r.status)}</strong></div>
+                            <div class="col-12"><span class="text-muted">Alamat:</span> <strong>${escapeHtml(r.alamat)}</strong></div>
+                        </div>
+                        ${msgSnippet}
+                        ${summarySnip}
+                    </div>`;
+                cardsEl.appendChild(card);
+            });
+        }
+
+        resultsEl.style.display = '';
+    }
+
+    function clearInvestigation() {
+        document.getElementById('investigasiAmount').value = '';
+        document.getElementById('investigasiResults').style.display = 'none';
+        document.getElementById('investigasiTips').style.display = '';
     }
 
     async function loadSummaries(page = 1, forceRefresh = false) {

@@ -410,7 +410,8 @@ function initDashboard(port = 3000) {
   app.get('/api/summaries', async (req, res) => {
     try {
       const { ChatSummary, Store } = require('../database/index');
-      const { storeId, status, page, limit, search } = req.query;
+      // bodySearch = keyword pencarian ke DALAM isi rekap (nominal, produk, teks label, dll)
+      const { storeId, status, page, limit, search, bodySearch } = req.query;
 
       const pageNum  = Math.max(1, parseInt(page)  || 1);
       const limitNum = Math.min(100, Math.max(1, parseInt(limit) || 20));
@@ -419,23 +420,20 @@ function initDashboard(port = 3000) {
       const where = {};
       if (storeId) where.store_wa_id = storeId;
 
-      // Filter by status keyword (e.g. ?status=closing)
-      // We do this in JS because SQLite LIKE is not reliable for multi-line text
-      // First get total count, then paginate
       let allSummaries = await ChatSummary.findAll({
         where,
         order: [['last_updated', 'DESC']],
         include: [{ model: Store, attributes: ['name', 'wa_id'] }]
       });
 
-      // Apply status filter
+      // Filter by status keyword in summary text
       if (status) {
         allSummaries = allSummaries.filter(s =>
           (s.summary || '').toLowerCase().includes(`status: ${status.toLowerCase()}`)
         );
       }
 
-      // Apply search filter (by contact name or phone)
+      // Search by contact name / phone / id
       if (search && search.trim()) {
         const q = search.trim().toLowerCase();
         allSummaries = allSummaries.filter(s =>
@@ -445,12 +443,172 @@ function initDashboard(port = 3000) {
         );
       }
 
+      // ✨ bodySearch: cari kata kunci / nominal di dalam ISI rekap (summary text)
+      // Digunakan finance untuk nyari nominal transfer: ?bodySearch=285000
+      if (bodySearch && bodySearch.trim()) {
+        const bq = bodySearch.trim().toLowerCase().replace(/[.\s]/g, '');
+        allSummaries = allSummaries.filter(s => {
+          const txt = (s.summary || '').toLowerCase().replace(/[.\s]/g, '');
+          return txt.includes(bq);
+        });
+      }
+
       const total      = allSummaries.length;
       const totalPages = Math.ceil(total / limitNum) || 1;
       const data       = allSummaries.slice(offset, offset + limitNum);
 
       res.json({ data, total, page: pageNum, totalPages, limit: limitNum });
     } catch (e) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ============================================================
+  // INVESTIGASI TRANSFER — Finance Tool
+  // Cari siapa customer yang menyebut nominal tertentu pada tanggal tertentu
+  // GET /api/summaries/investigate-transfer?amount=285000&date=2025-06-06&storeId=xxx
+  // ============================================================
+  app.get('/api/summaries/investigate-transfer', async (req, res) => {
+    try {
+      const { ChatSummary, ChatMessage } = require('../database/index');
+      const { amount, date, storeId } = req.query;
+
+      if (!amount || !amount.trim()) {
+        return res.status(400).json({ error: 'Parameter "amount" wajib diisi.' });
+      }
+
+      // Normalisasi nominal: hapus titik, koma, spasi, "Rp" → ambil angka saja
+      const rawAmount = amount.replace(/[Rp.,\s]/gi, '').trim();
+      if (!/^\d+$/.test(rawAmount)) {
+        return res.status(400).json({ error: 'Nominal tidak valid. Masukkan angka saja, misal: 285000' });
+      }
+
+      // Buat variasi format pencarian (285000, 285.000, Rp285.000, dll)
+      const amtNum = parseInt(rawAmount);
+      const amtFormatted = amtNum.toLocaleString('id-ID'); // 285.000
+      const searchVariants = [
+        rawAmount,            // 285000
+        amtFormatted,        // 285.000
+        `Rp ${amtFormatted}`,// Rp 285.000
+        `Rp${amtFormatted}`, // Rp285.000
+        `Rp${rawAmount}`,    // Rp285000
+      ];
+
+      // Bangun window tanggal jika diberikan
+      let dateStart = null, dateEnd = null;
+      if (date) {
+        dateStart = new Date(date);
+        dateStart.setHours(0, 0, 0, 0);
+        dateEnd = new Date(date);
+        dateEnd.setHours(23, 59, 59, 999);
+      }
+
+      const summaryWhere = {};
+      const msgWhere = {};
+      if (storeId) {
+        summaryWhere.store_wa_id = storeId;
+        msgWhere.store_wa_id = storeId;
+      }
+      if (dateStart) {
+        msgWhere.timestamp = { [Op.between]: [dateStart, dateEnd] };
+      }
+
+      // --- TRACK 1: Cari di isi rekap (ChatSummary.summary) ---
+      const allSummaries = await ChatSummary.findAll({ where: summaryWhere });
+      const summaryHits = allSummaries.filter(s => {
+        const txt = (s.summary || '').replace(/[\s]/g, '');
+        return searchVariants.some(v => txt.includes(v.replace(/[\s]/g, '')));
+      }).map(s => {
+        // Parse field penting dari rekap
+        function pf(fieldName) {
+          const m = (s.summary || '').match(new RegExp(`${fieldName}:\\s*(.+)`, 'i'));
+          return m ? m[1].trim().split('\n')[0].trim() : '-';
+        }
+        return {
+          source: 'rekap',
+          contact_id: s.contact_id,
+          store_wa_id: s.store_wa_id,
+          contact_name: s.contact_name || '-',
+          contact_phone: s.contact_phone || '-',
+          last_updated: s.last_updated,
+          nama: pf('NAMA CUSTOMER'),
+          produk: pf('PRODUK DIMINATI'),
+          jumlah: pf('JUMLAH'),
+          harga: pf('HARGA'),
+          ongkir: pf('ONGKIR'),
+          metode: pf('METODE BAYAR'),
+          status: pf('STATUS'),
+          alamat: pf('ALAMAT'),
+          summary_snippet: (s.summary || '').slice(0, 400)
+        };
+      });
+
+      // --- TRACK 2: Cari di isi pesan chat (ChatMessage.body) ---
+      // Ambil semua pesan di tanggal tersebut lalu filter di JS
+      const allMessages = await ChatMessage.findAll({
+        where: msgWhere,
+        order: [['timestamp', 'DESC']],
+        limit: 5000 // Safety cap
+      });
+
+      // Filter pesan yang menyebut nominal ini
+      const matchedMsgContacts = new Set();
+      const msgHitDetails = [];
+      for (const msg of allMessages) {
+        const body = (msg.body || '').replace(/[\s]/g, '');
+        if (searchVariants.some(v => body.includes(v.replace(/[\s]/g, '')))) {
+          const key = `${msg.store_wa_id}::${msg.contact_id}`;
+          if (!matchedMsgContacts.has(key)) {
+            matchedMsgContacts.add(key);
+            // Cari rekap untuk kontak ini
+            const relatedSummary = allSummaries.find(
+              s => s.store_wa_id === msg.store_wa_id && s.contact_id === msg.contact_id
+            );
+            function pf2(txt, fieldName) {
+              const m = (txt || '').match(new RegExp(`${fieldName}:\\s*(.+)`, 'i'));
+              return m ? m[1].trim().split('\n')[0].trim() : '-';
+            }
+            msgHitDetails.push({
+              source: 'chat',
+              contact_id: msg.contact_id,
+              store_wa_id: msg.store_wa_id,
+              contact_name: msg.contact_display_name || msg.sender_name || '-',
+              contact_phone: msg.contact_phone || '-',
+              message_timestamp: msg.timestamp,
+              message_body: (msg.body || '').slice(0, 300),
+              is_from_me: msg.is_from_me,
+              sender_name: msg.sender_name,
+              // Rekap terkait (jika ada)
+              nama: relatedSummary ? pf2(relatedSummary.summary, 'NAMA CUSTOMER') : '-',
+              produk: relatedSummary ? pf2(relatedSummary.summary, 'PRODUK DIMINATI') : '-',
+              jumlah: relatedSummary ? pf2(relatedSummary.summary, 'JUMLAH') : '-',
+              harga: relatedSummary ? pf2(relatedSummary.summary, 'HARGA') : '-',
+              ongkir: relatedSummary ? pf2(relatedSummary.summary, 'ONGKIR') : '-',
+              metode: relatedSummary ? pf2(relatedSummary.summary, 'METODE BAYAR') : '-',
+              status: relatedSummary ? pf2(relatedSummary.summary, 'STATUS') : '-',
+              alamat: relatedSummary ? pf2(relatedSummary.summary, 'ALAMAT') : '-',
+              summary_snippet: relatedSummary ? (relatedSummary.summary || '').slice(0, 400) : null
+            });
+          }
+        }
+      }
+
+      // Gabung hasil, deduplikasi berdasarkan contact_id
+      const seenKeys = new Set(summaryHits.map(h => `${h.store_wa_id}::${h.contact_id}`));
+      const combinedResults = [
+        ...summaryHits,
+        ...msgHitDetails.filter(h => !seenKeys.has(`${h.store_wa_id}::${h.contact_id}`))
+      ];
+
+      res.json({
+        amount: rawAmount,
+        amount_formatted: `Rp ${amtFormatted}`,
+        date_searched: date || 'Semua Tanggal',
+        total_found: combinedResults.length,
+        results: combinedResults
+      });
+    } catch (e) {
+      logger.error(`[InvestigasiTransfer] Error: ${e.message}`);
       res.status(500).json({ error: e.message });
     }
   });
