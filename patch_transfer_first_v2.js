@@ -2,12 +2,32 @@
  * patch_transfer_first_v2.js
  * Patch kedua: inject Vision TF validation + Transfer-First note ke semua agent
  * yang belum lengkap (Via ID:3, Riska ID:1, Fitri ID:4)
+ *
+ * DB PATH: Otomatis baca DATA_DIR dari environment (sama persis dengan aplikasi)
+ *   - VPS   : DATA_DIR=/var/data/crm  → /var/data/crm/database.sqlite
+ *   - Local  : DATA_DIR tidak di-set   → ./data/database.sqlite
+ *   - Override manual: node patch_transfer_first_v2.js /path/ke/database.sqlite
  */
 
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const fs = require('fs');
+const dotenv = require('dotenv');
+dotenv.config();
 
-const dbPath = path.join(__dirname, 'database-production.sqlite');
+// Resolusi path database — identik dengan src/database/index.js
+const DATA_DIR = process.env.DATA_DIR
+    ? path.resolve(process.env.DATA_DIR)
+    : path.join(process.cwd(), 'data');
+
+// Bisa di-override via argumen
+const dbPath = process.argv[2] || path.join(DATA_DIR, 'database.sqlite');
+
+if (!fs.existsSync(dbPath)) {
+  console.error('ERROR: Database tidak ditemukan di: ' + dbPath);
+  console.error('Coba: node patch_transfer_first_v2.js /path/ke/database.sqlite');
+  process.exit(1);
+}
 console.log('Menghubungkan ke: ' + dbPath);
 
 const db = new sqlite3.Database(dbPath, (err) => {

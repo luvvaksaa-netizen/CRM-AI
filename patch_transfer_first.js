@@ -5,12 +5,32 @@
  * - COD hanya jika customer EKSPLISIT minta
  * - Tanya metode bayar SETELAH ongkir diketahui, bukan di awal
  * - Validasi bukti transfer via Vision AI sebagai trigger closing
+ *
+ * DB PATH: Otomatis baca DATA_DIR dari environment (sama persis dengan aplikasi)
+ *   - VPS   : DATA_DIR=/var/data/crm  → /var/data/crm/database.sqlite
+ *   - Local  : DATA_DIR tidak di-set   → ./data/database.sqlite
+ *   - Override manual: node patch_transfer_first.js /path/ke/database.sqlite
  */
 
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+const fs = require('fs');
+const dotenv = require('dotenv');
+dotenv.config();
 
-const dbPath = path.join(__dirname, 'database-production.sqlite');
+// Resolusi path database — identik dengan src/database/index.js
+const DATA_DIR = process.env.DATA_DIR
+    ? path.resolve(process.env.DATA_DIR)
+    : path.join(process.cwd(), 'data');
+
+// Bisa di-override via argumen: node patch_transfer_first.js /path/custom.sqlite
+const dbPath = process.argv[2] || path.join(DATA_DIR, 'database.sqlite');
+
+if (!fs.existsSync(dbPath)) {
+  console.error('ERROR: Database tidak ditemukan di: ' + dbPath);
+  console.error('Coba: node patch_transfer_first.js /path/ke/database.sqlite');
+  process.exit(1);
+}
 console.log(`🔗 Menghubungkan ke: ${dbPath}`);
 
 const db = new sqlite3.Database(dbPath, (err) => {
