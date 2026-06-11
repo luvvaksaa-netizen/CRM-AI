@@ -15,22 +15,21 @@ module.exports = {
     {
       name: 'wa-crm-v2',
       script: 'dist/app.js',   // compiled TypeScript output
-      cwd: './',
+      // cwd: pakai path absolut agar dotenv selalu menemukan .env di folder ini
+      cwd: __dirname,
       instances: 1,            // HARUS 1 — SQLite tidak mendukung multi-instance
       exec_mode: 'fork',       // HARUS fork — bukan cluster
 
       // ─── Graceful Shutdown ───────────────────────────────────────────
-      // Tunggu sinyal 'ready' dari process.send('ready') sebelum
-      // menganggap proses baru siap dan mematikan proses lama.
       wait_ready: true,
-      listen_timeout: 90000,   // Tunggu max 90 detik (banyak WA session, lambat init)
-      kill_timeout: 15000,     // Beri 15 detik untuk graceful shutdown sebelum SIGKILL
+      listen_timeout: 90000,
+      kill_timeout: 15000,
 
       // ─── Auto-Restart Policy ─────────────────────────────────────────
       autorestart: true,
       max_restarts: 10,
-      min_uptime: '15s',       // Anggap crash jika mati dalam 15 detik pertama
-      restart_delay: 3000,     // Tunggu 3 detik sebelum restart otomatis
+      min_uptime: '15s',
+      restart_delay: 3000,
 
       // ─── Memory Guard ────────────────────────────────────────────────
       max_memory_restart: '1500M',
@@ -41,10 +40,17 @@ module.exports = {
       error_file: './logs/pm2-error.log',
       out_file: './logs/pm2-out.log',
 
-      // ─── Environment ─────────────────────────────────────────────────
+      // ─── Environment (fallback — .env adalah sumber utama) ───────────
+      // Variabel ini sebagai fallback jika .env tidak terbaca.
+      // Sumber utama tetap file .env di folder ini.
       env: {
         NODE_ENV: 'production',
-        PORT: 3002,
+        PORT: '3002',
+        DATA_DIR: 'C:\\Users\\Lenovo\\Documents\\CRM-AI\\data',
+        ADMIN_USER: 'admin',
+        ADMIN_PASS: 'KirimFotoSecure99!',
+        JWT_SECRET: 'v2core-crm-jwt-secret-lenovo-desktop-2024-xK9mP',
+        CORS_ORIGINS: 'http://localhost:5173,http://localhost:3002',
       },
     },
   ],
