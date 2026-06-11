@@ -194,9 +194,11 @@ function cleanupStaleSessions() {
     for (const entry of entries) {
         if (!entry.startsWith('session-')) continue;
         const sessionDir = path.join(authDir, entry);
-        const cookiesPath = path.join(sessionDir, 'Default', 'Cookies');
-        // If session folder exists but has NO Cookies file, it's stale (never authenticated)
-        if (fs.existsSync(sessionDir) && !fs.existsSync(cookiesPath)) {
+        const cookiesPathOld = path.join(sessionDir, 'Default', 'Cookies');
+        const cookiesPathNew = path.join(sessionDir, 'Default', 'Network', 'Cookies');
+        
+        // If session folder exists but has NO Cookies file in either location, it's stale
+        if (fs.existsSync(sessionDir) && !fs.existsSync(cookiesPathOld) && !fs.existsSync(cookiesPathNew)) {
             try {
                 fs.rmSync(sessionDir, { recursive: true, force: true });
                 cleanedCount++;
