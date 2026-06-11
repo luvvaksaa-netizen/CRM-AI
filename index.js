@@ -90,21 +90,30 @@ async function startBot() {
         logger.error(`Gagal inisialisasi sesi: ${err.message}`);
     }
 
-    // 4. Graceful Shutdown untuk SEMUA Sesi
-    process.on('SIGINT', async () => {
-        logger.warn('Mematikan bot secara aman...');
+    // 4. Graceful Shutdown — handle SIGINT (Ctrl+C) dan SIGTERM (pm2 stop/reload)
+    // Menutup HTTP server dulu sebelum exit agar port 3001 dilepas bersih
+    // dan mencegah error EADDRINUSE pada pm2 reload berikutnya.
+    async function gracefulShutdown(signal) {
+        logger.warn(`[Shutdown] Menerima ${signal} — mematikan bot secara aman...`);
+
+        // 1. Tutup HTTP server + Socket.IO (lepas port 3001)
+        await dashboard.closeServer();
+
+        // 2. Tutup semua sesi WhatsApp
         const clients = getClients();
-        
         for (const [id, client] of clients) {
             try {
-                logger.info(`Menutup sesi [${id}]...`);
+                logger.info(`[Shutdown] Menutup sesi WA [${id}]...`);
                 await client.destroy();
-            } catch (e) { /* ignore */ }
+            } catch (e) { /* ignore — sudah mati */ }
         }
-        
-        logger.success('Semua sesi ditutup. Sampai jumpa! 👋');
+
+        logger.success('[Shutdown] Semua sesi ditutup. Sampai jumpa! 👋');
         process.exit(0);
-    });
+    }
+
+    process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 }
 
 // Jalankan bot

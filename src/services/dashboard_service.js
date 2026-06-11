@@ -1979,6 +1979,8 @@ function initDashboard(port = 3000) {
 
   server.listen(port, () => {
     logger.success(`Omni-Dashboard: http://localhost:${port}`);
+    // Signal PM2 bahwa proses siap menerima traffic (zero-downtime reload)
+    if (process.send) process.send('ready');
   });
 }
 
@@ -2195,6 +2197,38 @@ function emitMessageRevoked(storeId, waMessageId, contactId) {
   if (io) io.emit('messageRevoked', { storeId, waMessageId, contactId });
 }
 
+/**
+ * Graceful Shutdown — tutup HTTP server + Socket.IO dengan bersih.
+ * Dipanggil dari index.js saat menerima SIGINT/SIGTERM.
+ * Ini mencegah error EADDRINUSE saat pm2 reload.
+ */
+function closeServer() {
+  return new Promise((resolve) => {
+    if (!server || !server.listening) {
+      return resolve();
+    }
+    // Tutup Socket.IO dulu (disconnect semua client)
+    if (io) {
+      io.disconnectSockets(true);
+      io.close();
+    }
+    // Tutup HTTP server — tolak koneksi baru, tunggu koneksi aktif selesai
+    server.close((err) => {
+      if (err && err.code !== 'ERR_SERVER_NOT_RUNNING') {
+        logger.warn(`[Shutdown] HTTP server close warning: ${err.message}`);
+      } else {
+        logger.success('[Shutdown] HTTP server ditutup dengan bersih.');
+      }
+      resolve();
+    });
+    // Timeout paksa 5 detik jika ada koneksi yang tidak mau tutup
+    setTimeout(() => {
+      logger.warn('[Shutdown] Timeout 5 detik — paksa tutup server.');
+      resolve();
+    }, 5000);
+  });
+}
+
 module.exports = {
   initDashboard,
   updateWAStatus,
@@ -2203,5 +2237,6 @@ module.exports = {
   addToChatHistory,
   emitTypingStatus,
   emitMessageRevoked,
-  updateContactPhoneIdentity
+  updateContactPhoneIdentity,
+  closeServer,
 };
