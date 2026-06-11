@@ -1977,11 +1977,39 @@ function initDashboard(port = 3000) {
     socket.emit('allStatuses', storeStatuses);
   });
 
-  server.listen(port, () => {
-    logger.success(`Omni-Dashboard: http://localhost:${port}`);
-    // Signal PM2 bahwa proses siap menerima traffic (zero-downtime reload)
-    if (process.send) process.send('ready');
+  // Retry logic: jika port masih dipakai proses lama (EADDRINUSE),
+  // tunggu sebentar dan coba lagi. Ini mencegah crash loop saat pm2 restart/reload.
+  let retryCount = 0;
+  const MAX_RETRIES = 10;
+  const RETRY_DELAY_MS = 2000;
+
+  function tryListen() {
+    server.listen(port, () => {
+      logger.success(`Omni-Dashboard: http://localhost:${port}`);
+      // Signal PM2 bahwa proses siap (untuk wait_ready: true di ecosystem.config.js)
+      if (process.send) process.send('ready');
+    });
+  }
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      retryCount++;
+      if (retryCount <= MAX_RETRIES) {
+        logger.warn(`[Dashboard] Port ${port} masih dipakai (percobaan ${retryCount}/${MAX_RETRIES}). Coba lagi dalam ${RETRY_DELAY_MS / 1000} detik...`);
+        setTimeout(() => {
+          server.close();
+          tryListen();
+        }, RETRY_DELAY_MS);
+      } else {
+        logger.error(`[Dashboard] Gagal bind port ${port} setelah ${MAX_RETRIES} percobaan. Bot tetap berjalan tanpa dashboard.`);
+        // TIDAK crash — bot WA tetap jalan, hanya dashboard tidak tersedia
+      }
+    } else {
+      logger.error(`[Dashboard] Server error: ${err.message}`);
+    }
   });
+
+  tryListen();
 }
 
 // ============================================================
