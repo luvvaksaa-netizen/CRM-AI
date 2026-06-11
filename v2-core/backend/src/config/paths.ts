@@ -6,7 +6,19 @@ import path from 'path';
 // Maka ../../ = backend/
 
 const ROOT = path.resolve(__dirname, '../..');
-const DATA_DIR = path.resolve(ROOT, 'data');
+
+/**
+ * DATA_DIR: Path ke folder data (database, uploads, tmp).
+ *
+ * Priority:
+ * 1. ENV DATA_DIR — set ini di .env atau ecosystem.config.js untuk production
+ *    agar bisa share database dengan legacy system.
+ *    Contoh: DATA_DIR=C:/Users/Lenovo/Documents/CRM-AI/data
+ * 2. Default — backend/data/ (untuk local dev)
+ */
+const DATA_DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : path.resolve(ROOT, 'data');
 
 /**
  * Canonical path to SQLite database.
