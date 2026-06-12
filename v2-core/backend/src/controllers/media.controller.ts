@@ -59,7 +59,10 @@ export const uploadMedia = async (req: Request, res: Response, next: NextFunctio
     // Hook: Daftarkan ke mediaService untuk AI analysis (vision + video)
     try {
       const mediaService = require('../services/media.service');
-      const filePath = path.resolve(__dirname, '../../data/uploads', path.basename(req.file.filename));
+      const MEDIA_UPLOADS_DIR = process.env.DATA_DIR
+        ? path.resolve(process.env.DATA_DIR, 'uploads')
+        : path.resolve(__dirname, '../../data/uploads');
+      const filePath = path.resolve(MEDIA_UPLOADS_DIR, path.basename(req.file.filename));
       await mediaService.registerMedia({
         agent_id: agent_id || null,
         filename: req.file.filename,
@@ -116,7 +119,9 @@ export const deleteMedia = async (req: Request, res: Response, next: NextFunctio
     if (!asset) return res.status(404).json({ success: false, message: 'Media tidak ditemukan' });
 
     // Delete file
-    const UPLOADS_DIR = path.resolve(__dirname, '../../data/uploads');
+    const UPLOADS_DIR = process.env.DATA_DIR
+      ? path.resolve(process.env.DATA_DIR, 'uploads')
+      : path.resolve(__dirname, '../../data/uploads');
     const filePath = path.join(UPLOADS_DIR, path.basename(asset.filename));
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);

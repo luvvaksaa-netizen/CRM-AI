@@ -108,11 +108,18 @@ import { authenticateJWT } from './middlewares/auth.middleware';
 import errorHandler from './middleware/errorHandler';
 import path from 'path';
 
+// ─── Uploads Directory ───────────────────────────────────────────────────────
+// Pakai DATA_DIR dari env agar sesuai dengan lokasi file asli (legacy data folder).
+// Fallback ke dist/../data/uploads untuk dev lokal.
+const UPLOADS_DIR_STATIC = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR, 'uploads')
+  : path.resolve(__dirname, '../data/uploads');
+
 // Public API
 app.use('/api/auth', authRoutes);
 // Xendit webhook (PUBLIC — Xendit sends callbacks here, no JWT)
 app.post('/api/xendit/webhook', xenditWebhook);
-app.use('/uploads', express.static(path.resolve(__dirname, '../data/uploads')));
+app.use('/uploads', express.static(UPLOADS_DIR_STATIC));
 
 // Protected API
 app.use('/api/agents', authenticateJWT, agentRoutes);

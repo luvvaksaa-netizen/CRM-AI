@@ -6,7 +6,9 @@ import { getMediaAssets, getMediaById, uploadMedia, updateMedia, deleteMedia } f
 
 const router = express.Router();
 
-const UPLOADS_DIR = path.resolve(__dirname, '../../data/uploads');
+const UPLOADS_DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR, 'uploads')
+  : path.resolve(__dirname, '../../data/uploads');
 if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
