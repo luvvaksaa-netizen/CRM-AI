@@ -178,7 +178,8 @@ const ChatManagement = () => {
   const [forwardTarget, setForwardTarget] = useState<string>('');
   // Ref untuk debounce timer dan selalu panggil fetchContacts terbaru
   const fetchContactsDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const fetchContactsRef = useRef<() => void>(() => {});
+  const fetchContactsRef = useRef<(silent?: boolean) => void>(() => {});
+
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -199,30 +200,35 @@ const ChatManagement = () => {
     return c.sender_name || fallbackId || 'Unknown';
   };
 
-  const fetchContacts = useCallback(async () => {
+  const fetchContacts = useCallback(async (silent = false) => {
     if (!selectedStore) return;
-    setLoadingContacts(true);
+    if (!silent) setLoadingContacts(true);
     try {
       const res = await api.get(`/chat/${selectedStore}/contacts`);
       setContacts(res.data);
     } catch {
-      toast.error('Gagal mengambil daftar kontak');
+      // Hanya tampilkan toast pada initial load (bukan background refresh)
+      if (!silent) toast.error('Gagal mengambil daftar kontak');
+      // Jangan clear contacts — biarkan data lama tetap tampil
     } finally {
-      setLoadingContacts(false);
+      if (!silent) setLoadingContacts(false);
     }
   }, [selectedStore]);
+
 
   // Selalu update ref agar debounce tidak memakai stale closure
   fetchContactsRef.current = fetchContacts;
 
   // debouncedFetchContacts: tidak bergantung pada fetchContacts secara langsung,
   // tapi selalu memanggil versi terbaru lewat ref — aman saat store switch.
+  // Memanggil dengan silent=true agar tidak tampilkan spinner.
   const debouncedFetchContacts = useCallback(() => {
     if (fetchContactsDebounceRef.current) clearTimeout(fetchContactsDebounceRef.current);
     fetchContactsDebounceRef.current = setTimeout(() => {
-      fetchContactsRef.current(); // Selalu panggil versi terbaru
+      fetchContactsRef.current(true); // silent=true: update tanpa spinner
     }, 1500);
   }, []); // Tidak ada dep — aman dari stale closure
+
 
   const fetchLabelCounts = useCallback(async () => {
 
@@ -984,7 +990,7 @@ const ChatManagement = () => {
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-bold text-white dark:text-slate-900">Chats</h2>
               <div className="flex items-center gap-2">
-                <button onClick={fetchContacts} disabled={loadingContacts} className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 transition-colors" title="Refresh">
+                <button onClick={() => fetchContacts()} disabled={loadingContacts} className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 transition-colors" title="Refresh">
                   <RefreshCw className={`w-4 h-4 ${loadingContacts ? 'animate-spin' : ''}`} />
                 </button>
                 <select

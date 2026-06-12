@@ -83,13 +83,15 @@ const Summaries = () => {
       if (storeFilter !== 'semua') params.store_wa_id = storeFilter;
 
       const res = await api.get('/summaries', { params });
-      setSummaries(res.data.data);
-      setTotalPages(res.data.totalPages);
-      setTotal(res.data.total);
+      setSummaries(res.data.data || []);
+      setTotalPages(res.data.totalPages || 1);
+      setTotal(res.data.total || 0);
     } catch {
+      // Jangan reset data — biarkan data lama tetap tampil
       toast.error('Gagal mengambil data rekap');
     } finally { setLoading(false); }
   };
+
 
   const handleSearch = () => {
     setPage(1);

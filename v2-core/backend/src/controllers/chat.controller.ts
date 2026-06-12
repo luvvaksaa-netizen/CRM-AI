@@ -58,20 +58,16 @@ export const getContacts = async (req: Request, res: Response, next: NextFunctio
     const { storeId } = req.params;
     const tableName = ChatMessage.getTableName();
 
-    // Ambil baris pesan terbaru per kontak (bukan MAX(body) yang salah secara leksikografis)
+    // Query optimal: satu JOIN untuk latest message + satu JOIN untuk unread count
+    // Menggantikan correlated subquery (N+1) dengan single-pass aggregation
     const contacts: any[] = await sequelize.query(`
       SELECT
         m.contact_id,
         m.sender_name,
         m.contact_display_name,
-        m.body AS last_message,
-        m.timestamp AS last_seen,
-        (
-          SELECT COUNT(*) FROM ${tableName} u
-          WHERE u.store_wa_id = m.store_wa_id
-            AND u.contact_id = m.contact_id
-            AND u.is_read = 0 AND u.is_from_me = 0
-        ) AS unread_count
+        m.body           AS last_message,
+        m.timestamp      AS last_seen,
+        COALESCE(u.unread_count, 0) AS unread_count
       FROM ${tableName} m
       INNER JOIN (
         SELECT contact_id, MAX(id) AS max_id
@@ -79,12 +75,25 @@ export const getContacts = async (req: Request, res: Response, next: NextFunctio
         WHERE store_wa_id = :storeId
         GROUP BY contact_id
       ) latest ON m.id = latest.max_id
+      LEFT JOIN (
+        SELECT contact_id, COUNT(*) AS unread_count
+        FROM ${tableName}
+        WHERE store_wa_id = :storeId
+          AND is_read = 0
+          AND is_from_me = 0
+        GROUP BY contact_id
+      ) u ON m.contact_id = u.contact_id
       WHERE m.store_wa_id = :storeId
       ORDER BY m.timestamp DESC
       LIMIT 100
     `, { replacements: { storeId }, type: QueryTypes.SELECT });
 
-    const summaries = await ChatSummary.findAll({ where: { store_wa_id: storeId } });
+    // Jalankan 2 query pelengkap secara paralel untuk efisiensi
+    const [summaries, pausedContacts] = await Promise.all([
+      ChatSummary.findAll({ where: { store_wa_id: storeId } }),
+      PausedContact.findAll({ where: { store_wa_id: storeId } }),
+    ]);
+
     const labelMap: Record<string, string[]> = {};
     for (const s of summaries) {
       try {
@@ -94,7 +103,6 @@ export const getContacts = async (req: Request, res: Response, next: NextFunctio
       }
     }
 
-    const pausedContacts = await PausedContact.findAll({ where: { store_wa_id: storeId } });
     const pausedMap = pausedContacts.reduce((acc: Record<string, Date | null>, pc: any) => {
       acc[pc.contact_id] = pc.paused_until;
       return acc;
@@ -117,6 +125,7 @@ export const getContacts = async (req: Request, res: Response, next: NextFunctio
     next(e);
   }
 };
+
 
 export const markAsRead = async (req: Request, res: Response, next: NextFunction) => {
   try {

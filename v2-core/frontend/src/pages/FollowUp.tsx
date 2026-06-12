@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { Clock, CheckCircle2, XCircle, Search, AlertTriangle, Send, Settings, BarChart3, RefreshCw, Plus, X } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -49,7 +49,12 @@ const FollowUp = () => {
   
   const [followUps, setFollowUps] = useState<FollowUpItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [backgroundRefreshing, setBackgroundRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  // Ref untuk menghindari stale closure di socket handler
+  const selectedStoreRef = useRef<string>('');
+  const activeTabRef = useRef<string>('pending');
+  const fetchFollowUpsRef = useRef<() => void>(() => {});
   
   // Stats header
   const [stats, setStats] = useState<FollowUpStats>({ total: 0, pending: 0, sent: 0, replied: 0, cancelled: 0 });
@@ -72,6 +77,10 @@ const FollowUp = () => {
   const [manualContext, setManualContext] = useState('');
   const [scheduling, setScheduling] = useState(false);
 
+  // Selalu update refs saat nilai berubah
+  selectedStoreRef.current = selectedStore;
+  activeTabRef.current = activeTab;
+
   useEffect(() => {
     api.get('/stores').then(res => {
       setStores(res.data);
@@ -81,35 +90,44 @@ const FollowUp = () => {
 
   useEffect(() => {
     if (!selectedStore) return;
-    fetchFollowUps();
+    fetchFollowUps(true); // true = initial load (tampilkan spinner)
     fetchStats();
     fetchStageStats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedStore, activeTab]);
 
-  // Real-time socket: refresh on follow-up changes
+  // Real-time socket: refresh silently (tanpa spinner)
   useEffect(() => {
-    const socket = socketService.connect(); // Always returns valid connected socket
+    const socket = socketService.connect();
     const onFollowUpUpdated = (data: any) => {
-      if (data.storeWaId === selectedStore) fetchFollowUps();
+      if (data.storeWaId === selectedStoreRef.current) {
+        fetchFollowUpsRef.current(); // Selalu gunakan versi terbaru
+      }
     };
     socket?.on('followUpUpdated', onFollowUpUpdated);
     return () => { socket?.off('followUpUpdated', onFollowUpUpdated); };
-  }, [selectedStore]);
+  }, []); // Hanya mount sekali — gunakan ref untuk stale closure
 
-  const fetchFollowUps = async () => {
-    setLoading(true);
+  const fetchFollowUps = async (isInitial = false) => {
+    if (isInitial) setLoading(true);
+    else setBackgroundRefreshing(true);
     try {
-      const res = await api.get(`/followups/${selectedStore}`, {
-        params: { status: activeTab, limit: 100 }
+      const res = await api.get(`/followups/${selectedStoreRef.current}`, {
+        params: { status: activeTabRef.current, limit: 100 }
       });
       setFollowUps(res.data.data || []);
-    } catch (err) {
-      toast.error('Gagal mengambil data follow up');
+    } catch {
+      // Background refresh: jangan reset data, cukup diam
+      if (isInitial) toast.error('Gagal mengambil data follow up');
     } finally {
-      setLoading(false);
+      if (isInitial) setLoading(false);
+      else setBackgroundRefreshing(false);
     }
   };
+
+  // Update ref setiap kali fetchFollowUps dibuat (aman dari stale closure)
+  fetchFollowUpsRef.current = () => fetchFollowUps(false);
+
 
   const fetchStats = async () => {
     try {
@@ -161,7 +179,7 @@ const FollowUp = () => {
     try {
       await api.post(`/followups/force-send/${id}`);
       toast.success('Follow-up dijadwalkan segera');
-      fetchFollowUps();
+      fetchFollowUps(true);
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Gagal force send');
     }
@@ -185,7 +203,7 @@ const FollowUp = () => {
       toast.success('Follow-up manual berhasil dijadwalkan');
       setShowManualModal(false);
       resetManualForm();
-      fetchFollowUps();
+      fetchFollowUps(true);
       fetchStats();
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Gagal menjadwalkan');
@@ -212,7 +230,7 @@ const FollowUp = () => {
     try {
       await api.post(`/followups/cancel/${id}`);
       toast.success('Follow up dibatalkan');
-      fetchFollowUps();
+      fetchFollowUps(true);
     } catch (err: any) {
       toast.error(err.response?.data?.message || 'Gagal membatalkan');
     }
@@ -223,7 +241,7 @@ const FollowUp = () => {
     try {
       await api.post(`/followups/emergency-cancel-all`);
       toast.success('Semua pending follow up berhasil dihentikan');
-      fetchFollowUps();
+      fetchFollowUps(true);
     } catch (err: any) {
       toast.error('Gagal menghentikan follow up');
     }
@@ -343,6 +361,12 @@ const FollowUp = () => {
         <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/5 rounded-full blur-[100px] pointer-events-none" />
         
         <div className="flex gap-4 mb-6 relative z-10">
+          {backgroundRefreshing && (
+            <div className="absolute top-3 right-3 flex items-center gap-1.5 text-xs text-slate-500">
+              <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
+              Memperbarui...
+            </div>
+          )}
           <div className="flex-1 relative group">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 dark:text-slate-400 group-focus-within:text-blue-400 transition-colors" />
             <input 

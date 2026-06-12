@@ -18,19 +18,23 @@ export interface AuthRequest extends Request {
 
 export const authenticateJWT = (req: AuthRequest, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
-  if (authHeader) {
-    const token = authHeader.split(' ')[1];
-    jwt.verify(token, JWT_SECRET, (err, user) => {
-      if (err) {
-        return res.status(403).json({ success: false, message: 'Token tidak valid / expired.' });
-      }
-      req.user = user as any;
-      next();
-    });
-  } else {
-    res.status(401).json({ success: false, message: 'Unauthorized. Harap login.' });
+  if (!authHeader) {
+    return res.status(401).json({ success: false, message: 'Unauthorized. Harap login.' });
   }
+  const token = authHeader.split(' ')[1];
+  jwt.verify(token, JWT_SECRET, (err, user) => {
+    if (err) {
+      // 401 = tidak ada / expired token (bukan 403 — 403 untuk role)
+      const msg = err.name === 'TokenExpiredError'
+        ? 'Sesi telah berakhir. Silakan login kembali.'
+        : 'Token tidak valid.';
+      return res.status(401).json({ success: false, message: msg });
+    }
+    req.user = user as any;
+    next();
+  });
 };
+
 
 export const authorize = (...roles: string[]) => {
   return (req: AuthRequest, res: Response, next: NextFunction) => {

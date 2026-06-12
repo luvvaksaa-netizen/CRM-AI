@@ -80,7 +80,8 @@ export const login = async (req: Request, res: Response, next: NextFunction) => 
       return res.status(401).json({ success: false, message: 'Username atau password salah.' });
     }
 
-    const token = jwt.sign({ username: account.username, role: account.role }, JWT_SECRET, { expiresIn: '24h' });
+    const token = jwt.sign({ username: account.username, role: account.role }, JWT_SECRET, { expiresIn: '7d' });
+
     return res.json({ success: true, message: 'Login berhasil!', token, role: account.role });
   } catch (e) {
     next(e);
