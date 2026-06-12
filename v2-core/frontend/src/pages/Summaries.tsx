@@ -54,9 +54,9 @@ const Summaries = () => {
   const [storeFilter, setStoreFilter] = useState('semua');
   const [labelData, setLabelData] = useState<{ labelCounts: Record<string, number>; total: number }>({ labelCounts: {}, total: 0 });
 
-  // Detail modal
   const [selectedSummary, setSelectedSummary] = useState<SummaryDetail | null>(null);
   const [, setLoadingDetail] = useState(false);
+  const [fetchError, setFetchError] = useState(false); // inline error, bukan toast
 
   // Fetch stores for dropdown (once on mount)
   useEffect(() => {
@@ -74,8 +74,9 @@ const Summaries = () => {
 
   useEffect(() => { fetchSummaries(); }, [page, labelFilter, storeFilter]);
 
-  const fetchSummaries = async () => {
+  const fetchSummaries = async (showToastOnError = false) => {
     setLoading(true);
+    setFetchError(false);
     try {
       const params: any = { page, limit: 20 };
       if (searchQuery) params.search = searchQuery;
@@ -87,15 +88,16 @@ const Summaries = () => {
       setTotalPages(res.data.totalPages || 1);
       setTotal(res.data.total || 0);
     } catch {
-      // Jangan reset data — biarkan data lama tetap tampil
-      toast.error('Gagal mengambil data rekap');
+      setFetchError(true);
+      // Toast hanya untuk aksi yang sengaja dilakukan user (bukan background / StrictMode double-invoke)
+      if (showToastOnError) toast.error('Gagal mengambil data rekap');
     } finally { setLoading(false); }
   };
 
 
   const handleSearch = () => {
     setPage(1);
-    fetchSummaries();
+    fetchSummaries(true); // user-triggered: tampilkan toast jika error
   };
 
   const navigateToChat = (storeWaId: string, contactId: string) => {
@@ -141,6 +143,14 @@ const Summaries = () => {
           ))}
         </select>
       </div>
+
+      {/* Inline error banner — tidak mengganggu data */}
+      {fetchError && summaries.length > 0 && (
+        <div className="flex items-center justify-between bg-amber-500/10 border border-amber-500/30 text-amber-400 text-sm px-4 py-2 rounded-xl mb-4">
+          <span>⚠️ Gagal memperbarui data. Menampilkan data terakhir.</span>
+          <button onClick={() => fetchSummaries(true)} className="text-xs underline hover:no-underline ml-4">Coba lagi</button>
+        </div>
+      )}
 
       <div className="bg-slate-900/40 dark:bg-white border border-slate-800/50 dark:border-slate-200 rounded-2xl p-6 backdrop-blur-xl">
         <div className="flex flex-col sm:flex-row gap-4 mb-6">

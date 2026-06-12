@@ -258,4 +258,10 @@ OpenAICostLog.init({
   endpoint: { type: DataTypes.STRING, allowNull: true },
   function_name: { type: DataTypes.STRING, allowNull: true },
   created_at: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
-}, { sequelize, modelName: 'OpenAICostLog' });
+}, {
+  sequelize,
+  modelName: 'OpenAICostLog',
+  tableName: 'OpenAICostLogs',
+  timestamps: false, // Kita manage created_at sendiri, jangan biarkan Sequelize auto-manage
+});
+

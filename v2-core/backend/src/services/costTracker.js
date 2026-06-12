@@ -86,12 +86,15 @@ async function getCostSummary(days = 30) {
   const since = new Date();
   since.setDate(since.getDate() - days);
 
+  const { Op } = require('sequelize');
+
   const rows = await OpenAICostLog.findAll({
     where: {
-      created_at: { $gte: since },
+      created_at: { [Op.gte]: since }, // Sequelize v6: gunakan Op.gte bukan $gte
     },
     order: [['created_at', 'DESC']],
   });
+
 
   const summary = {
     total_requests: rows.length,
