@@ -26,7 +26,21 @@ const Login = () => {
         navigate('/dashboard');
       }
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Login gagal. Periksa koneksi.');
+      const status = err.response?.status;
+      const data = err.response?.data;
+      // Baca error dari field 'message' ATAU 'error' (rate limiter pakai 'error')
+      const serverMsg = data?.message || data?.error;
+      
+      if (!err.response) {
+        // Network error / backend down / timeout
+        setError('Server tidak dapat dihubungi. Pastikan backend berjalan.');
+      } else if (status === 429) {
+        setError('Terlalu banyak percobaan login. Coba lagi dalam 15 menit.');
+      } else if (status === 401) {
+        setError(serverMsg || 'Username atau password salah.');
+      } else {
+        setError(serverMsg || 'Login gagal. Coba lagi.');
+      }
     } finally {
       setLoading(false);
     }

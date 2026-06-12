@@ -3,7 +3,7 @@ import toast from 'react-hot-toast';
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3002/api',
-  timeout: 15000, // 15 detik — prevent hanging requests
+  timeout: 12000, // 12 detik
 });
 
 api.interceptors.request.use((config) => {
@@ -14,30 +14,33 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Flag untuk mencegah multiple redirect ke /login
-let isLoggingOut = false;
-
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     const status = error.response?.status;
+    // Jangan intercept request ke /auth/login agar login page bisa berjalan normal
+    const url = error.config?.url || '';
+    if (url.includes('/auth/login')) {
+      return Promise.reject(error);
+    }
 
-    if (status === 401 && !isLoggingOut) {
-      // 401 = token tidak ada / expired → logout
-      isLoggingOut = true;
-      sessionStorage.removeItem('crm_token');
-      sessionStorage.removeItem('crm_user');
-      localStorage.removeItem('crm_token');
-      localStorage.removeItem('crm_user');
-      toast.error('Sesi berakhir. Silakan login kembali.', { id: 'session-expired' });
-      setTimeout(() => {
-        window.location.href = '/login';
-      }, 1500); // Tunda 1.5 detik agar toast terlihat
+    if (status === 401) {
+      // 401 = token expired / tidak ada → logout
+      // Cegah multiple redirect dengan cek apakah sudah di halaman login
+      if (!window.location.pathname.includes('/login')) {
+        sessionStorage.removeItem('crm_token');
+        sessionStorage.removeItem('crm_user');
+        localStorage.removeItem('crm_token');
+        localStorage.removeItem('crm_user');
+        toast.error('Sesi berakhir. Silakan login kembali.', { id: 'session-expired' });
+        setTimeout(() => {
+          window.location.href = '/login';
+        }, 1500);
+      }
     } else if (status === 403) {
-      // 403 = akses ditolak (role tidak cukup) → JANGAN logout, cukup toast
+      // 403 = akses ditolak (role tidak cukup) → JANGAN logout
       toast.error('Akses ditolak. Anda tidak memiliki izin untuk tindakan ini.', { id: 'access-denied' });
     }
-    // Status lain (500, network error, dll) dibiarkan di-handle oleh masing-masing komponen
 
     return Promise.reject(error);
   }
