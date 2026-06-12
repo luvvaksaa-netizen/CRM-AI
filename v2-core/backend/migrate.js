@@ -101,6 +101,36 @@ async function main() {
         return 'ADDED paused_by column ✅';
       }
     },
+    {
+      desc: 'Create / ensure OpenAICostLogs table',
+      run: async () => {
+        const exists = await tableExists('OpenAICostLogs');
+        if (!exists) {
+          await run(`
+            CREATE TABLE OpenAICostLogs (
+              id                INTEGER PRIMARY KEY AUTOINCREMENT,
+              model             TEXT    NOT NULL,
+              prompt_tokens     INTEGER DEFAULT 0,
+              completion_tokens INTEGER DEFAULT 0,
+              total_tokens      INTEGER DEFAULT 0,
+              input_cost        TEXT    DEFAULT '0.00000000',
+              output_cost       TEXT    DEFAULT '0.00000000',
+              total_cost        TEXT    DEFAULT '0.00000000',
+              endpoint          TEXT,
+              function_name     TEXT,
+              created_at        DATETIME DEFAULT (datetime('now'))
+            )
+          `);
+          return 'Created OpenAICostLogs table ✅';
+        }
+        // Pastikan kolom created_at ada (mungkin tabel dibuat tanpa kolom ini)
+        if (!(await columnExists('OpenAICostLogs', 'created_at'))) {
+          await run(`ALTER TABLE OpenAICostLogs ADD COLUMN created_at DATETIME DEFAULT (datetime('now'))`);
+          return 'ADDED created_at column to OpenAICostLogs ✅';
+        }
+        return 'SKIP — table already exists';
+      }
+    },
   ];
 
   console.log(`\n[Migration] Menjalankan ${migrations.length} migrasi...\n`);

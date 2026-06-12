@@ -57,14 +57,17 @@ async function logRequest({ model, promptTokens, completionTokens, endpoint, fun
     const total = prompt + completion;
     const { input_cost, output_cost, total_cost } = calculateCost(model, prompt, completion);
 
+    // PENTING: gunakan toFixed(8) string bukan float!
+    // Sequelize DECIMAL validator menolak scientific notation (e.g. 1.5e-7).
+    // "0.00000015" (string) lolos isDecimal(), tapi 1.5e-7 (float) gagal.
     await OpenAICostLog.create({
       model: model || 'unknown',
       prompt_tokens: prompt,
       completion_tokens: completion,
       total_tokens: total,
-      input_cost,
-      output_cost,
-      total_cost,
+      input_cost: input_cost.toFixed(8),
+      output_cost: output_cost.toFixed(8),
+      total_cost: total_cost.toFixed(8),
       endpoint: endpoint || 'chat',
       function_name: functionName || null,
       created_at: new Date(),
@@ -73,7 +76,8 @@ async function logRequest({ model, promptTokens, completionTokens, endpoint, fun
     logger.info(`[CostTracker] ${model}: ${prompt}in + ${completion}out = $${total_cost.toFixed(6)}`);
   } catch (e) {
     // Non-blocking — error logging tidak boleh crash main flow
-    logger.error(`[CostTracker] Gagal log request: ${e.message}`);
+    const detail = e.errors ? e.errors.map(er => er.message).join(', ') : e.message;
+    logger.error(`[CostTracker] Gagal log request: ${detail}`);
   }
 }
 

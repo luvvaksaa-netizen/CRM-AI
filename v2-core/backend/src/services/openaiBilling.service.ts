@@ -48,60 +48,11 @@ function getUsageDate(): string {
 
 // ─── Fetch usage from OpenAI API ───
 export async function fetchBillingUsage(): Promise<{ total_usage: number; total_balance: number } | null> {
-  const apiKey = getApiKey();
-  if (!apiKey) {
-    console.log('[OpenAI Billing] No API key configured. Set OPENAI_API_KEY in .env');
-    return null;
-  }
-
-  const today = getUsageDate();
-  const headers: Record<string, string> = {
-    'Authorization': `Bearer ${apiKey}`,
-    'Content-Type': 'application/json',
-  };
-  if (getOrgId()) {
-    headers['OpenAI-Organization'] = getOrgId();
-  }
-
-  try {
-    // Fetch daily usage (latest 1 day)
-    const usageUrl = `https://api.openai.com/v1/dashboard/billing/usage?start_date=${today}&end_date=${today}`;
-    const usageRes = await axios.get<BillingUsageResponse>(usageUrl, { headers });
-    const totalUsage = usageRes.data.total_usage ?? 0;
-
-    // Fetch credit grants (balance)
-    let totalBalance = 0;
-    try {
-      const grantsUrl = 'https://api.openai.com/v1/dashboard/billing/credit_grants';
-      const grantsRes = await axios.get<CreditGrantsResponse>(grantsUrl, { headers });
-      totalBalance = grantsRes.data.total_available ?? 0;
-    } catch (e: any) {
-      console.warn('[OpenAI Billing] Gagal fetch credit grants:', e.message);
-    }
-
-    // Save to DB
-    await OpenAIUsageLog.upsert({
-      date: today,
-      total_usage: totalUsage,
-      total_balance: totalBalance,
-      n_requests: 0,
-      raw_response: JSON.stringify({ usage: usageRes.data }),
-      fetched_at: new Date(),
-    } as any);
-
-    // Check threshold
-    const thresholdStr = await getConfig('openai_billing_daily_threshold', '10');
-    const threshold = parseFloat(thresholdStr);
-    if (!isNaN(threshold) && totalUsage > threshold) {
-      await sendThresholdAlert(totalUsage, threshold);
-    }
-
-    console.log(`[OpenAI Billing] Fetched: usage=$${totalUsage.toFixed(4)}, balance=$${totalBalance.toFixed(4)}`);
-    return { total_usage: totalUsage, total_balance: totalBalance };
-  } catch (err: any) {
-    console.error('[OpenAI Billing] Gagal fetch:', err.message);
-    return null;
-  }
+  // API /dashboard/billing/usage dan /credit_grants sudah DEPRECATED oleh OpenAI (selalu 403).
+  // Data biaya kini diambil dari CostTracker internal (logRequest) yang akurat per-request.
+  // Fungsi ini dipertahankan untuk backward-compat tapi tidak melakukan external call.
+  console.log('[OpenAI Billing] External API deprecated. Menggunakan CostTracker internal.');
+  return null;
 }
 
 // ─── Get recent usage history ───
