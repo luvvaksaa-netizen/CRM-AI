@@ -176,6 +176,8 @@ const ChatManagement = () => {
   const [showForwardPicker, setShowForwardPicker] = useState(false);
   const [forwardMsgId, setForwardMsgId] = useState<string | null>(null);
   const [forwardTarget, setForwardTarget] = useState<string>('');
+  // Debounce ref untuk fetchContacts — didefinisikan setelah fetchContacts di bawah
+  const fetchContactsDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -209,7 +211,16 @@ const ChatManagement = () => {
     }
   }, [selectedStore]);
 
+  // Debounce wrapper: batasi fetchContacts max 1x per 1.5 detik dari socket events
+  const debouncedFetchContacts = useCallback(() => {
+    if (fetchContactsDebounceRef.current) clearTimeout(fetchContactsDebounceRef.current);
+    fetchContactsDebounceRef.current = setTimeout(() => {
+      fetchContacts();
+    }, 1500);
+  }, [fetchContacts]);
+
   const fetchLabelCounts = useCallback(async () => {
+
     if (!selectedStore) return;
     try {
       const res = await api.get('/smart-labels/counts', { params: { store_wa_id: selectedStore } });
@@ -317,6 +328,10 @@ const ChatManagement = () => {
   // Load contacts + labels + socket
   useEffect(() => {
     if (!selectedStore) return;
+    // Reset kontak saat ganti store agar data lama tidak tertampil
+    setContacts([]);
+    setActiveContact(null);
+    setMessages([]);
     fetchContacts();
     fetchLabelCounts();
 
@@ -346,7 +361,7 @@ const ChatManagement = () => {
 
     const onNewMessage = (data: any) => {
       if (data.storeId !== selectedStore) return;
-      fetchContacts();
+      debouncedFetchContacts(); // Debounced: cegah concurrent calls
       const current = activeContactRef.current;
       if (current && data.msg?.contact_id === current.contact_id) {
         setMessages(prev => {
@@ -376,12 +391,13 @@ const ChatManagement = () => {
         setActiveContact(prev => prev ? { ...prev, labels: data.labels } : null);
         setEditingLabels(data.labels);
       }
+      debouncedFetchContacts();
       fetchLabelCounts();
     };
 
     const onChatCleared = (data: any) => {
       if (data.storeId !== selectedStore) return;
-      fetchContacts();
+      debouncedFetchContacts();
       if (activeContactRef.current?.contact_id === data.contactId) {
         setMessages([]);
         setActiveContact(null);
@@ -392,7 +408,7 @@ const ChatManagement = () => {
     const onIdentityUpdated = (data: any) => {
       if (data.storeId !== selectedStore) return;
       if (data.identity?.contact_phone) setResolvedPhone(data.identity.contact_phone);
-      fetchContacts();
+      debouncedFetchContacts();
     };
 
     socket?.on('newMessage', onNewMessage);
@@ -432,7 +448,8 @@ const ChatManagement = () => {
       socket?.off('messageRevoked', onMessageRevoked);
       socket?.emit('leaveStore', selectedStore);
     };
-  }, [selectedStore, fetchContacts, fetchLabelCounts]);
+  }, [selectedStore, fetchContacts, fetchLabelCounts, debouncedFetchContacts]);
+
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
