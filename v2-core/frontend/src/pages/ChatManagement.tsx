@@ -176,8 +176,9 @@ const ChatManagement = () => {
   const [showForwardPicker, setShowForwardPicker] = useState(false);
   const [forwardMsgId, setForwardMsgId] = useState<string | null>(null);
   const [forwardTarget, setForwardTarget] = useState<string>('');
-  // Debounce ref untuk fetchContacts — didefinisikan setelah fetchContacts di bawah
+  // Ref untuk debounce timer dan selalu panggil fetchContacts terbaru
   const fetchContactsDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fetchContactsRef = useRef<() => void>(() => {});
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -211,13 +212,17 @@ const ChatManagement = () => {
     }
   }, [selectedStore]);
 
-  // Debounce wrapper: batasi fetchContacts max 1x per 1.5 detik dari socket events
+  // Selalu update ref agar debounce tidak memakai stale closure
+  fetchContactsRef.current = fetchContacts;
+
+  // debouncedFetchContacts: tidak bergantung pada fetchContacts secara langsung,
+  // tapi selalu memanggil versi terbaru lewat ref — aman saat store switch.
   const debouncedFetchContacts = useCallback(() => {
     if (fetchContactsDebounceRef.current) clearTimeout(fetchContactsDebounceRef.current);
     fetchContactsDebounceRef.current = setTimeout(() => {
-      fetchContacts();
+      fetchContactsRef.current(); // Selalu panggil versi terbaru
     }, 1500);
-  }, [fetchContacts]);
+  }, []); // Tidak ada dep — aman dari stale closure
 
   const fetchLabelCounts = useCallback(async () => {
 
@@ -328,8 +333,9 @@ const ChatManagement = () => {
   // Load contacts + labels + socket
   useEffect(() => {
     if (!selectedStore) return;
-    // Reset kontak saat ganti store agar data lama tidak tertampil
-    setContacts([]);
+    // Reset state saat ganti store: hapus kontak aktif & pesan, tapi kontak list
+    // dibiarkan sebentar (bukan di-clear) agar tidak ada flash "Tidak ada kontak".
+    // Kontak baru akan menggantikan saat fetchContacts() selesai.
     setActiveContact(null);
     setMessages([]);
     fetchContacts();
@@ -448,7 +454,8 @@ const ChatManagement = () => {
       socket?.off('messageRevoked', onMessageRevoked);
       socket?.emit('leaveStore', selectedStore);
     };
-  }, [selectedStore, fetchContacts, fetchLabelCounts, debouncedFetchContacts]);
+  }, [selectedStore, fetchContacts, fetchLabelCounts]);
+
 
 
   useEffect(() => {

@@ -8,13 +8,14 @@ export const sequelize = new Sequelize({
   dialect: 'sqlite',
   storage: dbPath,
   logging: false,
-  // busyTimeout: v2-core akan menunggu hingga 30 detik sebelum menyerah saat DB busy
   dialectOptions: {
+    // busyTimeout: tunggu hingga 30 detik saat DB busy (dalam milidetik)
     busyTimeout: 30000
   },
-  // Pool size 1: SQLite tidak mendukung concurrent write. 1 koneksi = aman.
+  // Pool 3: WAL mode mendukung concurrent reads + 1 writer.
+  // max:1 menyebabkan reads antri di belakang writes (SQLITE_BUSY).
   pool: {
-    max: 1,
+    max: 3,
     min: 0,
     acquire: 35000,
     idle: 10000
@@ -25,11 +26,12 @@ export const initDB = async () => {
   try {
     await sequelize.authenticate();
     
-    // Set WAL mode agar v2-core tidak mengganggu write dari legacy wa-crm.
-    // WAL = Write-Ahead Logging: reader tidak block writer, writer tidak block reader.
+    // Set WAL mode agar reads tidak block writes dan sebaliknya
     await sequelize.query('PRAGMA journal_mode=WAL;');
     await sequelize.query('PRAGMA busy_timeout=30000;');
     await sequelize.query('PRAGMA synchronous=NORMAL;');
+    await sequelize.query('PRAGMA cache_size=-16000;'); // 16MB cache
+    await sequelize.query('PRAGMA wal_autocheckpoint=100;'); // Checkpoint tiap 100 page
     
     console.log(`[Database] Terhubung ke legacy database di ${dbPath} (WAL mode aktif)`);
     
