@@ -811,9 +811,22 @@ NOMINAL: WAJIB persis sama dengan rekap. DP = 50% dari Total Harus Dibayar. Luna
                                 type: "string",
                                 enum: ["DP", "LUNAS"],
                                 description: "Tipe pembayaran: DP (bayar sebagian/down payment) atau LUNAS (bayar penuh)."
+                            },
+                            payment_type: {
+                                type: "string",
+                                enum: ["TRANSFER"],
+                                description: "WAJIB 'TRANSFER'. Tool ini hanya untuk pembayaran transfer/QRIS, bukan COD."
+                            },
+                            contact_id: {
+                                type: "string",
+                                description: "WAJIB: ID kontak WhatsApp customer (nomor telepon format internasional, contoh: 62812345678@c.us). Diambil dari conversation context."
+                            },
+                            store_wa_id: {
+                                type: "string",
+                                description: "WAJIB: ID store WhatsApp bot (nomor bot yang sedang dipakai, contoh: 6281234567890@c.us). Diambil dari conversation context."
                             }
                         },
-                        required: ["amount", "description", "tipe_bayar"]
+                        required: ["amount", "description", "tipe_bayar", "payment_type", "contact_id", "store_wa_id"]
                     }
                 }
             }
@@ -1029,7 +1042,14 @@ ${sysPrompt}
                             const amount = Math.round(Number(args.amount));
                             const desc = String(args.description || 'Pembayaran Pesanan').trim();
                             const tipeBayar = (args.tipe_bayar === 'LUNAS' ? 'LUNAS' : 'DP');
-                            const storeWaId = store?.wa_id || store?.id?.toString() || null;
+                            // payment_type dari args (wajib TRANSFER), fallback 'TRANSFER'
+                            const paymentType = (args.payment_type === 'TRANSFER' ? 'TRANSFER' : 'TRANSFER');
+                            // contact_id dari args, fallback ke conversation context
+                            const explicitContactId = args.contact_id || null;
+                            const contactId = explicitContactId || customerPhone || null;
+                            // store_wa_id dari args, fallback ke store context
+                            const explicitStoreWaId = args.store_wa_id || null;
+                            const storeWaId = explicitStoreWaId || store?.wa_id || store?.id?.toString() || null;
 
                             // ── Guard: nominal harus valid ──────────────────────
                             if (!amount || amount <= 0) {
@@ -1053,8 +1073,9 @@ ${sysPrompt}
                                         reference_id: referenceId,
                                         amount,
                                         description: `[${tipeBayar}] ${desc}`,
-                                        contact_id: customerPhone || undefined,
-                                        contact_phone: customerPhone || undefined,
+                                        payment_type: paymentType,
+                                        contact_id: contactId || undefined,
+                                        contact_phone: contactId || undefined,
                                         store_wa_id: storeWaId || undefined,
                                         tipe_bayar: tipeBayar,
                                     });

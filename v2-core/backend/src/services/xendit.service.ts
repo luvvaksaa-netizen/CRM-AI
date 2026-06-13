@@ -1,6 +1,6 @@
 import axios from 'axios';
 import * as QRCode from 'qrcode';
-import { XenditTransaction, AppConfig } from '../models';
+import { XenditTransaction, AppConfig, ChatSummary } from '../models';
 import { sendTelegramMessage } from './telegramNotifier.service';
 
 // ═══════════════════════════════════════════════════════════════
@@ -65,6 +65,8 @@ export interface CreateQrisParams {
   store_wa_id?: string;
   /** 'DP' = bayar sebagian, 'LUNAS' = bayar penuh */
   tipe_bayar?: 'DP' | 'LUNAS';
+  /** 'COD' | 'TRANSFER' — untuk validasi backend: kalau COD, QRIS akan ditolak */
+  payment_type?: 'COD' | 'TRANSFER';
 }
 
 export interface QrisPaymentResult {
@@ -200,7 +202,158 @@ export async function fetchBalance(): Promise<number | null> {
  * - Nominal WAJIB sesuai rekap yang sudah dikonfirmasi customer
  * - Jangan panggil ini untuk order COD
  */
+/**
+ * P1 FIX: Validasi backend sebelum membuat payment link QRIS.
+ * Guard tambahan untuk mencegah AI hallucination membuat payment link
+ * saat customer belum konfirmasi, pilih COD, atau nominal tidak jelas.
+ * 
+ * Rules:
+ * - Kalau payment_type = 'COD' → reject
+ * - Cek ChatSummary: jika summary mengandung indikasi COD → reject
+ * - Pastikan ChatSummary sudah di-update (ada rekap) dalam 24 jam terakhir
+ */
+async function validateOrderBeforePayment(params: CreateQrisParams): Promise<{ valid: boolean; error?: string }> {
+  const { contact_id, store_wa_id, payment_type, amount } = params;
+
+  // ── Guard 0: Nominal harus valid (positive integer) ──────────────
+  const safeAmount = Math.round(Number(amount));
+  if (!safeAmount || safeAmount <= 0) {
+    return { valid: false, error: `Nominal tidak valid: ${amount}. Nominal HARUS diambil dari rekap pesanan yang sudah dikonfirmasi customer.` };
+  }
+
+  // ── Guard 1: Explicit COD reject ────────────────────────────────
+  if (payment_type === 'COD') {
+    return {
+      valid: false,
+      error: 'Pembayaran COD tidak memerlukan link pembayaran QRIS. Jangan panggil tool ini untuk order COD. Untuk COD, cukup kirim ucapan terima kasih + estimasi pengerjaan/pengiriman.'
+    };
+  }
+
+  // ── Guard 2: Cek ChatSummary untuk deteksi COD & konfirmasi ─────
+  if (contact_id && store_wa_id) {
+    try {
+      // Normalize contact_id: ChatSummary pakai format @c.us
+      let lookupId = contact_id;
+      if (!lookupId.includes('@')) {
+        lookupId = `${contact_id}@c.us`;
+      }
+
+      const summary = await ChatSummary.findOne({
+        where: { store_wa_id, contact_id: lookupId }
+      });
+
+      if (!summary) {
+        // Coba tanpa @c.us
+        const plainId = contact_id.replace('@c.us', '');
+        const summary2 = await ChatSummary.findOne({
+          where: { store_wa_id, contact_id: plainId }
+        });
+        if (!summary2) {
+          // Tidak ada summary — customer belum pernah rekap. Tolak.
+          return {
+            valid: false,
+            error: 'Belum ada rekap pesanan untuk customer ini. Customer harus melalui proses rekap & konfirmasi terlebih dahulu sebelum payment link dibuat.'
+          };
+        }
+        // Gunakan summary yang ditemukan
+        const summaryText = String(summary2.getDataValue('summary') || '');
+        const lastUpdated = summary2.getDataValue('last_updated');
+        return validateSummaryText(summaryText, lastUpdated, payment_type);
+      }
+
+      const summaryText = String(summary.getDataValue('summary') || '');
+      const lastUpdated = summary.getDataValue('last_updated');
+      return validateSummaryText(summaryText, lastUpdated, payment_type);
+    } catch (dbErr: any) {
+      // DB query gagal bukan berarti payment gagal — log dan lanjut
+      console.warn('[Xendit] Validasi ChatSummary gagal (non-blocking):', dbErr.message);
+    }
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Parse summary text untuk deteksi COD dan status konfirmasi.
+ */
+function validateSummaryText(
+  summaryText: string,
+  lastUpdated: Date | null,
+  explicitPaymentType?: string
+): { valid: boolean; error?: string } {
+  // ── Deteksi COD dari summary ──────────────────────────────────
+  const upperSummary = summaryText.toUpperCase();
+  
+  // Pattern COD detection
+  const codPatterns = [
+    'PENGIRIMAN = COD',
+    'PENGIRIMAN : COD', 
+    'PENGIRIMAN COD',
+    'METODE BAYAR.*COD',
+    'METODE PEMBAYARAN.*COD',
+    'PEMBAYARAN.*COD',
+    'BAYAR DI TEMPAT',
+    'CASH ON DELIVERY',
+    'BAYAR KE KURIR',
+    'DIBAYAR KE KURIR',
+  ];
+
+  for (const pattern of codPatterns) {
+    const regex = new RegExp(pattern, 'i');
+    if (regex.test(summaryText)) {
+      // Double-check: kalau payment_type explicit 'TRANSFER', override
+      if (explicitPaymentType === 'TRANSFER') {
+        break; // Lanjut — explicit TRANSFER overrides deteksi COD
+      }
+      return {
+        valid: false,
+        error: 'Order ini menggunakan metode pembayaran COD (Bayar di Tempat). COD tidak memerlukan QRIS atau link pembayaran. Jangan panggil tool ini untuk order COD. Kirimkan saja ucapan terima kasih dan estimasi pengerjaan.'
+      };
+    }
+  }
+
+  // ── Cek apakah summary sudah di-update (rekap) ──────────────────
+  if (lastUpdated) {
+    const hoursAgo = (Date.now() - new Date(lastUpdated).getTime()) / (1000 * 60 * 60);
+    if (hoursAgo > 48) {
+      return {
+        valid: false,
+        error: `Rekap pesanan sudah lama tidak diupdate (${Math.round(hoursAgo)} jam yang lalu). Pastikan customer baru saja mengkonfirmasi rekap sebelum membuat payment link.`
+      };
+    }
+  }
+
+  // ── Cek indikasi konfirmasi di summary ──────────────────────────
+  const confirmPatterns = [
+    'TOTAL HARUS DIBAYAR',
+    'TOTAL DIBAYAR',
+    'SUDAH KONFIRMASI',
+    'KONFIRMASI',
+  ];
+  const hasConfirmation = confirmPatterns.some(p => upperSummary.includes(p));
+
+  if (!hasConfirmation && summaryText === 'Belum ada rekapan.') {
+    return {
+      valid: false,
+      error: 'Customer belum memiliki rekap pesanan. Tanyakan dulu produk, varian, jumlah, dan alamat. Rekap hanya dikirim setelah semua data lengkap dan customer konfirmasi.'
+    };
+  }
+
+  if (!hasConfirmation && summaryText !== 'Belum ada rekapan.') {
+    console.warn('[Xendit] Summary sudah ada tapi tidak mengandung konfirmasi — lanjutkan dengan hati-hati');
+  }
+
+  return { valid: true };
+}
+
 export async function createQrisPayment(params: CreateQrisParams): Promise<QrisPaymentResult> {
+  // P1 FIX: Validasi backend sebelum membuat QRIS
+  const validation = await validateOrderBeforePayment(params);
+  if (!validation.valid) {
+    console.warn(`[Xendit] QRIS creation BLOCKED: ${validation.error}`);
+    return { success: false, error: validation.error };
+  }
+
   const client = getClient();
   if (!client) {
     console.log('[Xendit] No API key — QRIS tidak bisa dibuat. Set XENDIT_API_KEY di .env');

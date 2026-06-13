@@ -24,6 +24,54 @@ const WA_SEND_READY_TIMEOUT_MS = Number(process.env.WA_SEND_READY_TIMEOUT_MS || 
 // Entry otomatis dihapus setelah 10 detik untuk mencegah memory leak.
 const botSentMessageIds = new Set();
 
+// ══════════════════════════════════════════════════════════
+// FIX SUK-59 #3: SPAM PROTECTION — Per-contact cooldown + rate limiter
+// ══════════════════════════════════════════════════════════
+
+// Per-contact send cooldown tracker (minimum cooldown between sends to same contact)
+const lastSendTimestamps = new Map();  // key: "storeWaId:contactId" -> Date.now()
+const SEND_COOLDOWN_MS = Number(process.env.WA_SEND_COOLDOWN_MS || 3000); // default 3 detik
+
+// Per-store rate limiter (max messages per minute per store)
+const storeSendCounters = new Map();  // key: storeWaId -> { count, windowStart }
+const MAX_SENDS_PER_MINUTE = Number(process.env.WA_MAX_SENDS_PER_MINUTE || 20);
+const SEND_RATE_WINDOW_MS = Number(process.env.WA_SEND_RATE_WINDOW_MS || 60000);
+
+function checkSendThrottle(storeWaId, contactId) {
+    // 1. Per-contact cooldown check
+    const cooldownKey = `${storeWaId}:${contactId}`;
+    const lastSend = lastSendTimestamps.get(cooldownKey);
+    const now = Date.now();
+    
+    if (lastSend && (now - lastSend) < SEND_COOLDOWN_MS) {
+        const waitMs = SEND_COOLDOWN_MS - (now - lastSend);
+        logger.warn(`[${storeWaId}] ⚠️ Kirim ke ${contactId} DITAHAN — cooldown ${Math.round(waitMs)}ms lagi`);
+        return { allowed: false, reason: `Cooldown. Tunggu ${Math.round(waitMs/1000)} detik lagi.`, waitMs };
+    }
+    
+    // 2. Per-store rate limiter check
+    let counter = storeSendCounters.get(storeWaId);
+    if (!counter || (now - counter.windowStart) > SEND_RATE_WINDOW_MS) {
+        counter = { count: 0, windowStart: now };
+        storeSendCounters.set(storeWaId, counter);
+    }
+    
+    if (counter.count >= MAX_SENDS_PER_MINUTE) {
+        const waitMs = SEND_RATE_WINDOW_MS - (now - counter.windowStart);
+        logger.warn(`[${storeWaId}] ⚠️ Rate limit tercapai (${counter.count}/${MAX_SENDS_PER_MINUTE}/menit)`);
+        return { allowed: false, reason: `Rate limit tercapai. Tunggu ${Math.round(waitMs/1000)} detik.`, waitMs };
+    }
+    
+    // Allow the send
+    counter.count++;
+    lastSendTimestamps.set(cooldownKey, now);
+    return { allowed: true };
+}
+
+function resetSendThrottleForContact(storeWaId, contactId) {
+    lastSendTimestamps.delete(`${storeWaId}:${contactId}`);
+}
+
 function trackBotSentMessage(msgId) {
     if (!msgId) return;
     botSentMessageIds.add(msgId);
@@ -332,6 +380,12 @@ function setupEventListeners(client, storeWaId, io) {
         dashboard.updateWAStatus(storeWaId, "authenticating");
     });
 
+    // P0 FIX: auth_failure handler — trigger QR re-scan saat session dihapus/logout
+    client.on('auth_failure', async (msg) => {
+        logger.error(`[${storeWaId}] Auth failure: ${msg}`);
+        await restartClientRuntime(storeWaId, 'auth_failure');
+    });
+
     client.on('ready', async () => {
         logger.success(`[${storeWaId}] WhatsApp SIAP DIGUNAKAN! ✅`);
         readyClients.add(storeWaId);
@@ -493,13 +547,43 @@ function setupEventListeners(client, storeWaId, io) {
         }, 1500); // Tutup setTimeout
     });
 
-    client.on('disconnected', (reason) => {
+    // P0 FIX: disconnected handler dengan auto-reconnect + retry logic
+    // Max 3x reconnect attempt, delay 30 detik antar attempt.
+    // Kalau semua gagal, baru cleanup + notifikasi kritis ke admin.
+    client.on('disconnected', async (reason) => {
         logger.error(`[${storeWaId}] WhatsApp Terputus: ${reason}`);
         if (io) {
             io.emit('disconnected', { storeId: storeWaId });
         }
         dashboard.updateWAStatus(storeWaId, "disconnected");
         readyClients.delete(storeWaId);
+
+        // Cek apakah restart sudah di-trigger oleh auth_failure
+        if (restartingClients.has(storeWaId)) {
+            logger.info(`[${storeWaId}] Restart already in progress (likely auth_failure), skipping retry`);
+            return;
+        }
+
+        const MAX_RECONNECT_ATTEMPTS = 3;
+        const RECONNECT_DELAY_MS = 30000; // 30 detik
+
+        for (let attempt = 1; attempt <= MAX_RECONNECT_ATTEMPTS; attempt++) {
+            logger.info(`[${storeWaId}] 🔄 Auto-reconnect attempt ${attempt}/${MAX_RECONNECT_ATTEMPTS}...`);
+            try {
+                await restartClientRuntime(storeWaId, 'disconnected', true);
+                logger.success(`[${storeWaId}] ✅ Auto-reconnect berhasil pada attempt ${attempt}/${MAX_RECONNECT_ATTEMPTS}`);
+                return; // Berhasil — jangan cleanup
+            } catch (e) {
+                logger.error(`[${storeWaId}] ❌ Auto-reconnect attempt ${attempt}/${MAX_RECONNECT_ATTEMPTS} gagal: ${cleanErrorMessage(e)}`);
+                if (attempt < MAX_RECONNECT_ATTEMPTS) {
+                    logger.info(`[${storeWaId}] Menunggu ${RECONNECT_DELAY_MS / 1000}s sebelum attempt berikutnya...`);
+                    await sleep(RECONNECT_DELAY_MS);
+                }
+            }
+        }
+
+        // Semua attempt gagal — cleanup + notifikasi kritis
+        logger.error(`[${storeWaId}] 🚨 SEMUA AUTO-RECONNECT GAGAL (${MAX_RECONNECT_ATTEMPTS}x). Bot di-cleanup. Perlu intervensi manual!`);
         clients.delete(storeWaId);
         initializedClients.delete(storeWaId);
     });
@@ -534,6 +618,12 @@ function setupEventListeners(client, storeWaId, io) {
  * @param {string} storeWaId - Nomor toko yang mengirim.
  */
 async function sendManualMessage(storeWaId, to, body, options = {}) {
+    // ═══ FIX SUK-59 #3: Throttle check ═══
+    const throttle = checkSendThrottle(storeWaId, to);
+    if (!throttle.allowed) {
+        throw new Error(throttle.reason);
+    }
+    
     const client = await waitForActiveClient(storeWaId);
     const targetChatId = assertWaChatId(to);
     const quotedMessageId = String(options.quotedMessageId || options.quoted_message_id || '').trim();
@@ -575,6 +665,12 @@ async function sendManualMessage(storeWaId, to, body, options = {}) {
  * Mengirim gambar/video (katalog) secara manual dari Dashboard.
  */
 async function sendManualMedia(storeWaId, to, mediaAsset) {
+    // ═══ FIX SUK-59 #3: Throttle check ═══
+    const throttle = checkSendThrottle(storeWaId, to);
+    if (!throttle.allowed) {
+        throw new Error(throttle.reason);
+    }
+    
     const client = await waitForActiveClient(storeWaId);
     const targetChatId = assertWaChatId(to);
 
@@ -819,9 +915,12 @@ async function logoutClient(storeWaId) {
     dashboard.updateWAStatus(storeWaId, "disconnected");
 }
 
-async function restartClientRuntime(storeWaId, reason = 'health-check') {
+async function restartClientRuntime(storeWaId, reason = 'health-check', awaitResult = false) {
     if (restartingClients.has(storeWaId)) {
         logger.warn(`[${storeWaId}] Restart runtime sudah berjalan, skip permintaan baru.`);
+        if (awaitResult) {
+            throw new Error('Restart already in progress');
+        }
         return;
     }
 
@@ -848,12 +947,19 @@ async function restartClientRuntime(storeWaId, reason = 'health-check') {
 
     const newClient = createWhatsAppClient(storeWaId);
     setupEventListeners(newClient, storeWaId);
-    newClient.initialize()
+
+    const initPromise = newClient.initialize()
         .catch(error => {
             logger.error(`[${storeWaId}] Restart runtime gagal: ${cleanErrorMessage(error)}`);
             cleanupFailedClient(storeWaId);
+            throw error; // Re-throw agar caller bisa tangkap failure
         })
         .finally(() => restartingClients.delete(storeWaId));
+
+    // P0 FIX: awaitResult=true -> caller bisa tahu berhasil/gagal (untuk retry logic)
+    if (awaitResult) {
+        return initPromise;
+    }
 }
 
 /**
@@ -884,13 +990,30 @@ function initHealthCheck(storeWaId) {
         } catch (_) { /* non-critical */ }
 
         try {
-            // Heartbeat check: timeout singkat agar tidak lama menunggu browser hang
-            const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Health check timeout')), HANG_TIMEOUT_MS)
-            );
-            
-            await Promise.race([client.getState(), timeoutPromise]);
-            // logger.info(`[${storeWaId}] Health Check: OK ✅`);
+            // P0 FIX: Cek apakah client disconnected (state check)
+            // Jika disconnected, trigger reconnect instead of waiting for hang detection
+            let state;
+            try {
+                const statePromise = client.getState();
+                const timeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Health check timeout')), HANG_TIMEOUT_MS)
+                );
+                state = await Promise.race([statePromise, timeoutPromise]);
+            } catch (stateErr) {
+                // getState() gagal — anggap disconnected atau hang
+                logger.error(`[${storeWaId}] Health Check: Client disconnected/hang. Triggering reconnect...`);
+                await restartClientRuntime(storeWaId, 'health-check');
+                return;
+            }
+
+            // Kalau state === null atau 'DISCONNECTED', trigger reconnect
+            if (!state || String(state).toUpperCase() === 'DISCONNECTED') {
+                logger.warn(`[${storeWaId}] Health Check: Client state = ${state || 'null'} (disconnected). Triggering reconnect...`);
+                await restartClientRuntime(storeWaId, 'health-check');
+                return;
+            }
+
+            // logger.info(`[${storeWaId}] Health Check: OK ✅ (state=${state})`);
         } catch (e) {
             logger.error(`[${storeWaId}] Health Check GAGAL (Browser Hang/Macet). Restarting...`);
             await restartClientRuntime(storeWaId, 'health-check');
@@ -1155,6 +1278,8 @@ async function destroyTempClient(tempId) {
 
 
 module.exports = {
+    checkSendThrottle,
+    resetSendThrottleForContact,
     createWhatsAppClient,
     createTempClient,
     promoteTempClient,
