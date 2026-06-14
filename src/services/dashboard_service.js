@@ -293,8 +293,60 @@ function initDashboard(port = 3000) {
   });
 
   // ============================================================
-  // AGENT APIs (Multi-Tenant AI Brains)
+  // INTERNAL API — Tanpa Auth (hanya bisa diakses dari localhost)
+  // Dipakai untuk restart 1 WA saja tanpa mengganggu WA lain
   // ============================================================
+  app.post('/api/internal/restart-client/:storeId', async (req, res) => {
+    // KEAMANAN: Hanya izinkan dari localhost (127.0.0.1 atau ::1)
+    const ip = req.ip || req.connection?.remoteAddress || '';
+    const isLocalhost = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+    if (!isLocalhost) {
+      return res.status(403).json({ error: 'Forbidden: hanya bisa diakses dari localhost.' });
+    }
+
+    const { storeId } = req.params;
+    try {
+      const { restartClientRuntime, createWhatsAppClient, setupEventListeners, cleanupFailedClient, initHealthCheck } = require('../whatsapp_service');
+      const { Store } = require('../database/index');
+
+      // Pastikan storeId valid di database
+      const store = await Store.findOne({ where: { wa_id: storeId } });
+      if (!store) return res.status(404).json({ error: `Store [${storeId}] tidak ditemukan.` });
+
+      logger.info(`[InternalAPI] Restart manual diminta untuk [${storeId}]...`);
+
+      // Gunakan restartClientRuntime jika client sudah ada (limbo/hang),
+      // atau buat client baru jika client tidak ada (gagal launch sebelumnya)
+      const { getClients } = require('../whatsapp_service');
+      const existingClient = getClients().get(storeId);
+
+      if (existingClient) {
+        // Client ada tapi stuck → gunakan restartClientRuntime
+        restartClientRuntime(storeId, 'manual-api');
+      } else {
+        // Client tidak ada sama sekali (gagal launch) → buat fresh
+        logger.info(`[InternalAPI] Client [${storeId}] tidak ada, membuat baru...`);
+        const newClient = createWhatsAppClient(storeId);
+        setupEventListeners(newClient, storeId);
+        newClient.initialize()
+          .then(() => {
+            logger.success(`[InternalAPI] [${storeId}] berhasil di-launch ulang!`);
+            initHealthCheck(storeId);
+          })
+          .catch(err => {
+            logger.error(`[InternalAPI] [${storeId}] gagal launch: ${err.message}`);
+            cleanupFailedClient(storeId);
+          });
+      }
+
+      res.json({ success: true, message: `Restart [${storeId}] sedang diproses. Cek log pm2 dalam 30 detik.` });
+    } catch (err) {
+      logger.error(`[InternalAPI] restart-client error: ${err.message}`);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+
 
   // Ambil semua Agent
   app.get('/api/agents', async (req, res) => {

@@ -75,6 +75,28 @@ async function startBot() {
                     await client.destroy();
                 } catch (_) {}
                 cleanupFailedClient(store.wa_id);
+
+                // AUTO-RETRY: Jadwalkan ulang launch 3 menit kemudian tanpa mengganggu WA lain
+                const RETRY_DELAY_MS = 3 * 60 * 1000;
+                logger.info(`[${store.wa_id}] Auto-retry dijadwalkan dalam 3 menit...`);
+                const storeWaIdCopy = store.wa_id;
+                setTimeout(async () => {
+                    logger.info(`[${storeWaIdCopy}] Auto-retry: Mencoba launch ulang browser...`);
+                    try {
+                        const newClient = createWhatsAppClient(storeWaIdCopy);
+                        setupEventListeners(newClient, storeWaIdCopy);
+                        await withTimeout(
+                            newClient.initialize(),
+                            CLIENT_LAUNCH_TIMEOUT_MS,
+                            `Timeout launch browser setelah ${CLIENT_LAUNCH_TIMEOUT_MS / 1000} detik`
+                        );
+                        logger.success(`[${storeWaIdCopy}] Auto-retry BERHASIL! Browser diluncurkan.`);
+                        initHealthCheck(storeWaIdCopy);
+                    } catch (retryErr) {
+                        logger.error(`[${storeWaIdCopy}] Auto-retry GAGAL: ${retryErr.message}`);
+                        cleanupFailedClient(storeWaIdCopy);
+                    }
+                }, RETRY_DELAY_MS);
             }
 
             // Jeda antar-browser (jika masih ada store berikutnya)
