@@ -150,8 +150,8 @@ Sisa Bayar (COD) : Rp [Sisa pembayaran]
 Catatan : [Catatan khusus atau -]
 
 Pembayaran ke:
-🏦 Bank Mandiri: 1710016814843 a/n PARE DIGITAL CUSTOM
-🏦 Bank BCA: 0333965841 a/n PARE DIGITAL CUSTOM
+🏦 Bank BCA: 0333042999 a/n JAKA MULIA JAYA
+🏦 Bank Mandiri: 1710019118887 a/n JAKA MULIA JAYA
 
 Mohon dicek ya bund, terutama produk dan alamatnya 🥰
 Mohon balas IYA jika sudah sesuai 🙏"
@@ -187,8 +187,8 @@ TAHAP A — Saat customer konfirmasi IYA:
 1. Kirim instruksi transfer:
    "Terima kasih bund sudah konfirmasi! 🙏
    Silakan transfer ke rekening berikut ya bund:
-   🏦 Bank Mandiri: 1710016814843 a/n PARE DIGITAL CUSTOM
-   🏦 Bank BCA: 0333965841 a/n PARE DIGITAL CUSTOM
+   🏦 Bank BCA: 0333042999 a/n JAKA MULIA JAYA
+   🏦 Bank Mandiri: 1710019118887 a/n JAKA MULIA JAYA
 
    Setelah transfer, mohon kirimkan bukti transfernya ya bund 😊"
 2. Panggil tool tambahkan_label_chat dengan: ["Menunggu Transfer"] SAJA (JANGAN "Closing" dulu!)
@@ -472,8 +472,8 @@ Sisa Bayar (COD) : Rp [Sisa pembayaran]
 Catatan : [Catatan khusus atau -]
 
 Pembayaran ke:
-🏦 Bank Mandiri: 1710016814843 a/n PARE DIGITAL CUSTOM
-🏦 Bank BCA: 0333965841 a/n PARE DIGITAL CUSTOM
+🏦 Bank BCA: 0333042999 a/n JAKA MULIA JAYA
+🏦 Bank Mandiri: 1710019118887 a/n JAKA MULIA JAYA
 
 Mohon dicek ya bund, terutama produk dan alamatnya 🥰
 Mohon balas IYA jika sudah sesuai 🙏"
@@ -506,8 +506,8 @@ TAHAP A — Saat customer konfirmasi IYA:
 1. Kirim instruksi transfer:
    "Terima kasih bund sudah konfirmasi! 🙏
    Silakan transfer ke rekening berikut ya bund:
-   🏦 Bank Mandiri: 1710016814843 a/n PARE DIGITAL CUSTOM
-   🏦 Bank BCA: 0333965841 a/n PARE DIGITAL CUSTOM
+   🏦 Bank BCA: 0333042999 a/n JAKA MULIA JAYA
+   🏦 Bank Mandiri: 1710019118887 a/n JAKA MULIA JAYA
 
    Setelah transfer, mohon kirimkan bukti transfernya ya bund 😊"
 2. Panggil tool tambahkan_label_chat: ["Menunggu Transfer"] SAJA
