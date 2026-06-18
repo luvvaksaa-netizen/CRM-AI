@@ -174,6 +174,11 @@ app.use('/assets', express.static(path.join(process.cwd(), 'public', 'assets')))
 // ============================================================
 const authenticate = (req, res, next) => {
 
+  // ── PUBLIC WEBHOOK BYPASS ──────────────────────────────────────
+  // Path /webhook/* adalah endpoint callback dari pihak ketiga (Scalev, dll).
+  // Tidak memerlukan sesi login — Scalev server yang memanggil, bukan browser.
+  if (req.originalUrl.startsWith('/webhook/')) return next();
+
   if (req.session && req.session.authenticated) return next();
 
   const isApiRequest = req.originalUrl.startsWith('/api');
@@ -282,11 +287,77 @@ function initDashboard(port = 3000) {
         }
     } catch (e) {}
   }, 10000); // 10 Detik sekali
+  // ============================================================
+  // SCALEV WEBHOOK (PUBLIC — tidak perlu auth, Scalev server yang callback)
+  // Daftarkan di Scalev Dashboard > Settings > Webhooks:
+  //   URL: https://yourdomain.com/webhook/scalev
+  // ============================================================
+  app.post('/webhook/scalev', async (req, res) => {
+    try {
+      const body = req.body;
+      logger.info(`[Scalev-Webhook] Received: ${JSON.stringify(body).slice(0, 150)}`);
 
+      let scalevSvc;
+      try {
+        scalevSvc = require('./scalev_service');
+      } catch (e) {
+        logger.warn('[Scalev-Webhook] scalev_service tidak bisa dimuat: ' + e.message);
+        return res.status(200).json({ received: false, error: 'service_unavailable' });
+      }
 
+      // Siapkan fungsi kirim WA notif ke customer
+      const sendWaNotification = async (storeWaId, contactPhone, message) => {
+        try {
+          const waSvc = require('../whatsapp_service');
+          const { MessageMedia } = require('whatsapp-web.js');
+          const clients = waSvc.getClients ? waSvc.getClients() : null;
+          if (!clients) return;
+
+          // Cari client yang sesuai atau gunakan client mana saja yang online
+          let client = storeWaId ? clients.get(storeWaId) : null;
+          if (!client && clients.size > 0) {
+            // Fallback: gunakan client pertama yang tersedia
+            client = clients.values().next().value;
+            logger.warn(`[Scalev-Webhook] store_wa_id "${storeWaId}" tidak ada, fallback ke client pertama`);
+          }
+
+          if (!client) {
+            logger.warn('[Scalev-Webhook] Tidak ada WA client aktif untuk kirim notif');
+            return;
+          }
+
+          const waId = contactPhone.includes('@c.us') ? contactPhone : `${contactPhone}@c.us`;
+          await client.sendMessage(waId, message);
+          logger.info(`[Scalev-Webhook] ✅ Notif WA terkirim ke ${contactPhone}`);
+        } catch (waErr) {
+          logger.error(`[Scalev-Webhook] Gagal kirim notif WA: ${waErr.message}`);
+        }
+      };
+
+      const result = await scalevSvc.processWebhook(body, {
+        sendWaNotification,
+        defaultStoreWaId: process.env.SCALEV_DEFAULT_STORE_WA_ID || '',
+      });
+
+      // Emit ke dashboard real-time
+      if (io) {
+        io.emit('scalevOrderPaid', {
+          orderId: body.order_id || body.order?.order_id || '',
+          status: result.status,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      res.status(200).json({ received: result.received, status: result.status });
+    } catch (err) {
+      logger.error(`[Scalev-Webhook] Error: ${err.message}`);
+      res.status(200).json({ received: false, error: err.message }); // Selalu 200 agar Scalev tidak retry
+    }
+  });
 
   // Proteksi semua /api/* (kecuali /api/login & /api/logout yang sudah di atas)
   app.use('/api', authenticate);
+
 
   app.get('/api/session', (req, res) => {
     res.json({ user: req.session.user, role: req.session.role || 'viewer' });
