@@ -19,10 +19,11 @@ PASS=0
 FAIL=0
 BACKEND_PORT=3002
 BACKEND_URL="http://localhost:${BACKEND_PORT}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BACKEND_DIR="${SCRIPT_DIR}/backend"
 FRONTEND_DIR="${SCRIPT_DIR}/frontend"
 BACKEND_PID=""
+SMOKE_DATA_DIR="$(mktemp -d 2>/dev/null || echo "${BACKEND_DIR}/tmp-smoke-data")"
 
 cleanup() {
     if [ -n "$BACKEND_PID" ] && kill -0 "$BACKEND_PID" 2>/dev/null; then
@@ -30,6 +31,7 @@ cleanup() {
         kill "$BACKEND_PID" 2>/dev/null || true
         wait "$BACKEND_PID" 2>/dev/null || true
     fi
+    rm -rf "$SMOKE_DATA_DIR" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -69,6 +71,8 @@ cd "$BACKEND_DIR"
 JWT_SECRET=smoke-test-secret \
 ADMIN_USER=admin \
 ADMIN_PASS=admin123 \
+DATA_DIR="$SMOKE_DATA_DIR" \
+SKIP_WHATSAPP_INIT=true \
 node dist/app.js &
 BACKEND_PID=$!
 

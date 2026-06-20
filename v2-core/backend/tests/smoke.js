@@ -8,18 +8,22 @@
  */
 
 const { execSync, spawn } = require('child_process');
+const fs = require('fs');
 const http = require('http');
+const os = require('os');
 const path = require('path');
 
 const BACKEND_PORT = 3002;
 const BACKEND_URL = `http://localhost:${BACKEND_PORT}`;
-const ROOT_DIR = path.resolve(__dirname, '..');
+const ROOT_DIR = path.resolve(__dirname, '..', '..');
 const BACKEND_DIR = path.join(ROOT_DIR, 'backend');
 const FRONTEND_DIR = path.join(ROOT_DIR, 'frontend');
+const SMOKE_DATA_DIR = path.join(os.tmpdir(), `crm-ai-v2-smoke-${Date.now()}`);
 
 let pass = 0;
 let fail = 0;
 let backendProcess = null;
+let authToken = '';
 
 function log(level, msg) {
   const colors = { PASS: '\x1b[32m', FAIL: '\x1b[31m', INFO: '\x1b[33m' };
@@ -44,6 +48,7 @@ function cleanup() {
     backendProcess.kill('SIGTERM');
     try { backendProcess.kill('SIGKILL'); } catch (_) {}
   }
+  try { fs.rmSync(SMOKE_DATA_DIR, { recursive: true, force: true }); } catch (_) {}
 }
 process.on('exit', cleanup);
 process.on('SIGINT', () => { cleanup(); process.exit(1); });
@@ -70,11 +75,11 @@ async function main() {
   console.log('');
 
   // ─── TEST 1: TypeScript Compilation ───────────────────────────
-  log('INFO', 'Test 1: TypeScript Compilation (npx tsc --noEmit)...');
-  if (run('npx tsc --noEmit', BACKEND_DIR)) {
-    log('PASS', 'TypeScript compiles with zero errors');
+  log('INFO', 'Test 1: Backend Build (npm run build)...');
+  if (run('npm run build', BACKEND_DIR)) {
+    log('PASS', 'Backend builds successfully');
   } else {
-    log('FAIL', 'TypeScript compilation failed');
+    log('FAIL', 'Backend build failed');
   }
 
   // ─── TEST 2: Frontend Build ───────────────────────────────────
@@ -90,7 +95,14 @@ async function main() {
   
   backendProcess = spawn('node', ['dist/app.js'], {
     cwd: BACKEND_DIR,
-    env: { ...process.env, JWT_SECRET: '***', ADMIN_USER: 'admin', ADMIN_PASS: 'admin123' },
+    env: {
+      ...process.env,
+      JWT_SECRET: 'smoke-test-secret',
+      ADMIN_USER: 'admin',
+      ADMIN_PASS: 'admin123',
+      DATA_DIR: SMOKE_DATA_DIR,
+      SKIP_WHATSAPP_INIT: 'true',
+    },
     stdio: 'pipe',
   });
 
@@ -136,6 +148,7 @@ async function main() {
     });
     const loginData = JSON.parse(res.data);
     if (loginData.success) {
+      authToken = loginData.token;
       const tokenShort = loginData.token ? loginData.token.substring(0, 20) : 'N/A';
       log('PASS', `Login API works, got token: ${tokenShort}...`);
     } else {
@@ -145,8 +158,78 @@ async function main() {
     log('FAIL', `Login API error: ${e.message}`);
   }
 
-  // ─── TEST 6: Unit Tests ───────────────────────────────────────
-  log('INFO', 'Test 6: Unit Tests (vitest run)...');
+  // ─── TEST 6: Safe GET Endpoint Matrix ─────────────────────────
+  log('INFO', 'Test 6: Safe authenticated GET endpoint matrix...');
+  const endpoints = [
+    '/api/settings/health',
+    '/api/settings/backups',
+    '/api/settings/wa-status',
+    '/api/agents',
+    '/api/stores',
+    '/api/stores/status',
+    '/api/analytics/overview',
+    '/api/analytics/leads',
+    '/api/analytics/followups',
+    '/api/analytics/learning',
+    '/api/chat/smoke-store/contacts',
+    '/api/media',
+    '/api/summaries',
+    '/api/summaries/labels',
+    '/api/closing/stats',
+    '/api/closing/patterns',
+    '/api/closing/analytics',
+    '/api/followups/stats/smoke-store',
+    '/api/followups/smoke-store',
+    '/api/learning/overview',
+    '/api/learning/patterns',
+    '/api/learning/analytics',
+    '/api/smart-labels/counts',
+    '/api/bot-activation/stores',
+    '/api/openai/billing/config',
+    '/api/openai/billing/latest',
+    '/api/openai/billing/actual-costs',
+    '/api/scalev/config',
+    '/api/mengantar/config',
+  ];
+
+  const endpointFailures = [];
+  for (const endpoint of endpoints) {
+    try {
+      const res = await fetch(`${BACKEND_URL}${endpoint}`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      if (res.status < 200 || res.status >= 300) {
+        endpointFailures.push(`${endpoint} -> HTTP ${res.status}: ${res.data.substring(0, 120)}`);
+      }
+    } catch (e) {
+      endpointFailures.push(`${endpoint} -> ${e.message}`);
+    }
+  }
+
+  if (endpointFailures.length === 0) {
+    log('PASS', `${endpoints.length} safe GET endpoints returned 2xx`);
+  } else {
+    log('FAIL', `${endpointFailures.length} safe GET endpoints failed:\n  - ${endpointFailures.join('\n  - ')}`);
+  }
+
+  // ─── TEST 7: Unit Tests ───────────────────────────────────────
+  log('INFO', 'Test 7: Legacy Xendit is disabled by default...');
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/xendit/config`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    if (res.status === 410) {
+      log('PASS', 'Legacy Xendit endpoint returns HTTP 410 unless ENABLE_LEGACY_XENDIT=true');
+    } else {
+      log('FAIL', `Legacy Xendit endpoint should be disabled, got HTTP ${res.status}: ${res.data.substring(0, 120)}`);
+    }
+  } catch (e) {
+    log('FAIL', `Legacy Xendit disabled check error: ${e.message}`);
+  }
+
+  log('INFO', 'Test 8: Unit Tests (vitest run)...');
   if (run('npx vitest run --reporter=dot', BACKEND_DIR)) {
     log('PASS', 'Unit tests pass');
   } else {

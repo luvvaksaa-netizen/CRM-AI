@@ -134,8 +134,25 @@ function isCancelStatus(summaryText) {
  * @param {string} summaryText - Teks rekap dari AI
  * @returns {boolean} true jika closing boleh diterapkan
  */
-function isClosingDataComplete(summaryText) {
+function isClosingDataComplete(summaryText, contactName, contactPhone) {
   if (!summaryText) return false;
+  
+  // ════════════════════════════════════════════════════════════
+  // FIX SUK-59 #2: DB-LEVEL VALIDATION
+  // ════════════════════════════════════════════════════════════
+  if (contactName) {
+    const trimmed = (contactName || '').trim();
+    // Whitespace-only atau placeholder name
+    if (trimmed.length === 0 || /^(Pelanggan|Customer|Unknown|User|\+?\d{8,})$/.test(trimmed)) {
+      logger.warn(`[SmartLabel] ⚠️ Closing DIBLOKIR — contact_name tidak valid: "${trimmed || '(whitespace only)'}"`);
+      return false;
+    }
+  }
+  if (contactPhone && !(contactPhone || '').trim()) {
+    logger.warn(`[SmartLabel] ⚠️ Closing DIBLOKIR — contact_phone kosong`);
+    return false;
+  }
+  
   const txt = summaryText;
 
   // Deteksi apakah produk ini UV (Stiker Keras) atau DTF (Label Baju)
@@ -188,6 +205,57 @@ function isClosingDataComplete(summaryText) {
   return true;
 }
 
+/**
+ * Cross-validate metode bayar dari rekap summary dengan label WA.
+ * Mencegah inkonsistensi: METODE_BAYAR=COD tapi label=Transfer, dan sebaliknya.
+ *
+ * Rule:
+ * - METODE_BAYAR=COD + label=[Transfer, Closing] → koreksi ke [COD, Closing]
+ * - METODE_BAYAR=Transfer + label=[COD, Closing] → koreksi ke [Transfer, Closing]
+ *
+ * @param {string} summaryText - Teks rekap dari AI
+ * @param {string[]} currentLabels - Array label yang akan diterapkan
+ * @returns {{ needsCorrection: boolean, reason?: string, removeLabels?: string[], addLabels?: string[] }}
+ */
+function validateMetodeBayarConsistency(summaryText, currentLabels) {
+  if (!summaryText || !currentLabels || currentLabels.length === 0) {
+    return { needsCorrection: false };
+  }
+
+  const metodeMatch = (summaryText || '').match(/METODE BAYAR:\s*(COD|Transfer)/i);
+  if (!metodeMatch) return { needsCorrection: false };
+
+  const metodeBayar = metodeMatch[1].toUpperCase(); // Normalize: 'COD' or 'TRANSFER'
+  const hasClosing = currentLabels.some(l => /closing/i.test(l));
+  const hasCod = currentLabels.some(l => l === 'COD');
+  const hasTransfer = currentLabels.some(l => l === 'Transfer');
+
+  // Hanya validasi untuk label yang mengandung Closing
+  if (!hasClosing) return { needsCorrection: false };
+
+  // Rule 1: METODE_BAYAR=COD + label=Transfer → INVALID → koreksi ke COD
+  if (metodeBayar === 'COD' && hasTransfer && !hasCod) {
+    return {
+      needsCorrection: true,
+      reason: `[Cross-Validation] METODE_BAYAR=COD tapi label=Transfer → dikoreksi ke COD`,
+      removeLabels: ['Transfer'],
+      addLabels: ['COD']
+    };
+  }
+
+  // Rule 2: METODE_BAYAR=Transfer + label=COD → INVALID → koreksi ke Transfer
+  if (metodeBayar === 'TRANSFER' && hasCod && !hasTransfer) {
+    return {
+      needsCorrection: true,
+      reason: `[Cross-Validation] METODE_BAYAR=Transfer tapi label=COD → dikoreksi ke Transfer`,
+      removeLabels: ['COD'],
+      addLabels: ['Transfer']
+    };
+  }
+
+  return { needsCorrection: false };
+}
+
 // ══════════════════════════════════════════════════════════════════
 // MAIN ENGINE
 // ══════════════════════════════════════════════════════════════════
@@ -205,12 +273,17 @@ async function applyLabelsFromSummary(storeWaId, contactId, summaryText, waClien
   try {
     const { ChatSummary } = require('../models/index');
 
+    // FIX SUK-59 #2: Load existing summary for DB-level validation (before both if blocks)
+    const existingSummary = await ChatSummary.findOne({ where: { store_wa_id: storeWaId, contact_id: contactId } });
+    const contactName = existingSummary?.contact_name;
+    const contactPhone = existingSummary?.contact_phone;
+
     // 1. Deteksi label dari STATUS field
     let detectedRule = detectLabelFromSummary(summaryText);
 
     // FIX #3: Jika label yang terdeteksi adalah Closing, validasi kelengkapan data dulu
     if (detectedRule && detectedRule.label === 'Closing') {
-      if (!isClosingDataComplete(summaryText)) {
+      if (!isClosingDataComplete(summaryText, contactName, contactPhone)) {
         // Data belum lengkap — downgrade ke Menunggu Rekap
         detectedRule = { label: 'Menunggu Rekap', color: 6 };
         logger.warn(`[SmartLabel] [${storeWaId}] Closing di-downgrade ke Menunggu Rekap untuk [${contactId}] karena data belum lengkap.`);
@@ -220,7 +293,7 @@ async function applyLabelsFromSummary(storeWaId, contactId, summaryText, waClien
     // 2. Parse explicit WA_LABELS field dari rekap (jika AI mengisinya)
     let explicitLabels = parseWaLabelsField(summaryText);
     // FIX #3: Juga validasi Closing dari explicit labels
-    if (explicitLabels.includes('Closing') && !isClosingDataComplete(summaryText)) {
+    if (explicitLabels.includes('Closing') && !isClosingDataComplete(summaryText, contactName, contactPhone)) {
       explicitLabels = explicitLabels.filter(l => l !== 'Closing');
       if (!explicitLabels.includes('Menunggu Rekap')) {
         explicitLabels.push('Menunggu Rekap');
@@ -246,19 +319,55 @@ async function applyLabelsFromSummary(storeWaId, contactId, summaryText, waClien
     const labelNames = labelsToApply.map(r => r.label);
     logger.info(`[SmartLabel] [${storeWaId}] Kontak [${contactId}] → Label: ${labelNames.join(', ')}`);
 
+    // 🔍 Fase 1 — Cross-Validation: validasi konsistensi METODE BAYAR vs label Closing
+    const crossCheck = validateMetodeBayarConsistency(summaryText, labelNames);
+    if (crossCheck.needsCorrection) {
+      logger.warn(`[SmartLabel] [${storeWaId}] ${crossCheck.reason} untuk [${contactId}]`);
+
+      // Koreksi labelNames array
+      if (crossCheck.removeLabels) {
+        for (const rl of crossCheck.removeLabels) {
+          const idx = labelNames.indexOf(rl);
+          if (idx !== -1) labelNames.splice(idx, 1);
+        }
+      }
+      if (crossCheck.addLabels) {
+        for (const al of crossCheck.addLabels) {
+          if (!labelNames.includes(al)) labelNames.push(al);
+        }
+      }
+
+      // Sinkronkan juga labelsToApply (array object {label, color})
+      if (crossCheck.removeLabels) {
+        for (const rl of crossCheck.removeLabels) {
+          const idx = labelsToApply.findIndex(r => r.label === rl);
+          if (idx !== -1) labelsToApply.splice(idx, 1);
+        }
+      }
+      if (crossCheck.addLabels) {
+        for (const al of crossCheck.addLabels) {
+          if (!labelsToApply.find(r => r.label === al)) {
+            labelsToApply.push({ label: al, color: 0 });
+          }
+        }
+      }
+
+      logger.info(`[SmartLabel] [${storeWaId}] Label dikoreksi menjadi: ${labelNames.join(', ')}`);
+    }
+
     // 3. Simpan ke DB untuk visibilitas dashboard (selalu, meski WA client tidak ada)
     await _persistLabelsToDb(storeWaId, contactId, labelNames, ChatSummary);
 
     // 4. Terapkan ke WhatsApp Business (jika client tersedia)
     if (waClient) {
-      await _applyLabelsToWA(storeWaId, contactId, labelsToApply, summaryText, waClient);
+      await _applyLabelsToWA(storeWaId, contactId, labelsToApply, summaryText, waClient, crossCheck.removeLabels || []);
     } else {
       // Coba ambil client dari whatsapp_service
       try {
         const { getActiveClient } = require('../whatsapp_service');
         const client = getActiveClient(storeWaId);
         if (client) {
-          await _applyLabelsToWA(storeWaId, contactId, labelsToApply, summaryText, client);
+          await _applyLabelsToWA(storeWaId, contactId, labelsToApply, summaryText, client, crossCheck.removeLabels || []);
         }
       } catch (_) {
         // Client belum tersedia — label sudah tersimpan di DB, WA akan diupdate saat restart
@@ -387,7 +496,7 @@ async function _persistLabelsToDb(storeWaId, contactId, labelNames, ChatSummary)
  * @param {string} summaryText
  * @param {object} waClient
  */
-async function _applyLabelsToWA(storeWaId, contactId, labelsToApply, summaryText, waClient) {
+async function _applyLabelsToWA(storeWaId, contactId, labelsToApply, summaryText, waClient, crossCheckRemoveLabels = []) {
   const { safeAddLabelByName } = require('./wajs_bridge');
 
   // Jika status closing, hapus label yang tidak relevan dulu
@@ -395,6 +504,26 @@ async function _applyLabelsToWA(storeWaId, contactId, labelsToApply, summaryText
     await _removeStaleLabels(storeWaId, contactId, waClient, LABELS_TO_REMOVE_ON_CLOSING);
   } else if (isCancelStatus(summaryText)) {
     await _removeStaleLabels(storeWaId, contactId, waClient, LABELS_TO_REMOVE_ON_CANCEL);
+  }
+
+  // 🔍 Fase 1 — Cross-Validation: hapus label yang dikoreksi dari WA contact
+  //    (misal: Transfer→COD setelah cross-check — label "Transfer" harus dihapus dari WA)
+  if (crossCheckRemoveLabels && crossCheckRemoveLabels.length > 0) {
+    try {
+      const { getLabels, addOrRemoveLabels } = require('./wajs_bridge');
+      const allLabels = await getLabels(waClient, storeWaId);
+
+      const removeOps = allLabels
+        .filter(l => crossCheckRemoveLabels.some(n => n.toLowerCase() === (l.name || '').toLowerCase()))
+        .map(l => ({ labelId: l.id, type: 'remove' }));
+
+      if (removeOps.length > 0) {
+        await addOrRemoveLabels(waClient, contactId, removeOps, storeWaId);
+        logger.info(`[SmartLabel] 🔄 Cross-validation: dihapus ${removeOps.length} label yang dikoreksi dari WA [${contactId}]: ${crossCheckRemoveLabels.join(', ')}`);
+      }
+    } catch (e) {
+      logger.warn(`[SmartLabel] Gagal hapus label cross-validation dari WA: ${e.message}`);
+    }
   }
 
   // Terapkan setiap label yang terdeteksi
@@ -581,6 +710,7 @@ module.exports = {
   isClosingStatus,
   isCancelStatus,
   isClosingDataComplete,
+  validateMetodeBayarConsistency,
   getLabelsFromDb,
   updateContactLabelsInDb,
   applyManualLabelOps,

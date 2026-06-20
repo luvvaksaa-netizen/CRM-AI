@@ -141,7 +141,8 @@ const PausedContact = sequelize.define('PausedContact', {
   store_wa_id: { type: DataTypes.STRING, primaryKey: true, allowNull: false },
   contact_id:  { type: DataTypes.STRING, primaryKey: true, allowNull: false },
   paused_at:   { type: DataTypes.DATE,   defaultValue: Sequelize.NOW },
-  paused_by:   { type: DataTypes.STRING, defaultValue: 'manual' } // 'manual' | 'auto'
+  paused_by:   { type: DataTypes.STRING, defaultValue: 'manual' }, // 'manual' | 'auto'
+  paused_until:{ type: DataTypes.DATE,   allowNull: true }
 });
 
 /**
@@ -378,7 +379,7 @@ async function initDB() {
     // File WAL yang besar membuat writer baru menunggu lebih lama → lebih sering BUSY.
     setInterval(async () => {
       try {
-        await sequelize.query('PRAGMA wal_checkpoint(PASSIVE);');
+        await sequelize.query('PRAGMA wal_checkpoint(TRUNCATE);');
       } catch (_) { /* non-critical */ }
     }, 5 * 60 * 1000);
     
@@ -401,6 +402,7 @@ async function initDB() {
     await safeAddColumn('ChatMessages', 'contact_lid', { type: DataTypes.STRING, allowNull: true });
     await safeAddColumn('ChatMessages', 'contact_type', { type: DataTypes.STRING, allowNull: true });
     await safeAddColumn('ChatMessages', 'contact_source', { type: DataTypes.STRING, allowNull: true });
+    await safeAddColumn('PausedContacts', 'paused_until', { type: DataTypes.DATE, allowNull: true });
     await safeAddColumn('ChatMessages', 'quoted_message_id', { type: DataTypes.STRING, allowNull: true });
     await safeAddColumn('ChatMessages', 'quoted_body', { type: DataTypes.TEXT, allowNull: true });
     await safeAddColumn('ChatMessages', 'quoted_from_me', { type: DataTypes.BOOLEAN, allowNull: true });

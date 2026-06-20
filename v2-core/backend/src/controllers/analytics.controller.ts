@@ -37,9 +37,39 @@ function detectStatus(record: any): string | null {
   return null;
 }
 
+// Helper: bangun date range dari params
+function parseDateRange(query: any): { sDateMs: number; eDateMs: number } {
+  const { startDate, endDate } = query;
+  const sDateMs = startDate ? new Date(startDate as string).getTime() : 0;
+  const eDateMs = endDate   ? new Date(endDate as string).getTime()   : Infinity;
+  return { sDateMs, eDateMs };
+}
+
+// Helper: bangun array tanggal untuk trend chart berdasarkan range aktif
+function buildTrendMap(sDateMs: number, eDateMs: number): Record<string, { date: string; leads: number; closing: number }> {
+  const trendMap: Record<string, { date: string; leads: number; closing: number }> = {};
+  const now = Date.now();
+  const eDateCapped = Math.min(eDateMs === Infinity ? now : eDateMs, now);
+  const sDateCapped = sDateMs === 0 ? now - 30 * 24 * 60 * 60 * 1000 : sDateMs;
+
+  // Hitung jumlah hari dalam range, maks 90 hari
+  const diffMs = eDateCapped - sDateCapped;
+  const diffDays = Math.min(Math.ceil(diffMs / (24 * 60 * 60 * 1000)), 90);
+  const days = Math.max(diffDays, 1);
+
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(eDateCapped);
+    d.setDate(d.getDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    trendMap[key] = { date: key, leads: 0, closing: 0 };
+  }
+  return trendMap;
+}
+
 export const getOverview = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { store_wa_id, startDate, endDate } = req.query;
+    const { store_wa_id } = req.query;
+    const { sDateMs, eDateMs } = parseDateRange(req.query);
 
     const summaryWhere: any = {};
     const msgWhere: any = {};
@@ -47,20 +77,22 @@ export const getOverview = async (req: Request, res: Response, next: NextFunctio
       summaryWhere.store_wa_id = store_wa_id;
       msgWhere.store_wa_id = store_wa_id;
     }
-    if (startDate && endDate) {
-      msgWhere.timestamp = { [Op.between]: [new Date(startDate as string), new Date(endDate as string)] };
+
+    // Filter pesan berdasarkan timestamp
+    if (sDateMs > 0 || eDateMs < Infinity) {
+      msgWhere.timestamp = {};
+      if (sDateMs > 0) msgWhere.timestamp[Op.gte] = new Date(sDateMs);
+      if (eDateMs < Infinity) msgWhere.timestamp[Op.lte] = new Date(eDateMs);
     }
 
     const allSummaries: any[] = await ChatSummary.findAll({ where: summaryWhere });
-
-    const sDateMs = startDate ? new Date(startDate as string).getTime() : 0;
-    const eDateMs = endDate   ? new Date(endDate as string).getTime()   : Infinity;
 
     const statusCounts: Record<string, number> = Object.fromEntries(Object.keys(LABEL_NAMES).map(k => [k, 0]));
     let totalLeads = 0;
 
     for (const s of allSummaries) {
       const createdTime = new Date(s.createdAt).getTime();
+      // Leads = kontak yang pertama kali muncul (ChatSummary dibuat) dalam range
       if (createdTime >= sDateMs && createdTime <= eDateMs) {
         totalLeads++;
       }
@@ -100,12 +132,8 @@ export const getOverview = async (req: Request, res: Response, next: NextFunctio
     const totalOut = aiReplyCount + csManualCount;
     const aiHandlingRate = totalOut > 0 ? Math.round((aiReplyCount / totalOut) * 100) : 0;
 
-    const trendMap: any = {};
-    for (let i = 29; i >= 0; i--) {
-      const d = new Date(); d.setDate(d.getDate() - i);
-      const key = d.toISOString().slice(0, 10);
-      trendMap[key] = { date: key, leads: 0, closing: 0 };
-    }
+    // Trend chart — respek date filter
+    const trendMap = buildTrendMap(sDateMs, eDateMs);
     for (const s of allSummaries) {
       const dayKey = new Date(s.createdAt).toISOString().slice(0, 10);
       if (trendMap[dayKey]) trendMap[dayKey].leads++;
@@ -124,16 +152,18 @@ export const getOverview = async (req: Request, res: Response, next: NextFunctio
     }
     const trend = Object.values(trendMap);
 
-    let perStore = [];
+    // Per-store breakdown
     const storesToProcess: any[] = store_wa_id 
       ? await Store.findAll({ where: { wa_id: store_wa_id }, attributes: ['wa_id', 'name'] })
       : await Store.findAll({ attributes: ['wa_id', 'name'] });
 
+    const perStore = [];
     for (const store of storesToProcess) {
       const storeSum = store_wa_id ? allSummaries : allSummaries.filter(s => s.store_wa_id === store.wa_id);
       let storeTotalLeads = 0, storeClosing = 0;
       for (const s of storeSum) {
-        if (new Date(s.createdAt).getTime() >= sDateMs && new Date(s.createdAt).getTime() <= eDateMs) storeTotalLeads++;
+        const ct = new Date(s.createdAt).getTime();
+        if (ct >= sDateMs && ct <= eDateMs) storeTotalLeads++;
         
         let ts: any = {};
         try { ts = JSON.parse(s.label_timestamps || '{}'); } catch(_){}
@@ -155,16 +185,10 @@ export const getOverview = async (req: Request, res: Response, next: NextFunctio
       });
     }
 
-    const topClosing = await ChatSummary.findAll({
-      where: summaryWhere,
-      order: [['last_updated', 'DESC']],
-      limit: 10
-    });
-
     res.json({
       totalLeads, closingRate, aiHandlingRate,
       aiReplyCount, csManualCount,
-      statusBreakdown: statusCounts, trend, perStore, topClosing
+      statusBreakdown: statusCounts, trend, perStore
     });
 
   } catch (e) {
@@ -174,7 +198,11 @@ export const getOverview = async (req: Request, res: Response, next: NextFunctio
 
 export const getLeads = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { store_wa_id, label, startDate, endDate } = req.query;
+    const { store_wa_id, label } = req.query;
+    const { sDateMs, eDateMs } = parseDateRange(req.query);
+
+    // Default: tampilkan semua leads baru (baru_masuk) jika tidak ada label
+    const effectiveLabel = (label as string) || 'baru_masuk';
 
     const summaryWhere: any = {};
     if (store_wa_id) summaryWhere.store_wa_id = store_wa_id;
@@ -184,19 +212,17 @@ export const getLeads = async (req: Request, res: Response, next: NextFunction) 
     const storeMap: Record<string, string> = {};
     for (const st of stores) storeMap[st.wa_id] = st.name;
 
-    const sDateMs = startDate ? new Date(startDate as string).getTime() : 0;
-    const eDateMs = endDate   ? new Date(endDate as string).getTime()   : Infinity;
-
-    let leads = [];
+    const leads: any[] = [];
 
     for (const s of allSummaries) {
-      if (label === 'baru_masuk') {
+      if (effectiveLabel === 'baru_masuk') {
+        // Leads baru = ChatSummary dibuat (pertama kali chat) dalam range
         const ct = new Date(s.createdAt).getTime();
         if (ct >= sDateMs && ct <= eDateMs) leads.push(s);
         continue;
       }
 
-      const targetLabelName = LABEL_NAMES[label as string];
+      const targetLabelName = LABEL_NAMES[effectiveLabel];
       if (!targetLabelName) continue;
 
       let ts: any = {};
@@ -209,8 +235,8 @@ export const getLeads = async (req: Request, res: Response, next: NextFunction) 
         let matchedLabels: string[] = [];
         try { matchedLabels = JSON.parse(s.wa_labels || '[]'); } catch(_){}
         let hasLabel = matchedLabels.includes(targetLabelName);
-        if (!hasLabel && STATUS_REGEX_FALLBACK[label as string]) {
-          hasLabel = STATUS_REGEX_FALLBACK[label as string].test(s.summary || '');
+        if (!hasLabel && STATUS_REGEX_FALLBACK[effectiveLabel]) {
+          hasLabel = STATUS_REGEX_FALLBACK[effectiveLabel].test(s.summary || '');
         }
         if (hasLabel) {
           labelTime = new Date(s.last_updated || s.createdAt).getTime();
@@ -218,22 +244,21 @@ export const getLeads = async (req: Request, res: Response, next: NextFunction) 
         }
       }
 
-      if (hasLabelTimestamp) {
-        if (labelTime >= sDateMs && labelTime <= eDateMs) {
-          leads.push(s);
-        }
+      if (hasLabelTimestamp && labelTime >= sDateMs && labelTime <= eDateMs) {
+        leads.push(s);
       }
     }
 
-    leads.sort((a, b) => new Date(b.last_updated).getTime() - new Date(a.last_updated).getTime());
+    leads.sort((a, b) => new Date(b.last_updated || b.createdAt).getTime() - new Date(a.last_updated || a.createdAt).getTime());
 
-    const result = leads.map(s => ({
+    const result = leads.slice(0, 100).map(s => ({
       store_wa_id: s.store_wa_id,
       store_name: storeMap[s.store_wa_id] || 'Unknown Store',
       contact_id: s.contact_id,
       contact_name: s.contact_name || 'Pelanggan',
       contact_phone: s.contact_phone,
-      last_updated: s.last_updated
+      last_updated: s.last_updated || s.createdAt,
+      created_at: s.createdAt,
     }));
 
     res.json(result);
@@ -256,7 +281,10 @@ export const getFollowups = async (req: Request, res: Response, next: NextFuncti
         FollowUp.count({ where: { store_wa_id: store.wa_id, status: 'replied' } }),
         FollowUp.count({ where: { store_wa_id: store.wa_id, status: 'cancelled' } })
       ]);
-      result.push({ wa_id: store.wa_id, name: store.name, pending, sent, replied, cancelled, total: pending + sent + replied + cancelled });
+      const total = pending + sent + replied + cancelled;
+      if (total > 0) {
+        result.push({ wa_id: store.wa_id, name: store.name, pending, sent, replied, cancelled, total });
+      }
     }
 
     res.json(result);

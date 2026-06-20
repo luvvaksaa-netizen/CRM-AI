@@ -1,3 +1,4 @@
+import logger from '../utils/logger';
 import axios from 'axios';
 import * as QRCode from 'qrcode';
 import { XenditTransaction, AppConfig, ChatSummary } from '../models';
@@ -163,7 +164,7 @@ export async function renderQrisImage(qrString: string): Promise<Buffer | null> 
     });
     return buffer;
   } catch (err: any) {
-    console.error('[Xendit] Gagal render QRIS image:', err.message);
+    logger.error('[Xendit] Gagal render QRIS image:', err.message);
     return null;
   }
 }
@@ -179,7 +180,7 @@ export async function fetchBalance(): Promise<number | null> {
     const res = await client.get<XenditBalanceResponse>('/balance');
     return res.data.balance;
   } catch (err: any) {
-    console.error('[Xendit] Gagal fetch balance:', err.message);
+    logger.error('[Xendit] Gagal fetch balance:', err.message);
     return null;
   }
 }
@@ -266,7 +267,7 @@ async function validateOrderBeforePayment(params: CreateQrisParams): Promise<{ v
       return validateSummaryText(summaryText, lastUpdated, payment_type);
     } catch (dbErr: any) {
       // DB query gagal bukan berarti payment gagal — log dan lanjut
-      console.warn('[Xendit] Validasi ChatSummary gagal (non-blocking):', dbErr.message);
+      logger.warn('[Xendit] Validasi ChatSummary gagal (non-blocking):', dbErr.message);
     }
   }
 
@@ -340,7 +341,7 @@ function validateSummaryText(
   }
 
   if (!hasConfirmation && summaryText !== 'Belum ada rekapan.') {
-    console.warn('[Xendit] Summary sudah ada tapi tidak mengandung konfirmasi — lanjutkan dengan hati-hati');
+    logger.warn('[Xendit] Summary sudah ada tapi tidak mengandung konfirmasi — lanjutkan dengan hati-hati');
   }
 
   return { valid: true };
@@ -350,20 +351,20 @@ export async function createQrisPayment(params: CreateQrisParams): Promise<QrisP
   // P1 FIX: Validasi backend sebelum membuat QRIS
   const validation = await validateOrderBeforePayment(params);
   if (!validation.valid) {
-    console.warn(`[Xendit] QRIS creation BLOCKED: ${validation.error}`);
+    logger.warn(`[Xendit] QRIS creation BLOCKED: ${validation.error}`);
     return { success: false, error: validation.error };
   }
 
   const client = getClient();
   if (!client) {
-    console.log('[Xendit] No API key — QRIS tidak bisa dibuat. Set XENDIT_API_KEY di .env');
+    logger.info('[Xendit] No API key — QRIS tidak bisa dibuat. Set XENDIT_API_KEY di .env');
     return { success: false, error: 'XENDIT_API_KEY belum dikonfigurasi' };
   }
 
   // Guard: nominal wajib positif dan integer
   const safeAmount = Math.round(Number(params.amount));
   if (!safeAmount || safeAmount <= 0) {
-    console.error('[Xendit] Nominal QRIS tidak valid:', params.amount);
+    logger.error('[Xendit] Nominal QRIS tidak valid:', params.amount);
     return { success: false, error: `Nominal tidak valid: ${params.amount}` };
   }
 
@@ -423,10 +424,10 @@ export async function createQrisPayment(params: CreateQrisParams): Promise<QrisP
       } as any);
     } catch (dbErr: any) {
       // DB error tidak boleh menggagalkan create QRIS — log saja
-      console.error('[Xendit] Gagal simpan ke DB:', dbErr.message);
+      logger.error('[Xendit] Gagal simpan ke DB:', dbErr.message);
     }
 
-    console.log(
+    logger.info(
       `[Xendit] ✅ QRIS created: ${qrData.reference_id} — Rp ${safeAmount.toLocaleString('id-ID')} [${tipeBayar}] contact: ${contactPhone}`
     );
 
@@ -440,9 +441,9 @@ export async function createQrisPayment(params: CreateQrisParams): Promise<QrisP
       amount: safeAmount,
     };
   } catch (err: any) {
-    console.error('[Xendit] Gagal create QRIS:', err.message);
+    logger.error('[Xendit] Gagal create QRIS:', err.message);
     if (err.response) {
-      console.error('[Xendit] Response:', JSON.stringify(err.response.data));
+      logger.error('[Xendit] Response:', JSON.stringify(err.response.data));
     }
     return { success: false, error: err.message };
   }
@@ -463,7 +464,7 @@ export async function getQrStatus(referenceId: string): Promise<XenditQrResponse
     const items = Array.isArray(res.data) ? res.data : [res.data];
     return items[0] || null;
   } catch (err: any) {
-    console.error(`[Xendit] Gagal get QR status ${referenceId}:`, err.message);
+    logger.error(`[Xendit] Gagal get QR status ${referenceId}:`, err.message);
     return null;
   }
 }
@@ -489,13 +490,13 @@ export async function createInvoice(params: {
 }): Promise<XenditInvoiceResponse | null> {
   const client = getClient();
   if (!client) {
-    console.log('[Xendit] No API key configured. Set XENDIT_API_KEY in .env');
+    logger.info('[Xendit] No API key configured. Set XENDIT_API_KEY in .env');
     return null;
   }
 
   const safeAmount = Math.round(Number(params.amount));
   if (!safeAmount || safeAmount <= 0) {
-    console.error('[Xendit] Nominal invoice tidak valid:', params.amount);
+    logger.error('[Xendit] Nominal invoice tidak valid:', params.amount);
     return null;
   }
 
@@ -531,11 +532,11 @@ export async function createInvoice(params: {
       metadata: params.metadata ? JSON.stringify(params.metadata) : null,
     } as any);
 
-    console.log(`[Xendit] Invoice created: ${invoice.external_id} — Rp ${safeAmount.toLocaleString('id-ID')}`);
+    logger.info(`[Xendit] Invoice created: ${invoice.external_id} — Rp ${safeAmount.toLocaleString('id-ID')}`);
     return invoice;
   } catch (err: any) {
-    console.error('[Xendit] Gagal create invoice:', err.message);
-    if (err.response) console.error('[Xendit] Response:', JSON.stringify(err.response.data));
+    logger.error('[Xendit] Gagal create invoice:', err.message);
+    if (err.response) logger.error('[Xendit] Response:', JSON.stringify(err.response.data));
     return null;
   }
 }
@@ -587,7 +588,7 @@ export async function getInvoice(externalId: string): Promise<XenditInvoiceRespo
     const invoice = Array.isArray(invoices) ? invoices[0] : invoices;
     return invoice || null;
   } catch (err: any) {
-    console.error(`[Xendit] Gagal get invoice ${externalId}:`, err.message);
+    logger.error(`[Xendit] Gagal get invoice ${externalId}:`, err.message);
     return null;
   }
 }
@@ -601,10 +602,10 @@ export async function expireInvoice(externalId: string): Promise<boolean> {
   if (!client) return false;
   try {
     await client.post(`/invoices/${externalId}/expire!`);
-    console.log(`[Xendit] Invoice expired: ${externalId}`);
+    logger.info(`[Xendit] Invoice expired: ${externalId}`);
     return true;
   } catch (err: any) {
-    console.error(`[Xendit] Gagal expire invoice ${externalId}:`, err.message);
+    logger.error(`[Xendit] Gagal expire invoice ${externalId}:`, err.message);
     return false;
   }
 }
@@ -639,7 +640,7 @@ export async function processWebhook(
   // Normalize: Xendit QRIS pakai 'SUCCEEDED', unifikasi ke 'PAID' untuk konsistensi internal
   const normalizedStatus = status === 'SUCCEEDED' ? 'PAID' : status;
 
-  console.log(`[Xendit] Webhook: ${externalId} → ${status} (normalized: ${normalizedStatus})`);
+  logger.info(`[Xendit] Webhook: ${externalId} → ${status} (normalized: ${normalizedStatus})`);
 
   try {
     // Cari di DB (coba external_id atau reference_id)
@@ -653,7 +654,7 @@ export async function processWebhook(
 
       // ── Idempotency: skip jika status sudah sama ──────────────
       if (currentStatus === normalizedStatus) {
-        console.log(`[Xendit] Webhook idempotent skip: ${externalId} sudah ${normalizedStatus}`);
+        logger.info(`[Xendit] Webhook idempotent skip: ${externalId} sudah ${normalizedStatus}`);
         return { received: true, status: normalizedStatus };
       }
 
@@ -667,7 +668,7 @@ export async function processWebhook(
       if (body.bank) updates.bank = body.bank;
 
       await XenditTransaction.update(updates, { where: { external_id: existing.getDataValue('external_id') } });
-      console.log(`[Xendit] ✅ Transaction ${externalId} updated → ${normalizedStatus}`);
+      logger.info(`[Xendit] ✅ Transaction ${externalId} updated → ${normalizedStatus}`);
 
       // ── PAID: kirim notifikasi WA + Telegram ─────────────────
       if (normalizedStatus === 'PAID') {
@@ -691,9 +692,9 @@ export async function processWebhook(
               { notif_sent: true } as any,
               { where: { external_id: existing.getDataValue('external_id') } }
             );
-            console.log(`[Xendit] ✅ Notif WA terkirim ke ${contactId}`);
+            logger.info(`[Xendit] ✅ Notif WA terkirim ke ${contactId}`);
           } catch (waErr: any) {
-            console.error(`[Xendit] Gagal kirim notif WA: ${waErr.message}`);
+            logger.error(`[Xendit] Gagal kirim notif WA: ${waErr.message}`);
           }
         }
 
@@ -726,12 +727,12 @@ export async function processWebhook(
         paid_at: (normalizedStatus === 'PAID' && body.updated) ? new Date(body.updated) : null,
         raw_response: JSON.stringify(body),
       } as any);
-      console.log(`[Xendit] New transaction created from webhook: ${externalId} → ${normalizedStatus}`);
+      logger.info(`[Xendit] New transaction created from webhook: ${externalId} → ${normalizedStatus}`);
     }
 
     return { received: true, status: normalizedStatus };
   } catch (err: any) {
-    console.error('[Xendit] Webhook processing error:', err.message);
+    logger.error('[Xendit] Webhook processing error:', err.message);
     return { received: false, status: 'error' };
   }
 }
@@ -840,7 +841,7 @@ export async function syncTransactions(): Promise<number> {
         }
       }
     } catch (qrErr: any) {
-      console.warn('[Xendit] Sync QRIS gagal (mungkin fitur belum aktif):', qrErr.message);
+      logger.warn('[Xendit] Sync QRIS gagal (mungkin fitur belum aktif):', qrErr.message);
     }
 
     // Sync Invoice transactions (lama)
@@ -876,13 +877,13 @@ export async function syncTransactions(): Promise<number> {
         }
       }
     } catch (invErr: any) {
-      console.warn('[Xendit] Sync Invoice gagal:', invErr.message);
+      logger.warn('[Xendit] Sync Invoice gagal:', invErr.message);
     }
 
-    console.log(`[Xendit] Sync completed: ${synced} transactions updated/created`);
+    logger.info(`[Xendit] Sync completed: ${synced} transactions updated/created`);
     return synced;
   } catch (err: any) {
-    console.error('[Xendit] Sync error:', err.message);
+    logger.error('[Xendit] Sync error:', err.message);
     return 0;
   }
 }
@@ -928,28 +929,28 @@ export async function updateXenditConfig(data: Record<string, string>) {
 
 export async function startScheduler() {
   const enabled = await getConfig('xendit_enabled', 'true');
-  if (enabled !== 'true') { console.log('[Xendit] Scheduler disabled.'); return; }
+  if (enabled !== 'true') { logger.info('[Xendit] Scheduler disabled.'); return; }
   const apiKey = getApiKey();
-  if (!apiKey) { console.log('[Xendit] No API key — scheduler skipped.'); return; }
+  if (!apiKey) { logger.info('[Xendit] No API key — scheduler skipped.'); return; }
 
   const intervalMinStr = await getConfig('xendit_sync_interval_min', '60');
   const intervalMs = (parseInt(intervalMinStr) || 60) * 60 * 1000;
 
-  console.log('[Xendit] Initial sync on startup...');
+  logger.info('[Xendit] Initial sync on startup...');
   await syncTransactions();
 
   if (xenditInterval) clearInterval(xenditInterval);
   xenditInterval = setInterval(async () => {
-    console.log('[Xendit] Scheduled sync...');
+    logger.info('[Xendit] Scheduled sync...');
     await syncTransactions();
   }, intervalMs);
 
-  console.log(`[Xendit] Scheduler started (interval: ${intervalMinStr} menit).`);
+  logger.info(`[Xendit] Scheduler started (interval: ${intervalMinStr} menit).`);
 }
 
 export function stopScheduler() {
   if (xenditInterval) { clearInterval(xenditInterval); xenditInterval = null; }
-  console.log('[Xendit] Scheduler stopped.');
+  logger.info('[Xendit] Scheduler stopped.');
 }
 
 export function restartScheduler() {

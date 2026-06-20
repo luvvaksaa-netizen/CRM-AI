@@ -1,3 +1,4 @@
+import logger from '../utils/logger';
 import axios from 'axios';
 import { OpenAIUsageLog, AppConfig } from '../models';
 import { sendDailyBillingReport, sendThresholdAlert } from './telegramNotifier.service';
@@ -51,7 +52,7 @@ export async function fetchBillingUsage(): Promise<{ total_usage: number; total_
   // API /dashboard/billing/usage dan /credit_grants sudah DEPRECATED oleh OpenAI (selalu 403).
   // Data biaya kini diambil dari CostTracker internal (logRequest) yang akurat per-request.
   // Fungsi ini dipertahankan untuk backward-compat tapi tidak melakukan external call.
-  console.log('[OpenAI Billing] External API deprecated. Menggunakan CostTracker internal.');
+  logger.info('[OpenAI Billing] External API deprecated. Menggunakan CostTracker internal.');
   return null;
 }
 
@@ -77,7 +78,7 @@ export async function getLatestBilling() {
 
 // ─── Get billing config ───
 export async function getBillingConfig() {
-  const enabled = await getConfig('openai_billing_enabled', 'true');
+  const enabled = await getConfig('openai_billing_enabled', 'false');
   const interval = await getConfig('openai_billing_interval_min', '360');
   const threshold = await getConfig('openai_billing_daily_threshold', '10');
   const telegramToken = await getConfig('openai_billing_telegram_token', '');
@@ -122,9 +123,9 @@ export async function updateBillingConfig(data: Record<string, string>) {
 
 // ─── Scheduler ───
 export async function startScheduler() {
-  const enabled = await getConfig('openai_billing_enabled', 'true');
+  const enabled = await getConfig('openai_billing_enabled', 'false');
   if (enabled !== 'true') {
-    console.log('[OpenAI Billing] Scheduler disabled by config.');
+    logger.info('[OpenAI Billing] Scheduler disabled by config.');
     return;
   }
 
@@ -132,17 +133,17 @@ export async function startScheduler() {
   const intervalMs = (parseInt(intervalMinStr) || 360) * 60 * 1000;
 
   // Run immediately on start
-  console.log('[OpenAI Billing] Initial fetch on startup...');
+  logger.info('[OpenAI Billing] Initial fetch on startup...');
   await fetchBillingUsage();
 
   // Schedule periodic fetch
   if (billingInterval) clearInterval(billingInterval);
   billingInterval = setInterval(async () => {
-    console.log('[OpenAI Billing] Scheduled fetch...');
+    logger.info('[OpenAI Billing] Scheduled fetch...');
     await fetchBillingUsage();
   }, intervalMs);
 
-  console.log(`[OpenAI Billing] Scheduler started (interval: ${intervalMinStr} menit).`);
+  logger.info(`[OpenAI Billing] Scheduler started (interval: ${intervalMinStr} menit).`);
 
   // Schedule daily report via Telegram (check every minute, send at 08:00 WIB)
   dailyReportInterval = setInterval(async () => {
@@ -164,7 +165,7 @@ export async function startScheduler() {
         );
       }
     } catch (e: any) {
-      console.error('[OpenAI Billing] Daily report error:', e.message);
+      logger.error('[OpenAI Billing] Daily report error:', e.message);
     }
   }, 60000); // Check every minute for daily report timing
 }
@@ -178,7 +179,7 @@ export function stopScheduler() {
     clearInterval(dailyReportInterval);
     dailyReportInterval = null;
   }
-  console.log('[OpenAI Billing] Scheduler stopped.');
+  logger.info('[OpenAI Billing] Scheduler stopped.');
 }
 
 export function restartScheduler() {

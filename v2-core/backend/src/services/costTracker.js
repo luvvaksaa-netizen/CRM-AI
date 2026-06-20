@@ -34,10 +34,15 @@ function calculateCost(model, promptTokens, completionTokens) {
   const pricing = MODEL_PRICING[model] || DEFAULT_PRICING;
   const inputCost = (promptTokens / 1_000_000) * pricing.input;
   const outputCost = (completionTokens / 1_000_000) * pricing.output;
+
+  // Guard: pastikan tidak NaN/Infinity yang bisa sebabkan validasi DECIMAL gagal
+  const safeInput = Number.isFinite(inputCost) ? inputCost : 0;
+  const safeOutput = Number.isFinite(outputCost) ? outputCost : 0;
+
   return {
-    input_cost: parseFloat(inputCost.toFixed(8)),
-    output_cost: parseFloat(outputCost.toFixed(8)),
-    total_cost: parseFloat((inputCost + outputCost).toFixed(8)),
+    input_cost: parseFloat(safeInput.toFixed(8)),
+    output_cost: parseFloat(safeOutput.toFixed(8)),
+    total_cost: parseFloat((safeInput + safeOutput).toFixed(8)),
   };
 }
 
@@ -50,12 +55,22 @@ function calculateCost(model, promptTokens, completionTokens) {
  * @param {string} [options.endpoint] - Tipe endpoint ('chat', 'audio', dll)
  * @param {string} [options.functionName] - Nama fungsi pemanggil (untuk tracking)
  */
+// ─── Log throttle: max 1 error per 60 detik ───
+let lastCostTrackerErrorTime = 0;
+const COST_TRACKER_ERROR_COOLDOWN_MS = 60000;
+
 async function logRequest({ model, promptTokens, completionTokens, endpoint, functionName }) {
   try {
     const prompt = promptTokens || 0;
     const completion = completionTokens || 0;
     const total = prompt + completion;
     const { input_cost, output_cost, total_cost } = calculateCost(model, prompt, completion);
+
+    // Validasi: pastikan nilai dalam range DECIMAL(12,8) — max 9999.99999999
+    const maxDecimal = 9999.99999999;
+    const safeInputCost = Math.min(Math.max(input_cost || 0, 0), maxDecimal);
+    const safeOutputCost = Math.min(Math.max(output_cost || 0, 0), maxDecimal);
+    const safeTotalCost = Math.min(Math.max(total_cost || 0, 0), maxDecimal);
 
     // PENTING: gunakan toFixed(8) string bukan float!
     // Sequelize DECIMAL validator menolak scientific notation (e.g. 1.5e-7).
@@ -65,9 +80,9 @@ async function logRequest({ model, promptTokens, completionTokens, endpoint, fun
       prompt_tokens: prompt,
       completion_tokens: completion,
       total_tokens: total,
-      input_cost: input_cost.toFixed(8),
-      output_cost: output_cost.toFixed(8),
-      total_cost: total_cost.toFixed(8),
+      input_cost: safeInputCost.toFixed(8),
+      output_cost: safeOutputCost.toFixed(8),
+      total_cost: safeTotalCost.toFixed(8),
       endpoint: endpoint || 'chat',
       function_name: functionName || null,
       created_at: new Date(),
@@ -77,7 +92,11 @@ async function logRequest({ model, promptTokens, completionTokens, endpoint, fun
   } catch (e) {
     // Non-blocking — error logging tidak boleh crash main flow
     const detail = e.errors ? e.errors.map(er => er.message).join(', ') : e.message;
-    logger.error(`[CostTracker] Gagal log request: ${detail}`);
+    const now = Date.now();
+    if (now - lastCostTrackerErrorTime > COST_TRACKER_ERROR_COOLDOWN_MS) {
+      lastCostTrackerErrorTime = now;
+      logger.error(`[CostTracker] Gagal log request: ${detail} | values: model=${model} prompt=${promptTokens} comp=${completionTokens} cost=${total_cost?.toFixed?.(8) || 'N/A'}`);
+    }
   }
 }
 

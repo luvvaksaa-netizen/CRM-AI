@@ -28,6 +28,16 @@ function getStoreUniqueId() {
     return process.env.SCALEV_STORE_UNIQUE_ID || '';
 }
 
+/**
+ * Variant ID produk "Order CRM AI" (harga Rp 1) di Scalev.
+ * Dipakai sebagai carrier harga dinamis:
+ *   quantity = nominal_tagihan → gross_revenue = qty x Rp1 = nominal_tagihan
+ * Wajib diisi di .env sebagai SCALEV_CUSTOM_VARIANT_ID.
+ */
+function getCustomVariantId() {
+    return process.env.SCALEV_CUSTOM_VARIANT_ID || '';
+}
+
 /** Buat axios instance dengan Bearer Auth Scalev */
 function getClient() {
     const apiKey = getApiKey();
@@ -49,6 +59,69 @@ function getClient() {
 /**
  * Mengubah qr_string QRIS menjadi Buffer PNG siap kirim ke WhatsApp.
  */
+function firstString(...values) {
+    for (const value of values) {
+        if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return null;
+}
+
+function firstActionUrl(...actionGroups) {
+    for (const actions of actionGroups) {
+        if (!Array.isArray(actions)) continue;
+        const selected = actions.find(action =>
+            ['AUTH', 'CREATE', 'PAY', 'CHECKOUT', 'OPEN'].includes(String(action?.action || action?.type || '').toUpperCase())
+        ) || actions[0];
+        const url = firstString(selected?.url, selected?.href, selected?.link);
+        if (url) return url;
+    }
+    return null;
+}
+
+function extractQrString(data) {
+    return firstString(
+        data?.qr_string,
+        data?.qris,
+        data?.qris_string,
+        data?.qr_code?.qr_string,
+        data?.qr_code?.content,
+        data?.payment_method?.qr_code?.qr_string,
+        data?.payment_method?.qr_string,
+        data?.pg_payment_info?.qr_string,
+        data?.payment?.qr_string,
+        data?.payment?.qr_code?.qr_string,
+        data?.payment?.payment_method?.qr_code?.qr_string,
+        data?.data?.qr_string,
+        data?.data?.payment_method?.qr_code?.qr_string
+    );
+}
+
+function extractPaymentUrl(data) {
+    return firstString(
+        data?.payment_url,
+        data?.checkout_url,
+        data?.invoice_url,
+        data?.payment?.payment_url,
+        data?.payment?.checkout_url,
+        data?.payment?.invoice_url,
+        data?.data?.payment_url,
+        data?.data?.checkout_url,
+        data?.data?.invoice_url
+    ) || firstActionUrl(data?.actions, data?.payment?.actions, data?.data?.actions);
+}
+
+function extractPublicOrderUrl(data) {
+    return firstString(
+        data?.public_order_url,
+        data?.order_url,
+        data?.public_url,
+        data?.order?.public_order_url,
+        data?.order?.public_url,
+        data?.data?.public_order_url,
+        data?.data?.order_url
+    );
+}
+
 async function renderQrisImage(qrString) {
     if (!qrString) return null;
     try {
@@ -72,7 +145,22 @@ async function renderQrisImage(qrString) {
 
 /**
  * Membuat order baru di Scalev via POST /v3/orders.
+ *
+ * DYNAMIC PRICING STRATEGY:
+ * Scalev tidak mendukung harga bebas/custom per order (gross_revenue harus berasal
+ * dari harga varian produk yang sudah terdaftar di database Scalev).
+ *
+ * Solusi: Gunakan produk "Order CRM AI" (harga Rp 1, is_editable=true) dengan
+ * quantity = nominal_tagihan (dalam rupiah). Sehingga:
+ *   qty 50000 x Rp1 = Rp 50.000 gross_revenue yang tepat.
+ *
+ * Rincian produk asli (nama, varian, jumlah) dimasukkan ke field `notes`
+ * agar tetap terbaca di dashboard Scalev.
+ *
  * @param {Object} params
+ * @param {number} [params.amount]     - Nominal tagihan (Rp). Jika ada, override ordervariants.
+ * @param {string} [params.notes]      - Catatan order (akan digabung dengan rincian produk).
+ * @param {Array}  [params.ordervariants] - Rincian produk asli (untuk notes saja, tidak dikirim ke Scalev).
  * @returns {Promise<{success: boolean, order_id?: string, error?: string, raw?: any}>}
  */
 async function createOrder(params) {
@@ -95,23 +183,70 @@ async function createOrder(params) {
             store_unique_id: storeUniqueId,
             customer_name: params.customer_name,
             payment_method: params.payment_method || 'qris',
-            shipment_provider_code: 'mengantar', // Mengantar terintegrasi native di Scalev
         };
 
         if (params.customer_phone) payload.customer_phone = params.customer_phone;
         if (params.address) payload.address = params.address;
-        if (params.shipping_cost != null) payload.shipping_cost = params.shipping_cost;
-        if (params.ordervariants && params.ordervariants.length > 0) payload.ordervariants = params.ordervariants;
-        if (params.notes) payload.notes = params.notes;
-        if (params.product_discount != null) payload.product_discount = params.product_discount;
-        if (params.shipping_discount != null) payload.shipping_discount = params.shipping_discount;
         if (params.metadata) payload.metadata = params.metadata;
         if (params.agent_context) payload.agent_context = params.agent_context;
+
+        // ── DYNAMIC PRICING VIA "Order CRM AI" VARIANT (Rp 1) ──────────────────
+        // Scalev hanya menerima harga dari produk yang sudah terdaftar.
+        // Kita gunakan variant_Y4Cwyl66kZqnIrMHvD48uJOh (Order CRM AI, Rp1)
+        // dengan quantity = nominal tagihan sehingga gross_revenue = nominal yang tepat.
+        const customVariantId = getCustomVariantId();
+        const amount = params.amount ? Math.round(Number(params.amount)) : 0;
+
+        if (customVariantId && amount > 0) {
+            // Pakai custom variant dengan quantity = amount (dalam rupiah)
+            payload.ordervariants = [{
+                variant_unique_id: customVariantId,
+                quantity: amount, // qty 50000 x Rp1 = Rp 50.000
+            }];
+
+            // Rincian produk asli masuk ke notes agar kelihatan di dashboard
+            const detailLines = [];
+            if (params.ordervariants && params.ordervariants.length > 0) {
+                params.ordervariants.forEach((v, i) => {
+                    const nama = v.product_name || 'Produk';
+                    const varian = v.variant_name ? ` (${v.variant_name})` : '';
+                    const qty = v.quantity ? `x${v.quantity}` : '';
+                    const harga = v.price ? ` @ Rp ${Number(v.price).toLocaleString('id-ID')}` : '';
+                    detailLines.push(`${i + 1}. ${nama}${varian} ${qty}${harga}`.trim());
+                });
+            }
+
+            const baseNote = params.notes || '';
+            const detailNote = detailLines.length > 0 ? `\n\nRincian Pesanan:\n${detailLines.join('\n')}` : '';
+            payload.notes = (baseNote + detailNote).trim();
+
+        } else if (customVariantId && params.shipping_cost && !amount) {
+            // Hanya ada ongkir tanpa amount: pakai ongkir sebagai qty fallback
+            console.warn('[Scalev] amount tidak ada, menggunakan shipping_cost sebagai fallback qty');
+            payload.ordervariants = [{
+                variant_unique_id: customVariantId,
+                quantity: Math.round(Number(params.shipping_cost)),
+            }];
+            if (params.notes) payload.notes = params.notes;
+
+        } else if (!customVariantId) {
+            // Tidak ada SCALEV_CUSTOM_VARIANT_ID — fallback ke ordervariants lama (akan error gross_revenue=0)
+            console.warn('[Scalev] ⚠️  SCALEV_CUSTOM_VARIANT_ID tidak dikonfigurasi! Order mungkin gagal karena gross_revenue=0.');
+            if (params.ordervariants && params.ordervariants.length > 0) payload.ordervariants = params.ordervariants;
+            if (params.notes) payload.notes = params.notes;
+        }
+
+        // Jika tidak menggunakan customVariantId, kirim ongkir/diskon seperti biasa
+        if (!customVariantId) {
+            if (params.shipping_cost != null) payload.shipping_cost = params.shipping_cost;
+            if (params.product_discount != null) payload.product_discount = params.product_discount;
+            if (params.shipping_discount != null) payload.shipping_discount = params.shipping_discount;
+        }
 
         const res = await client.post('/v3/orders', payload);
         const order = res.data;
 
-        console.log(`[Scalev] ✅ Order created: ${order.order_id || order.id} customer: ${params.customer_name}`);
+        console.log(`[Scalev] ✅ Order created: ${order.order_id || order.id} | customer: ${params.customer_name} | Rp ${amount}`);
 
         return {
             success: true,
@@ -138,6 +273,13 @@ async function createOrder(params) {
 
 /**
  * Membuat payment request untuk order yang sudah ada.
+ * 
+ * Scalev menggunakan Xendit sebagai payment gateway.
+ * Struktur response payment endpoint (POST /v3/orders/:id/payment):
+ *   - payment_method.type: "QR_CODE"
+ *   - payment_method.qr_code.qr_string: isi QR code yang bisa di-render
+ *   - actions: array link aksi (checkout url)
+ * 
  * @param {string} orderId
  * @returns {Promise<{success: boolean, qrisImageBuffer?: Buffer, public_order_url?: string, payment_url?: string, qr_string?: string, payment_method?: string, error?: string}>}
  */
@@ -151,11 +293,22 @@ async function createPaymentForOrder(orderId) {
         const res = await client.post(`/v3/orders/${orderId}/payment`);
         const data = res.data;
 
-        const publicOrderUrl = data.public_order_url || null;
-        const paymentUrl = data.payment_url || null;
-        const paymentMethod = data.payment_method || 'unknown';
-        const pgInfo = data.pg_payment_info || {};
-        const qrString = pgInfo.qr_string || null;
+        // ── Ekstrak payment_method yang bisa berupa string atau object (Xendit format) ──
+        let paymentMethodStr = 'qris';
+        if (data.payment_method && typeof data.payment_method === 'object') {
+            paymentMethodStr = (data.payment_method.type || 'QR_CODE').toLowerCase();
+        } else if (typeof data.payment_method === 'string') {
+            paymentMethodStr = data.payment_method;
+        }
+
+        // ── Ekstrak QR string dari Xendit response structure ──
+        // Xendit format: payment_method.qr_code.qr_string
+        const qrString = extractQrString(data);
+        
+
+        // ── Ekstrak payment URL dari actions array (Xendit format) ──
+        const paymentUrl = extractPaymentUrl(data);
+        const publicOrderUrl = extractPublicOrderUrl(data);
 
         let qrisImageBuffer;
         if (qrString) {
@@ -163,7 +316,7 @@ async function createPaymentForOrder(orderId) {
             if (buf) qrisImageBuffer = buf;
         }
 
-        console.log(`[Scalev] ✅ Payment created for order ${orderId}: method=${paymentMethod}, qris=${!!qrString}`);
+        console.log(`[Scalev] ✅ Payment created for order ${orderId}: method=${paymentMethodStr}, qris=${!!qrString}, image=${!!qrisImageBuffer}`);
 
         return {
             success: true,
@@ -171,7 +324,7 @@ async function createPaymentForOrder(orderId) {
             payment_url: paymentUrl,
             qr_string: qrString,
             qrisImageBuffer,
-            payment_method: paymentMethod,
+            payment_method: paymentMethodStr,
             raw: data,
         };
     } catch (err) {
@@ -207,12 +360,15 @@ async function createOrderAndPay(params) {
     const paymentResult = await createPaymentForOrder(orderId);
 
     if (!paymentResult.success) {
-        console.warn(`[Scalev] Order ${orderId} berhasil tapi payment gagal: ${paymentResult.error}`);
+        const errMsg = typeof paymentResult.error === 'object'
+            ? JSON.stringify(paymentResult.error)
+            : (paymentResult.error || 'Unknown payment error');
+        console.warn(`[Scalev] Order ${orderId} berhasil tapi payment gagal: ${errMsg}`);
         return {
             success: true,
             order_id: orderId,
             payment_method: params.payment_method,
-            error: `Payment gagal: ${paymentResult.error}. Order ID: ${orderId}`,
+            error: `Payment gagal: ${errMsg}. Order ID: ${orderId}`,
         };
     }
 
@@ -224,6 +380,9 @@ async function createOrderAndPay(params) {
         qr_string: paymentResult.qr_string,
         qrisImageBuffer: paymentResult.qrisImageBuffer,
         payment_method: paymentResult.payment_method,
+        error: (paymentResult.qrisImageBuffer || paymentResult.payment_url || paymentResult.public_order_url)
+            ? undefined
+            : 'Scalev payment response tidak berisi QRIS image, payment URL, atau public order URL.',
     };
 }
 
@@ -324,6 +483,7 @@ module.exports = {
     getApiKey,
     hasApiKey,
     getStoreUniqueId,
+    getCustomVariantId,
     renderQrisImage,
     createOrder,
     createPaymentForOrder,

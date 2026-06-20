@@ -107,10 +107,11 @@ function sanitizeTextOutput(text = '') {
  * Prioritas: bts > uv > dtf > generic
  */
 function inferAgentProductKind(agent = {}, mediaList = []) {
+    const safeAgent = agent || {};
     const haystack = [
-        agent.name,
-        agent.system_prompt,
-        agent.product_knowledge,
+        safeAgent.name,
+        safeAgent.system_prompt,
+        safeAgent.product_knowledge,
         ...mediaList.map(item => item?.media?.label || item?.label || '')
     ].join(' ').toLowerCase();
 
@@ -689,6 +690,93 @@ NOMINAL: WAJIB persis sama dengan rekap. DP = 50% dari Total Harus Dibayar. Luna
             }
         ]; // ← penutup array tools
 
+        // ── TOOL: Buat Resi Mengantar (setelah customer bayar) ──
+        // Hanya tampilkan tool ini jika MENGANTAR_API_KEY dikonfigurasi
+        if (process.env.MENGANTAR_API_KEY) {
+            tools.push({
+                type: "function",
+                function: {
+                    name: "buat_resi_mengantar",
+                    description: `Membuat nomor resi/AWB di Mengantar untuk pesanan yang SUDAH LUNAS/TERBAYAR.
+
+KAPAN PANGGIL:
+- Hanya SETELAH pembayaran customer dikonfirmasi (bukti transfer valid, atau webhook Scalev paid)
+- Saat owner/admin meminta buat resi untuk pesanan tertentu
+- JANGAN panggil sebelum ada konfirmasi pembayaran
+
+SETELAH TOOL DIPANGGIL:
+- Sistem otomatis kirim notif ke customer dengan nomor resi
+- Kamu cukup ucapkan terima kasih dan info bahwa paket sedang diproses
+
+CATATAN: Gunakan data dari rekap pesanan. Isi semua field seakurat mungkin.`,
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            customer_name: {
+                                type: "string",
+                                description: "Nama penerima (sesuai rekap pesanan)"
+                            },
+                            customer_phone: {
+                                type: "string",
+                                description: "Nomor HP penerima (format: 081234567890 atau 6281234567890)"
+                            },
+                            customer_address: {
+                                type: "string",
+                                description: "Alamat lengkap penerima dari rekap pesanan"
+                            },
+                            destination_keyword: {
+                                type: "string",
+                                description: "Nama Kecamatan dan Kota/Kabupaten tujuan untuk lookup ID. Contoh: 'Loceret, Nganjuk' atau 'Mojoroto, Kediri'"
+                            },
+                            parcel_content: {
+                                type: "string",
+                                description: "Isi paket / nama produk. Contoh: 'Label Nama DTF 30pcs'"
+                            },
+                            weight: {
+                                type: "number",
+                                description: "Berat paket dalam kg (default 1)"
+                            },
+                            quantity: {
+                                type: "integer",
+                                description: "Jumlah item (default 1)"
+                            },
+                            goods_value: {
+                                type: "integer",
+                                description: "Nilai barang dalam Rupiah (untuk asuransi). Ambil dari total pesanan di rekap."
+                            },
+                            courier: {
+                                type: "string",
+                                enum: ["JT", "JNE", "Sap", "SiCepat", "Ninja", "iDexpress", "lion", "anteraja"],
+                                description: "Kurir pengiriman (default: JT). Pilih sesuai preferensi atau ketersediaan."
+                            },
+                            contact_id: {
+                                type: "string",
+                                description: "ID kontak WhatsApp customer untuk kirim notif resi"
+                            },
+                            store_wa_id: {
+                                type: "string",
+                                description: "ID store WA bot yang dipakai"
+                            },
+                            custom_products: {
+                                type: "array",
+                                description: "Detail produk (opsional, untuk label cetak di resi Mengantar)",
+                                items: {
+                                    type: "object",
+                                    properties: {
+                                        name: { type: "string", description: "Nama produk" },
+                                        variant: { type: "string", description: "Varian produk" },
+                                        qty: { type: "integer", description: "Jumlah" },
+                                        price: { type: "integer", description: "Harga satuan (Rp)" }
+                                    }
+                                }
+                            }
+                        },
+                        required: ["customer_name", "customer_address", "destination_keyword", "parcel_content", "contact_id", "store_wa_id"]
+                    }
+                }
+            });
+        }
+
         if (configuredLabels.length > 0) {
             tools.push({
                 type: "function",
@@ -780,6 +868,22 @@ NOMINAL: WAJIB persis sama dengan rekap. DP = 50% dari Total Harus Dibayar. Luna
 
         // === TOOL CALLING HANDLER ===
         if (responseMessage.tool_calls) {
+            // 🛡️ PRE-TOOL INSPECTOR MIDDLEWARE
+            // Cegah AI mengeksekusi tool (seperti pembuat QRIS) jika rekapnya belum valid!
+            if (!isRetry && responseMessage.content) {
+                const inspectorResult = await _runInspectorValidation(responseMessage.content, kind);
+                if (!inspectorResult.valid) {
+                    logger.warn(`[Inspector] Rekap ditolak (PRE-TOOL): ${inspectorResult.missing}. Retrying...`);
+                    const retryHistory = [...history];
+                    retryHistory.push({ role: 'assistant', content: responseMessage.content, is_from_me: true });
+                    retryHistory.push({ 
+                        role: 'user', 
+                        content: `[SISTEM INSPECTOR]: Draf rekap DITOLAK karena data kurang: ${inspectorResult.missing}. Tanyakan kekurangan data ini ke pelanggan dengan bahasa natural. JANGAN memanggil tool buat_order_scalev sebelum rekap lengkap!` 
+                    });
+                    return _processAIResponse("", retryHistory, store, agent, customerMediaContext, conversationSummary, interactionCount, customerPhone, true);
+                }
+            }
+
             messages.push(responseMessage);
             let mediaResults = [];
             let needsSecondCall = false;
@@ -840,53 +944,7 @@ NOMINAL: WAJIB persis sama dengan rekap. DP = 50% dari Total Harus Dibayar. Luna
                                 continue;
                             }
 
-                            // ── Guard 2: KEAMANAN KRITIS ──
-                            // Pastikan customer sudah konfirmasi rekap SEBELUM QRIS dibuat.
-                            // Cek conversation history: harus ada pesan dari customer
-                            // yang berisi "iya"/"ok"/"setuju" SETELAH ada pesan rekap.
-                            // Ini mencegah QRIS terkirim sebelum customer konfirmasi.
-                            const REKAP_PATTERN = /rekap\s+pesanan|total\s+harus\s+dibayar|harga\s+produk\s*:/i;
-                            const KONFIRMASI_PATTERN = /^(iya|ok|oke|setuju|ya|siap|deal|oke bund|iya bund|oke kak|iyaa|okee|yess|yes|lanjut|bisa|confirm|gas|yasudah|lanjutkan)/i;
-
-                            let rekapIndex = -1;
-                            let customerKonfirmasiAfterRekap = false;
-
-                            if (history && history.length > 0) {
-                                for (let hi = 0; hi < history.length; hi++) {
-                                    const h = history[hi];
-                                    const body = (h.body || h.content || '').toLowerCase();
-                                    if (h.is_from_me && REKAP_PATTERN.test(body)) {
-                                        rekapIndex = hi; // catat index rekap terakhir
-                                    }
-                                    if (!h.is_from_me && rekapIndex >= 0 && hi > rekapIndex) {
-                                        if (KONFIRMASI_PATTERN.test(body.trim())) {
-                                            customerKonfirmasiAfterRekap = true;
-                                        }
-                                    }
-                                }
-                            }
-
-                            if (rekapIndex === -1) {
-                                logger.warn('[AI-Legacy] buat_order_scalev dipanggil sebelum rekap dikirim ke customer.');
-                                messages.push({
-                                    tool_call_id: toolCall.id, role: 'tool',
-                                    name: 'buat_order_scalev',
-                                    content: 'Ditolak: Rekap pesanan belum pernah dikirim ke customer. Kirim rekap dulu dan tunggu konfirmasi "IYA" dari customer sebelum membuat QRIS.'
-                                });
-                                needsSecondCall = true;
-                                continue;
-                            }
-
-                            if (!customerKonfirmasiAfterRekap) {
-                                logger.warn('[AI-Legacy] buat_order_scalev dipanggil sebelum customer konfirmasi IYA.');
-                                messages.push({
-                                    tool_call_id: toolCall.id, role: 'tool',
-                                    name: 'buat_order_scalev',
-                                    content: 'Ditolak: Customer belum mengkonfirmasi rekap pesanan. Tunggu customer membalas "IYA" atau "OK" terlebih dahulu sebelum membuat QRIS.'
-                                });
-                                needsSecondCall = true;
-                                continue;
-                            }
+                            // ── Guard 2: Dihapus (Auto-QRIS: Tidak perlu menunggu IYA karena sudah dilindungi Pre-Tool Inspector) ──
 
                             // ── Panggil Scalev API ──
                             const scalevSvc = getScalevService();
@@ -901,12 +959,14 @@ NOMINAL: WAJIB persis sama dengan rekap. DP = 50% dari Total Harus Dibayar. Luna
                                         address: args.address || undefined,
                                         shipping_cost: args.shipping_cost ? Math.round(Number(args.shipping_cost)) : undefined,
                                         payment_method: 'qris',
-                                        notes: `[${tipeBayar}] ${desc}`,
-                                        // ordervariants: data produk terstruktur untuk dashboard Scalev
+                                        // amount = nominal tagihan (dipakai scalev_service untuk dynamic pricing)
+                                        amount: amount,
+                                        notes: `[${tipeBayar}] ${desc} | Customer: ${customerName}`,
+                                        // ordervariants: rincian pesanan asli — dimasukkan ke notes di scalev_service
                                         ordervariants: (args.ordervariants && args.ordervariants.length > 0)
                                             ? args.ordervariants.map(v => ({
                                                 product_name: v.product_name || 'Produk',
-                                                variant_name: v.variant_name || '-',
+                                                variant_name: v.variant_name || '',
                                                 quantity: Math.round(Number(v.quantity) || 1),
                                                 price: Math.round(Number(v.price) || 0),
                                             }))
@@ -917,6 +977,7 @@ NOMINAL: WAJIB persis sama dengan rekap. DP = 50% dari Total Harus Dibayar. Luna
                                             store_wa_id: storeWaId || '',
                                             created_by: 'bot_ai_legacy',
                                             description: desc,
+                                            amount: amount,
                                         },
                                         agent_context: { source: 'crm_ai_bot_legacy', tipe_bayar: tipeBayar },
                                     });
@@ -1066,6 +1127,89 @@ NOMINAL: WAJIB persis sama dengan rekap. DP = 50% dari Total Harus Dibayar. Luna
                             needsSecondCall = true;
                         }
                     }
+                    // ── TOOL: Buat Resi Mengantar ──
+                    if (toolCall.function.name === 'buat_resi_mengantar') {
+                        try {
+                            const args = JSON.parse(toolCall.function.arguments || '{}');
+                            const explicitContactId = args.contact_id || null;
+                            const contactId = explicitContactId || customerPhone || null;
+                            const explicitStoreWaId = args.store_wa_id || null;
+                            const storeWaId = explicitStoreWaId || store?.wa_id || null;
+
+                            // Validasi dasar
+                            if (!args.customer_name || !args.customer_address || !args.destination_keyword || !args.parcel_content) {
+                                messages.push({
+                                    tool_call_id: toolCall.id, role: 'tool', name: 'buat_resi_mengantar',
+                                    content: 'Gagal: Data tidak lengkap. Pastikan nama, alamat, kecamatan/kota, dan nama produk sudah diisi.'
+                                });
+                                needsSecondCall = true;
+                                continue;
+                            }
+
+                            logger.info(`[AI-Legacy] Membuat resi Mengantar untuk ${args.customer_name}...`);
+                            const resiResult = await mengantarService.createOrder({
+                                customerName: args.customer_name,
+                                customerPhone: args.customer_phone || (contactId ? contactId.replace('@c.us', '') : ''),
+                                customerAddress: args.customer_address,
+                                destinationKeyword: args.destination_keyword,
+                                parcelContent: args.parcel_content,
+                                weight: args.weight || 1,
+                                quantity: args.quantity || 1,
+                                goodsValue: args.goods_value,
+                                courier: args.courier,
+                                customProducts: args.custom_products,
+                                pickupType: 'dropOff',
+                            });
+
+                            if (resiResult.success) {
+                                // Kirim notif resi ke WA customer
+                                if (storeWaId && contactId) {
+                                    try {
+                                        const waSvc = require('./whatsapp_service');
+                                        const clients = waSvc.getClients ? waSvc.getClients() : null;
+                                        const waClient = clients ? clients.get(storeWaId) : null;
+                                        if (waClient) {
+                                            const resiMsg = mengantarService.formatResiMessage(resiResult);
+                                            const waId = contactId.includes('@c.us') ? contactId : `${contactId}@c.us`;
+                                            await waClient.sendMessage(waId, resiMsg);
+                                            logger.info(`[AI-Legacy] ✅ Notif resi terkirim ke ${contactId}`);
+                                        }
+                                    } catch (waErr) {
+                                        logger.error(`[AI-Legacy] Gagal kirim notif resi ke WA: ${waErr.message}`);
+                                    }
+                                }
+
+                                messages.push({
+                                    tool_call_id: toolCall.id, role: 'tool', name: 'buat_resi_mengantar',
+                                    content: [
+                                        `Resi berhasil dibuat di Mengantar!`,
+                                        resiResult.cnote_no ? `Nomor Resi: ${resiResult.cnote_no}` : '',
+                                        `Kurir: ${resiResult.courier || 'JT'}`,
+                                        resiResult.destination ? `Tujuan: ${resiResult.destination}` : '',
+                                        resiResult.is_unpaid ? `PERHATIAN: Saldo Mengantar kurang, resi perlu diaktivasi manual.` : `Status: Aktif & terbayar.`,
+                                        `Notif resi sudah dikirim ke customer via WhatsApp.`,
+                                        `Instruksi: Ucapkan terima kasih dan info paket sedang diproses.`,
+                                    ].filter(Boolean).join(' ')
+                                });
+                                logger.info(`[AI-Legacy] ✅ Resi Mengantar: ${resiResult.cnote_no} untuk ${args.customer_name}`);
+                            } else {
+                                messages.push({
+                                    tool_call_id: toolCall.id, role: 'tool', name: 'buat_resi_mengantar',
+                                    content: `Gagal membuat resi Mengantar: ${resiResult.error}. Minta owner untuk buat resi manual di aplikasi Mengantar.`
+                                });
+                                logger.warn(`[AI-Legacy] Resi Mengantar gagal: ${resiResult.error}`);
+                            }
+                            needsSecondCall = true;
+                        } catch (resiErr) {
+                            logger.error(`[AI-Legacy] buat_resi_mengantar error: ${resiErr.message}`);
+                            messages.push({
+                                tool_call_id: toolCall.id, role: 'tool', name: 'buat_resi_mengantar',
+                                content: `Sistem Mengantar tidak tersedia saat ini. Buat resi manual di aplikasi Mengantar ya bund.`
+                            });
+                            needsSecondCall = true;
+                        }
+                    }
+
                 } catch (toolErr) {
                     logger.error(`[AI] Tool call error [${toolCall.function.name}]: ${toolErr.message}`);
                     messages.push({ tool_call_id: toolCall.id, role: "tool", name: toolCall.function.name, content: `Error: ${toolErr.message}` });

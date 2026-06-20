@@ -26,7 +26,7 @@ import {
   DollarSign,
   Send,
   Bot,
-  CreditCard,
+  Package,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../services/api';
@@ -99,7 +99,7 @@ interface StoreSettings {
 
 // ─── Tabs ───
 
-type TabId = 'profile' | 'monitor' | 'backup' | 'wa' | 'stores' | 'billing' | 'xendit';
+type TabId = 'profile' | 'monitor' | 'backup' | 'wa' | 'stores' | 'billing' | 'mengantar';
 
 interface TabItem {
   id: TabId;
@@ -114,10 +114,16 @@ const TABS: TabItem[] = [
   { id: 'wa', label: 'WA Engine', icon: Wifi },
   { id: 'stores', label: 'Per-Store', icon: Store },
   { id: 'billing', label: 'OpenAI Billing', icon: DollarSign },
-  { id: 'xendit', label: 'Xendit Payment', icon: CreditCard },
+  { id: 'mengantar', label: 'Mengantar / Expedisi', icon: Package },
 ];
 
 // ─── Main Component ───
+
+const Card: React.FC<{ children: React.ReactNode; className?: string }> = ({ children, className = '' }) => (
+  <div className={`bg-slate-900/40 dark:bg-white border border-slate-800/50 dark:border-slate-200 rounded-2xl backdrop-blur-xl ${className}`}>
+    {children}
+  </div>
+);
 
 const Settings = () => {
   const [activeTab, setActiveTab] = useState<TabId>('profile');
@@ -169,15 +175,13 @@ const Settings = () => {
   const [billingTestingTelegram, setBillingTestingTelegram] = useState(false);
   const [agentList, setAgentList] = useState<Array<{id: number; name: string}>>([]);
 
-  // Xendit state
-  const [xenditConfig, setXenditConfig] = useState<any>(null);
-  const [xenditLoading, setXenditLoading] = useState(false);
-  const [xenditSaving, setXenditSaving] = useState(false);
-  const [xenditForm, setXenditForm] = useState({
-    xendit_enabled: 'true',
-    xendit_sync_interval_min: '60',
-    xendit_webhook_url: '',
-    xendit_telegram_enabled: 'true',
+  // Mengantar state
+  const [mengantarLoading, setMengantarLoading] = useState(false);
+  const [mengantarSaving, setMengantarSaving] = useState(false);
+  const [mengantarForm, setMengantarForm] = useState({
+    api_key: '',
+    sender_name: '',
+    phone: '',
   });
 
   // ─── Fetch functions ───
@@ -230,21 +234,20 @@ const Settings = () => {
     }
   }, []);
 
-  const fetchXenditConfig = useCallback(async () => {
-    setXenditLoading(true);
+  const fetchMengantarConfig = useCallback(async () => {
+    setMengantarLoading(true);
     try {
-      const res = await api.get('/xendit/config');
-      setXenditConfig(res.data);
-      setXenditForm({
-        xendit_enabled: res.data.enabled ? 'true' : 'false',
-        xendit_sync_interval_min: String(res.data.interval_min || 60),
-        xendit_webhook_url: res.data.webhook_url || '',
-        xendit_telegram_enabled: res.data.telegram_enabled ? 'true' : 'false',
+      const res = await api.get('/mengantar/config');
+      const cfg = res.data.config || res.data;
+      setMengantarForm({
+        api_key: cfg.api_key_raw || cfg.api_key || '',
+        sender_name: cfg.sender_name || '',
+        phone: cfg.phone || '',
       });
     } catch {
-      toast.error('Gagal mengambil konfigurasi Xendit.');
+      toast.error('Gagal mengambil konfigurasi Mengantar.');
     } finally {
-      setXenditLoading(false);
+      setMengantarLoading(false);
     }
   }, []);
 
@@ -309,8 +312,8 @@ const Settings = () => {
     if (activeTab === 'wa') fetchWAStatus();
     if (activeTab === 'stores') { fetchStores(); fetchAgentList(); }
     if (activeTab === 'billing') fetchBillingConfig();
-    if (activeTab === 'xendit') fetchXenditConfig();
-  }, [activeTab, fetchHealth, fetchBackups, fetchWAStatus, fetchStores, fetchAgentList, fetchBillingConfig, fetchXenditConfig]);
+    if (activeTab === 'mengantar') fetchMengantarConfig();
+  }, [activeTab, fetchHealth, fetchBackups, fetchWAStatus, fetchStores, fetchAgentList, fetchBillingConfig, fetchMengantarConfig]);
 
   // Real-time socket: live system stats & logs
   useEffect(() => {
@@ -477,19 +480,18 @@ const Settings = () => {
     }
   };
 
-  const handleXenditSave = async () => {
-    setXenditSaving(true);
+  const handleMengantarSave = async () => {
+    setMengantarSaving(true);
     try {
-      const res = await api.put('/xendit/config', xenditForm);
+      const res = await api.put('/mengantar/config', mengantarForm);
       if (res.data?.success) {
-        toast.success('Konfigurasi Xendit berhasil disimpan!');
-        setXenditConfig(res.data.config);
-        await fetchXenditConfig();
+        toast.success('Konfigurasi Mengantar berhasil disimpan!');
+        await fetchMengantarConfig();
       }
     } catch (err: any) {
       toast.error(err.response?.data?.error || 'Gagal menyimpan konfigurasi.');
     } finally {
-      setXenditSaving(false);
+      setMengantarSaving(false);
     }
   };
 
@@ -509,13 +511,7 @@ const Settings = () => {
     }
   };
 
-  // ─── Card wrapper ───
 
-  const Card: React.FC<{ children: React.ReactNode; className?: string }> = ({ children, className = '' }) => (
-    <div className={`bg-slate-900/40 dark:bg-white border border-slate-800/50 dark:border-slate-200 rounded-2xl backdrop-blur-xl ${className}`}>
-      {children}
-    </div>
-  );
 
   // ─── Render ───
 
@@ -1219,125 +1215,74 @@ const Settings = () => {
             </div>
           )}
 
-          {/* ─── Tab: Xendit Payment ─── */}
-          {activeTab === 'xendit' && (
+          {/* ─── Tab: Mengantar ─── */}
+          {activeTab === 'mengantar' && (
             <div className="space-y-6">
-              {/* API Key Status */}
-              <div className="bg-slate-900/40 dark:bg-white border border-slate-800/50 dark:border-slate-200 p-5 rounded-2xl backdrop-blur-xl">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <CreditCard className="w-5 h-5 text-blue-400" />
-                    <div>
-                      <p className="font-bold text-white dark:text-slate-900">Xendit API Key</p>
-                      <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
-                        {xenditConfig?.has_api_key
-                          ? '✅ API Key terdeteksi dari environment (.env)'
-                          : '❌ Belum dikonfigurasi. Set XENDIT_API_KEY di file .env'}
-                      </p>
-                    </div>
-                  </div>
-                  {xenditConfig?.has_api_key ? (
-                    <CheckCircle2 className="w-6 h-6 text-emerald-400" />
-                  ) : (
-                    <XCircle className="w-6 h-6 text-red-400" />
-                  )}
-                </div>
-              </div>
-
               {/* Config Card */}
               <div className="bg-slate-900/40 dark:bg-white border border-slate-800/50 dark:border-slate-200 p-5 rounded-2xl backdrop-blur-xl">
                 <h2 className="text-lg font-bold text-white dark:text-slate-900 flex items-center gap-2 mb-5">
-                  <CreditCard className="w-5 h-5 text-emerald-400" />
-                  Konfigurasi Xendit
+                  <Package className="w-5 h-5 text-emerald-400" />
+                  Konfigurasi Mengantar
                 </h2>
 
-                {xenditLoading ? (
+                {mengantarLoading ? (
                   <div className="flex justify-center py-8">
                     <RefreshCw className="w-6 h-6 text-blue-500 animate-spin" />
                   </div>
                 ) : (
                   <div className="space-y-4 max-w-xl">
-                    {/* Enable/Disable */}
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-medium text-white dark:text-slate-900">Monitoring Aktif</p>
-                        <p className="text-xs text-slate-400 dark:text-slate-500">Sinkronisasi otomatis transaksi Xendit</p>
-                      </div>
-                      <button
-                        onClick={() => setXenditForm(f => ({ ...f, xendit_enabled: f.xendit_enabled === 'true' ? 'false' : 'true' }))}
-                        className={`relative w-12 h-6 rounded-full transition-colors ${xenditForm.xendit_enabled === 'true' ? 'bg-emerald-500' : 'bg-slate-600'}`}
-                      >
-                        <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full transition-transform ${xenditForm.xendit_enabled === 'true' ? 'translate-x-6' : 'translate-x-0.5'}`} />
-                      </button>
-                    </div>
-
-                    {/* Sync Interval */}
+                    {/* API Key */}
                     <div>
-                      <label className="text-sm font-medium text-slate-300 dark:text-slate-600 block mb-1.5">Interval Sinkronisasi (menit)</label>
-                      <input
-                        type="number"
-                        min={15}
-                        max={1440}
-                        value={xenditForm.xendit_sync_interval_min}
-                        onChange={e => setXenditForm(f => ({ ...f, xendit_sync_interval_min: e.target.value }))}
-                        className="w-full bg-slate-950 dark:bg-slate-50 border border-slate-700 dark:border-slate-300 rounded-xl py-2.5 px-4 text-slate-200 dark:text-slate-700 focus:outline-none focus:border-blue-500"
-                      />
-                      <p className="text-xs text-slate-500 mt-1">Min: 15 menit, Default: 60 menit</p>
-                    </div>
-
-                    {/* Webhook URL */}
-                    <div>
-                      <label className="text-sm font-medium text-slate-300 dark:text-slate-600 block mb-1.5">Webhook Callback URL</label>
+                      <label className="text-sm font-medium text-slate-300 dark:text-slate-600 block mb-1.5">API Key Mengantar</label>
                       <input
                         type="text"
-                        value={xenditForm.xendit_webhook_url}
-                        onChange={e => setXenditForm(f => ({ ...f, xendit_webhook_url: e.target.value }))}
-                        placeholder="https://domain-anda.com/api/xendit/webhook"
+                        value={mengantarForm.api_key}
+                        onChange={e => setMengantarForm(f => ({ ...f, api_key: e.target.value }))}
+                        placeholder="Masukkan API Key Mengantar"
                         className="w-full bg-slate-950 dark:bg-slate-50 border border-slate-700 dark:border-slate-300 rounded-xl py-2.5 px-4 text-slate-200 dark:text-slate-700 focus:outline-none focus:border-blue-500 placeholder-slate-500"
                       />
-                      <p className="text-xs text-slate-500 mt-1">Set URL ini di Dashboard Xendit → Settings → Callback URL</p>
                     </div>
 
-                    {/* Webhook Verification */}
+                    {/* Sender Name */}
                     <div>
-                      <label className="text-sm font-medium text-slate-300 dark:text-slate-600 block mb-1.5">Webhook Verification Token</label>
-                      <p className="text-xs text-slate-400 dark:text-slate-500 flex items-center gap-2">
-                        {xenditConfig?.webhook_verification_token
-                          ? <><CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> {xenditConfig.webhook_verification_token}</>
-                          : <><XCircle className="w-3.5 h-3.5 text-red-400" /> Belum dikonfigurasi. Set XENDIT_WEBHOOK_VERIFICATION_TOKEN di .env</>}
-                      </p>
+                      <label className="text-sm font-medium text-slate-300 dark:text-slate-600 block mb-1.5">Nama Pengirim (Sender Name)</label>
+                      <input
+                        type="text"
+                        value={mengantarForm.sender_name}
+                        onChange={e => setMengantarForm(f => ({ ...f, sender_name: e.target.value }))}
+                        placeholder="Contoh: Toko Berkah"
+                        className="w-full bg-slate-950 dark:bg-slate-50 border border-slate-700 dark:border-slate-300 rounded-xl py-2.5 px-4 text-slate-200 dark:text-slate-700 focus:outline-none focus:border-blue-500 placeholder-slate-500"
+                      />
                     </div>
 
-                    {/* Telegram Notification */}
-                    <div className="flex items-center justify-between pt-3 border-t border-slate-800/50 dark:border-slate-200">
-                      <div>
-                        <p className="text-sm font-medium text-white dark:text-slate-900">Notifikasi Telegram</p>
-                        <p className="text-xs text-slate-400 dark:text-slate-500">Kirim notifikasi saat ada pembayaran diterima / expired</p>
-                      </div>
-                      <button
-                        onClick={() => setXenditForm(f => ({ ...f, xendit_telegram_enabled: f.xendit_telegram_enabled === 'true' ? 'false' : 'true' }))}
-                        className={`relative w-12 h-6 rounded-full transition-colors ${xenditForm.xendit_telegram_enabled === 'true' ? 'bg-blue-500' : 'bg-slate-600'}`}
-                      >
-                        <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full transition-transform ${xenditForm.xendit_telegram_enabled === 'true' ? 'translate-x-6' : 'translate-x-0.5'}`} />
-                      </button>
+                    {/* Sender Phone */}
+                    <div>
+                      <label className="text-sm font-medium text-slate-300 dark:text-slate-600 block mb-1.5">Nomor HP Pengirim</label>
+                      <input
+                        type="text"
+                        value={mengantarForm.phone}
+                        onChange={e => setMengantarForm(f => ({ ...f, phone: e.target.value }))}
+                        placeholder="Contoh: 081234567890"
+                        className="w-full bg-slate-950 dark:bg-slate-50 border border-slate-700 dark:border-slate-300 rounded-xl py-2.5 px-4 text-slate-200 dark:text-slate-700 focus:outline-none focus:border-blue-500 placeholder-slate-500"
+                      />
                     </div>
 
                     {/* Actions */}
                     <div className="flex flex-wrap items-center gap-3 pt-2">
                       <button
-                        onClick={handleXenditSave}
-                        disabled={xenditSaving || xenditLoading}
+                        onClick={handleMengantarSave}
+                        disabled={mengantarSaving || mengantarLoading}
                         className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white dark:text-slate-900 rounded-xl text-sm font-medium transition-colors shadow-lg shadow-blue-500/20"
                       >
                         <Save className="w-4 h-4" />
-                        {xenditSaving ? 'Menyimpan...' : 'Simpan Konfigurasi'}
+                        {mengantarSaving ? 'Menyimpan...' : 'Simpan Konfigurasi'}
                       </button>
                       <button
-                        onClick={fetchXenditConfig}
-                        disabled={xenditLoading}
+                        onClick={fetchMengantarConfig}
+                        disabled={mengantarLoading}
                         className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 dark:bg-slate-100 hover:bg-slate-700 disabled:opacity-50 text-slate-200 dark:text-slate-700 rounded-xl text-sm font-medium transition-colors"
                       >
-                        <RefreshCw className={`w-4 h-4 ${xenditLoading ? 'animate-spin' : ''}`} />
+                        <RefreshCw className={`w-4 h-4 ${mengantarLoading ? 'animate-spin' : ''}`} />
                         Refresh
                       </button>
                     </div>
@@ -1350,13 +1295,11 @@ const Settings = () => {
                 <div className="flex items-start gap-3">
                   <AlertTriangle className="w-5 h-5 text-amber-400 mt-0.5 shrink-0" />
                   <div>
-                    <p className="text-sm font-medium text-white dark:text-slate-900 mb-1">Panduan Integrasi Xendit</p>
+                    <p className="text-sm font-medium text-white dark:text-slate-900 mb-1">Panduan Integrasi Mengantar</p>
                     <ul className="text-xs text-slate-400 dark:text-slate-500 space-y-1 list-disc list-inside">
-                      <li>Xendit API Key dibaca dari <code className="text-blue-400 bg-slate-800 dark:bg-slate-100 px-1 rounded">XENDIT_API_KEY</code> di file .env backend</li>
-                      <li>Dapatkan API Key dari Dashboard Xendit → Settings → API Keys</li>
-                      <li>Webhook callback akan menerima notifikasi status pembayaran otomatis</li>
-                      <li>Notifikasi Telegram akan dikirim saat ada payment diterima atau expired</li>
-                      <li>Data transaksi bisa dilihat di Dashboard (widget Xendit)</li>
+                      <li>Dapatkan API Key di menu <strong>Integrasi Public API</strong> pada pengaturan akun Mengantar Anda.</li>
+                      <li>Pastikan format nomor HP sesuai (contoh: 0812345...).</li>
+                      <li>Config ini akan dipakai sistem saat membuat resi otomatis dari Bot.</li>
                     </ul>
                   </div>
                 </div>

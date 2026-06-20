@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const util = require('util');
 
 /**
  * PRODUCTION-GRADE LOGGER
@@ -43,6 +44,10 @@ function rotateLogIfNeeded() {
     }
 }
 
+function formatMessage(args) {
+    return util.format(...args);
+}
+
 function writeLog(lvl, msg) {
     const time = new Date().toLocaleString('id-ID');
     rotateLogIfNeeded();
@@ -50,29 +55,35 @@ function writeLog(lvl, msg) {
 }
 
 const logger = {
-    info: (msg) => {
+    info: (...args) => {
+        const msg = formatMessage(args);
         console.log(`${colors.cyan}[INFO]${colors.reset} ${msg}`);
         writeLog('INFO', msg);
     },
-    debug: (msg) => {
+    debug: (...args) => {
+        const msg = formatMessage(args);
         // Debug: tampil di console saat development, tidak ditulis ke file di production
         if (process.env.NODE_ENV !== 'production') {
             console.log(`${colors.cyan}[DEBUG]${colors.reset} ${msg}`);
         }
     },
-    success: (msg) => {
+    success: (...args) => {
+        const msg = formatMessage(args);
         console.log(`${colors.green}[SUCCESS]${colors.reset} ${msg}`);
         writeLog('SUCCESS', msg);
     },
-    warn: (msg) => {
+    warn: (...args) => {
+        const msg = formatMessage(args);
         console.log(`${colors.yellow}[WARN]${colors.reset} ${msg}`);
         writeLog('WARN', msg);
     },
-    error: (msg) => {
+    error: (...args) => {
+        const msg = formatMessage(args);
         console.error(`${colors.red}[ERROR]${colors.reset} ${msg}`);
         writeLog('ERROR', msg);
     },
-    bot: (msg) => {
+    bot: (...args) => {
+        const msg = formatMessage(args);
         console.log(`${colors.magenta}🤖 [BOT]${colors.reset} ${msg}`);
         writeLog('BOT', msg);
     }

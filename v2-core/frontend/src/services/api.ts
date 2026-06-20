@@ -3,7 +3,7 @@ import toast from 'react-hot-toast';
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3002/api',
-  timeout: 12000, // 12 detik
+  timeout: 30000, // 30 detik (was 12s, increased for slow connections)
 });
 
 api.interceptors.request.use((config) => {
@@ -16,7 +16,7 @@ api.interceptors.request.use((config) => {
 
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
     const status = error.response?.status;
     // Jangan intercept request ke /auth/login agar login page bisa berjalan normal
     const url = error.config?.url || '';
@@ -25,21 +25,40 @@ api.interceptors.response.use(
     }
 
     if (status === 401) {
-      // 401 = token expired / tidak ada → logout
-      // Cegah multiple redirect dengan cek apakah sudah di halaman login
+      // Retry sekali dengan token dari localStorage (cross-tab recovery)
+      const retryCount = error.config?._retryCount || 0;
+      if (retryCount < 1) {
+        error.config._retryCount = retryCount + 1;
+        // Coba dapatkan token dari localStorage sebagai fallback
+        const localToken = localStorage.getItem('crm_token');
+        if (localToken) {
+          error.config.headers.Authorization = `Bearer ${localToken}`;
+          return api(error.config);
+        }
+      }
+      
+      // 401 = token benar-benar expired / tidak valid
       if (!window.location.pathname.includes('/login')) {
+        // Simpan current path agar bisa redirect setelah login
+        const currentPath = window.location.pathname;
+        if (currentPath !== '/login') {
+          sessionStorage.setItem('redirectAfterLogin', currentPath);
+        }
         sessionStorage.removeItem('crm_token');
         sessionStorage.removeItem('crm_user');
         localStorage.removeItem('crm_token');
         localStorage.removeItem('crm_user');
         toast.error('Sesi berakhir. Silakan login kembali.', { id: 'session-expired' });
+        // Gunakan navigate daripada window.location untuk SPA
         setTimeout(() => {
           window.location.href = '/login';
         }, 1500);
       }
     } else if (status === 403) {
-      // 403 = akses ditolak (role tidak cukup) → JANGAN logout
       toast.error('Akses ditolak. Anda tidak memiliki izin untuk tindakan ini.', { id: 'access-denied' });
+    } else if (status === 429) {
+      // Rate limited — jangan retry, tapi beri tahu user
+      toast.error('Terlalu banyak permintaan. Tunggu sebentar.', { id: 'rate-limited', duration: 5000 });
     }
 
     return Promise.reject(error);

@@ -21,7 +21,8 @@ import {
   Zap,
   Sun,
   Moon,
-  Tag
+  Tag,
+  Package
 } from 'lucide-react';
 
 const SIDEBAR_ITEMS = [
@@ -35,6 +36,7 @@ const SIDEBAR_ITEMS = [
   { icon: Bot, label: 'AI Agents', path: '/agents' },
   { icon: Tag, label: 'Smart Labels', path: '/labels' },
   { icon: Zap, label: 'Bot Control', path: '/bot-activation' },
+  { icon: Package, label: 'Orders', path: '/orders' },
   { icon: Brain, label: 'Learning', path: '/learning' },
   { icon: Settings, label: 'Settings', path: '/settings' },
 ];

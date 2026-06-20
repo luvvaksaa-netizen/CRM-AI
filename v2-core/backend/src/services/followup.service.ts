@@ -305,7 +305,7 @@ async function executeFollowUp(followUp: any): Promise<void> {
       emitFollowUpUpdate(followUp.store_wa_id);
       return;
     } catch (sendErr: any) {
-      const isRestartError = /null|evaluate|detached|not ready|belum siap/i.test(sendErr.message);
+      const isRestartError = /null|evaluate|detached|not ready|belum siap|getChat|undefined|timeout|closed|destroyed|protocol error|callFunctionOn/i.test(sendErr.message);
       const elapsed = Date.now() - startWait;
 
       if (isRestartError && elapsed < MAX_WAIT_RESTART_MS) {

@@ -103,7 +103,10 @@ import smartLabelRoutes from './routes/smart-label.routes';
 import botActivationRoutes from './routes/bot-activation.routes';
 import openaiBillingRoutes from './routes/openai-billing.routes';
 import xenditRoutes from './routes/xendit.routes';
+import mengantarRoutes from './routes/mengantar.routes';
+import scalevRoutes from './routes/scalev.routes';
 import { handleWebhook as xenditWebhook } from './controllers/xendit.controller';
+import { handleWebhook as scalevWebhook } from './controllers/scalev.controller';
 import { authenticateJWT } from './middlewares/auth.middleware';
 import errorHandler from './middleware/errorHandler';
 import path from 'path';
@@ -115,10 +118,23 @@ const UPLOADS_DIR_STATIC = process.env.DATA_DIR
   ? path.resolve(process.env.DATA_DIR, 'uploads')
   : path.resolve(__dirname, '../data/uploads');
 
+// Frontend dist directory (served in production)
+const FRONTEND_DIST = process.env.FRONTEND_DIST
+  ? path.resolve(process.env.FRONTEND_DIST)
+  : path.resolve(__dirname, '../../frontend/dist');
+
 // Public API
 app.use('/api/auth', authRoutes);
+// Scalev webhook (PUBLIC — Scalev sends payment callbacks here)
+app.post('/api/scalev/webhook', scalevWebhook);
 // Xendit webhook (PUBLIC — Xendit sends callbacks here, no JWT)
-app.post('/api/xendit/webhook', xenditWebhook);
+if (process.env.ENABLE_LEGACY_XENDIT === 'true') {
+  app.post('/api/xendit/webhook', xenditWebhook);
+} else {
+  app.post('/api/xendit/webhook', (req, res) => {
+    res.status(410).json({ error: 'Xendit integration is disabled. Use Scalev payment.' });
+  });
+}
 app.use('/uploads', express.static(UPLOADS_DIR_STATIC));
 
 // Protected API
@@ -135,10 +151,19 @@ app.use('/api/learning', authenticateJWT, learningRoutes);
 app.use('/api/smart-labels', authenticateJWT, smartLabelRoutes);
 app.use('/api/bot-activation', authenticateJWT, botActivationRoutes);
 app.use('/api/openai/billing', authenticateJWT, openaiBillingRoutes);
+// Mengantar shipping routes (protected)
+app.use('/api/mengantar', authenticateJWT, mengantarRoutes);
+// Scalev order management (protected except webhook above)
+app.use('/api/scalev', authenticateJWT, scalevRoutes);
 
-// Xendit Payment Gateway — webhook is public, rest is protected
-app.use('/api/xendit', authenticateJWT, xenditRoutes);
-// Xendit webhook callback (PUBLIC — Xendit sends callbacks here)
+// Xendit Payment Gateway — disabled, use Scalev instead
+if (process.env.ENABLE_LEGACY_XENDIT === 'true') {
+  app.use('/api/xendit', authenticateJWT, xenditRoutes);
+} else {
+  app.use('/api/xendit', (req, res) => {
+    res.status(410).json({ error: 'Xendit integration is disabled. Use Scalev payment.' });
+  });
+}
 
 
 app.get('/health', async (req, res) => {
@@ -152,6 +177,23 @@ app.get('/health', async (req, res) => {
 
 // ======== Global Error Handler ========
 app.use(errorHandler);
+
+// ======== SPA Frontend Serving (production) ========
+// Serve built React frontend for all non-API routes
+import fs from 'fs';
+if (fs.existsSync(FRONTEND_DIST)) {
+  app.use(express.static(FRONTEND_DIST));
+  // SPA fallback — Express 5 requires named wildcard: /{*path}
+  app.get('/{*path}', (req: any, res: any) => {
+    if (req.path.startsWith('/api/') || req.path.startsWith('/uploads/') || req.path === '/health') {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    res.sendFile(path.join(FRONTEND_DIST, 'index.html'));
+  });
+  console.log(`[Frontend] Serving static from ${FRONTEND_DIST}`);
+} else {
+  console.warn(`[Frontend] dist not found at ${FRONTEND_DIST} — run 'npm run build' in frontend/`);
+}
 
 // ======== Socket.IO Connection Handlers ========
 

@@ -252,9 +252,9 @@ OpenAICostLog.init({
   prompt_tokens: { type: DataTypes.INTEGER, defaultValue: 0 },
   completion_tokens: { type: DataTypes.INTEGER, defaultValue: 0 },
   total_tokens: { type: DataTypes.INTEGER, defaultValue: 0 },
-  input_cost: { type: DataTypes.DECIMAL(10, 8), defaultValue: 0 },
-  output_cost: { type: DataTypes.DECIMAL(10, 8), defaultValue: 0 },
-  total_cost: { type: DataTypes.DECIMAL(10, 8), defaultValue: 0 },
+  input_cost: { type: DataTypes.DECIMAL(12, 8), defaultValue: 0 },
+  output_cost: { type: DataTypes.DECIMAL(12, 8), defaultValue: 0 },
+  total_cost: { type: DataTypes.DECIMAL(12, 8), defaultValue: 0 },
   endpoint: { type: DataTypes.STRING, allowNull: true },
   function_name: { type: DataTypes.STRING, allowNull: true },
   created_at: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }

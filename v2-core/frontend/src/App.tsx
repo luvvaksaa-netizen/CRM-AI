@@ -15,9 +15,11 @@ import Closing from './pages/Closing';
 import LearningCenter from './pages/LearningCenter';
 import BotActivation from './pages/BotActivation';
 import SmartLabels from './pages/SmartLabels';
+import Orders from './pages/Orders';
 import ProtectedRoute from './components/ProtectedRoute';
 import { useAuthStore } from './stores/authStore';
 import { socketService } from './services/socket';
+import ErrorBoundary from './components/ErrorBoundary';
 
 function App() {
   const initialize = useAuthStore((s) => s.initialize);
@@ -47,7 +49,7 @@ function App() {
   }
 
   return (
-    <>
+    <ErrorBoundary>
     <Router>
       <Routes>
         <Route path="/login" element={<Login />} />
@@ -58,6 +60,7 @@ function App() {
           <Route path="/stores" element={<Stores />} />
           <Route path="/chat" element={<ChatManagement />} />
           <Route path="/followup" element={<FollowUp />} />
+          <Route path="/orders" element={<Orders />} />
           <Route path="/media" element={<MediaGallery />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/agents" element={<Agents />} />
@@ -74,7 +77,7 @@ function App() {
         success: { iconTheme: { primary: '#10b981', secondary: '#e2e8f0' } },
         error: { iconTheme: { primary: '#ef4444', secondary: '#e2e8f0' } }
       }} />
-    </>
+    </ErrorBoundary>
   );
 }
 

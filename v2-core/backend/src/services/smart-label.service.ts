@@ -152,8 +152,26 @@ function isCancelStatus(summaryText: string): boolean {
  * @param summaryText - Teks rekap dari AI
  * @returns true jika closing boleh diterapkan
  */
-function isClosingDataComplete(summaryText: string): boolean {
+function isClosingDataComplete(summaryText: string, contactName?: string, contactPhone?: string): boolean {
   if (!summaryText) return false;
+  
+  // ════════════════════════════════════════════════════════════
+  // FIX SUK-59 #2: DB-LEVEL VALIDATION — jangan izinkan closing
+  // jika contact_name masih placeholder atau contact_phone kosong
+  // ════════════════════════════════════════════════════════════
+  if (contactName) {
+    const trimmed = contactName.trim();
+    // Whitespace-only atau placeholder name
+    if (trimmed.length === 0 || /^(Pelanggan|Customer|Unknown|User|\+?\d{8,})$/.test(trimmed)) {
+      logger.warn(`[SmartLabel] ⚠️ Closing DIBLOKIR — contact_name tidak valid: "${trimmed || '(whitespace only)'}"`);
+      return false;
+    }
+  }
+  if (contactPhone && !contactPhone.trim()) {
+    logger.warn(`[SmartLabel] ⚠️ Closing DIBLOKIR — contact_phone kosong`);
+    return false;
+  }
+  
   const txt = summaryText;
 
   // Deteksi apakah produk ini UV (Stiker Keras) atau DTF (Label Baju)
@@ -228,12 +246,17 @@ async function applyLabelsFromSummary(
   try {
     const { ChatSummary } = require('../models/index');
 
+    // FIX SUK-59 #2: Load existing summary for DB-level validation
+    const existingSummary = await ChatSummary.findOne({ where: { store_wa_id: storeWaId, contact_id: contactId } });
+    const contactName: string | undefined = existingSummary?.contact_name;
+    const contactPhone: string | undefined = existingSummary?.contact_phone;
+
     // 1. Deteksi label dari STATUS field
     let detectedRule = detectLabelFromSummary(summaryText);
 
     // FIX #3: Jika label yang terdeteksi adalah Closing, validasi kelengkapan data dulu
     if (detectedRule && detectedRule.label === 'Closing') {
-      if (!isClosingDataComplete(summaryText)) {
+      if (!isClosingDataComplete(summaryText, contactName, contactPhone)) {
         // Data belum lengkap — downgrade ke Menunggu Rekap
         detectedRule = { label: 'Menunggu Rekap', color: 6 };
         logger.warn(`[SmartLabel] [${storeWaId}] Closing di-downgrade ke Menunggu Rekap untuk [${contactId}] karena data belum lengkap.`);
@@ -243,7 +266,7 @@ async function applyLabelsFromSummary(
     // 2. Parse explicit WA_LABELS field dari rekap (jika AI mengisinya)
     let explicitLabels = parseWaLabelsField(summaryText);
     // FIX #3: Juga validasi Closing dari explicit labels
-    if (explicitLabels.includes('Closing') && !isClosingDataComplete(summaryText)) {
+    if (explicitLabels.includes('Closing') && !isClosingDataComplete(summaryText, contactName, contactPhone)) {
       explicitLabels = explicitLabels.filter(l => l !== 'Closing');
       if (!explicitLabels.includes('Menunggu Rekap')) {
         explicitLabels.push('Menunggu Rekap');

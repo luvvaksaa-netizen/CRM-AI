@@ -19,7 +19,17 @@ export const useAuthStore = create<AuthState>((set) => ({
   initialized: false,
 
   initialize: async () => {
-    const token = sessionStorage.getItem(TOKEN_KEY);
+    // Try sessionStorage dulu, fallback ke localStorage (cross-tab persistence)
+    let token = sessionStorage.getItem(TOKEN_KEY);
+    if (!token) {
+      token = localStorage.getItem(TOKEN_KEY);
+      if (token) {
+        // Restore dari localStorage ke sessionStorage
+        sessionStorage.setItem(TOKEN_KEY, token);
+        const user = localStorage.getItem(USER_KEY);
+        if (user) sessionStorage.setItem(USER_KEY, user);
+      }
+    }
     if (!token) {
       set({ initialized: true });
       return false;
@@ -51,12 +61,19 @@ export const useAuthStore = create<AuthState>((set) => ({
   setAuth: (token, user) => {
     sessionStorage.setItem(TOKEN_KEY, token);
     sessionStorage.setItem(USER_KEY, JSON.stringify(user));
+    // Backup ke localStorage untuk cross-tab persistence
+    try {
+      localStorage.setItem(TOKEN_KEY, token);
+      localStorage.setItem(USER_KEY, JSON.stringify(user));
+    } catch (_) {}
     set({ token, user });
   },
 
   logout: () => {
     sessionStorage.removeItem(TOKEN_KEY);
     sessionStorage.removeItem(USER_KEY);
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
     set({ token: null, user: null });
   },
 }));

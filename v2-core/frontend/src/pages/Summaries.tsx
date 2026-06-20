@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { FileText, Search, Tag, Filter, Eye, X, ChevronLeft, MessageCircle } from 'lucide-react';
@@ -72,9 +72,7 @@ const Summaries = () => {
     }).catch(() => {});
   }, [storeFilter]);
 
-  useEffect(() => { fetchSummaries(); }, [page, labelFilter, storeFilter]);
-
-  const fetchSummaries = async (showToastOnError = false) => {
+  const fetchSummaries = useCallback(async (showToastOnError = false) => {
     setLoading(true);
     setFetchError(false);
     try {
@@ -89,10 +87,11 @@ const Summaries = () => {
       setTotal(res.data.total || 0);
     } catch {
       setFetchError(true);
-      // Toast hanya untuk aksi yang sengaja dilakukan user (bukan background / StrictMode double-invoke)
       if (showToastOnError) toast.error('Gagal mengambil data rekap');
     } finally { setLoading(false); }
-  };
+  }, [page, searchQuery, labelFilter, storeFilter]);
+
+  useEffect(() => { fetchSummaries(); }, [fetchSummaries]);
 
 
   const handleSearch = () => {
