@@ -2,7 +2,7 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:3002/api',
+  baseURL: import.meta.env.VITE_API_URL || '/api',
   timeout: 30000, // 30 detik (was 12s, increased for slow connections)
 });
 
