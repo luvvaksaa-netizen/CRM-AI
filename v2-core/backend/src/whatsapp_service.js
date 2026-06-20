@@ -18,6 +18,10 @@ const clientGenerations = new Map();
 const tempClients = new Map();
 const WA_SEND_READY_TIMEOUT_MS = Number(process.env.WA_SEND_READY_TIMEOUT_MS || 45000);
 
+// DEBOUNCE: Mencegah 'ready' event firing 3x sekaligus (bug saat temp→permanent promotion)
+// Kunci per-store dengan timestamp. Sync tidak diulang jika sudah berjalan < 30 detik lalu.
+const readySyncLock = new Map(); // storeWaId -> lastSyncTimestamp
+
 // IN-MEMORY BOT MESSAGE TRACKER
 // Menyimpan ID pesan yang dikirim oleh BOT (bukan dari HP manual).
 // Ini mencegah race condition di message_create event yang mendeteksi pesan bot sebagai pesan dari HP.
@@ -336,7 +340,7 @@ function createWhatsAppClient(storeWaId) {
             headless: true,
             handleSIGINT: false,
             timeout: 90000,           // 90 detik timeout launch
-            protocolTimeout: 600000   // 10 menit
+            protocolTimeout: 1200000  // 20 menit (naik dari 10 menit untuk hindari callFunctionOn timeout)
         }
     });
 
@@ -399,7 +403,23 @@ function setupEventListeners(client, storeWaId, io) {
             dashboard.updateStorePhone(storeWaId, client.info.wid.user).catch(()=>{});
         }
 
+        // ══ FIX: DEBOUNCE SYNC — Cegah triple 'ready' event ══
+        // Saat temp→permanent promotion, 'ready' bisa fire 3x dalam <1 detik.
+        // Sync hanya dijalankan 1x per 30 detik untuk mencegah WhatsApp LOGOUT karena rate limit.
+        const now = Date.now();
+        const lastSync = readySyncLock.get(storeWaId) || 0;
+        if (now - lastSync < 30000) {
+            logger.warn(`[${storeWaId}] 'ready' duplikat dilewati (sync sudah berjalan ${Math.round((now - lastSync) / 1000)}s lalu)`);
+            return;
+        }
+        readySyncLock.set(storeWaId, now);
+
         await wajsBridge.injectWajs(client, storeWaId);
+        
+        // ══ FIX: Tunggu 2 detik agar WA-JS benar-benar siap sebelum sync ══
+        // Tanpa delay ini, wajsBridge.getMessages gagal dengan 'me is undefined'
+        // karena WA internal store belum ter-inisialisasi penuh.
+        await sleep(2000);
         
         // ══════════════════════════════════════════════════════════════════
         // SINKRONISASI PESAN SAAT STARTUP
@@ -625,6 +645,9 @@ async function sendManualMessage(storeWaId, to, body, options = {}) {
     }
     
     const client = await waitForActiveClient(storeWaId);
+    if (!client || typeof client.sendMessage !== 'function') {
+        throw new Error(`Client [${storeWaId}] tidak tersedia atau tidak memiliki sendMessage.`);
+    }
     const targetChatId = assertWaChatId(to);
     const quotedMessageId = String(options.quotedMessageId || options.quoted_message_id || '').trim();
     
@@ -632,7 +655,19 @@ async function sendManualMessage(storeWaId, to, body, options = {}) {
         const sendOptions = quotedMessageId
             ? { quotedMessageId, ignoreQuoteErrors: true }
             : {};
-        const msg = await client.sendMessage(targetChatId, body, sendOptions);
+        let msg;
+        try {
+            msg = await client.sendMessage(targetChatId, body, sendOptions);
+        } catch (sendErr) {
+            // FIX: jika quoted message tidak ada di memori WA session (misal session baru),
+            // whatsapp-web.js melempar "getChat of undefined". Fallback: kirim tanpa quote.
+            if (quotedMessageId && /getChat|undefined/i.test(sendErr?.message || '')) {
+                logger.warn(`[${storeWaId}] Quoted msg tidak ditemukan di session, kirim tanpa quote.`);
+                msg = await client.sendMessage(targetChatId, body, {});
+            } else {
+                throw sendErr;
+            }
+        }
         const msgId = msg.id?._serialized || msg.id?.id;
         trackBotSentMessage(msgId);
         
@@ -726,6 +761,12 @@ async function sendFollowUpMessage(storeWaId, contactId, body, mediaAsset = null
     const client = await waitForActiveClient(storeWaId);
     const targetChatId = assertWaChatId(contactId);
 
+    // Retry sekali untuk transient timeout (Runtime.callFunctionOn timed out, dll)
+    const MAX_SEND_RETRIES = 2;
+    const RETRY_DELAY_MS = 3000;
+    let lastError = null;
+
+    for (let attempt = 0; attempt < MAX_SEND_RETRIES; attempt++) {
     try {
         // Kirim media jika ada
         if (mediaAsset) {
@@ -789,9 +830,22 @@ async function sendFollowUpMessage(storeWaId, contactId, body, mediaAsset = null
         logger.info(`[${storeWaId}] Follow-Up dikirim ke [${targetChatId}].`);
         return true;
     } catch (error) {
+        lastError = error;
+        const isTransient = /timeout|detached|closed|destroyed|getChat|undefined|protocol error/i.test(error.message);
+        if (isTransient && attempt < MAX_SEND_RETRIES - 1) {
+            logger.warn(`[${storeWaId}] Retry ${attempt + 1}/${MAX_SEND_RETRIES} kirim follow-up (${error.message}), tunggu ${RETRY_DELAY_MS/1000}s...`);
+            await sleep(RETRY_DELAY_MS);
+            // Re-check client readiness before retry
+            try {
+                await waitForActiveClient(storeWaId, 15000);
+            } catch (_) { /* client mungkin belum siap, tetap coba */ }
+            continue;
+        }
         logger.error(`[${storeWaId}] Gagal kirim follow-up: ${error.message}`);
         throw error;
     }
+    } // end retry loop
+    throw lastError || new Error('sendFollowUpMessage gagal setelah retry');
 }
 
 /**
@@ -1071,7 +1125,7 @@ function createTempClient(io) {
             headless: true,
             handleSIGINT: false,
             timeout: 90000,
-            protocolTimeout: 600000
+            protocolTimeout: 1200000  // 20 menit (naik dari 10 menit untuk hindari callFunctionOn timeout)
         }
     });
 

@@ -22,12 +22,17 @@ const { logRequest } = require('./services/costTracker');
 
 const openai = new OpenAI({ apiKey: config.OPENAI_API_KEY });
 const { buildLearningPromptSection } = require('./services/learning_service');
+const LEGACY_XENDIT_ENABLED = process.env.ENABLE_LEGACY_XENDIT === 'true';
 
 // ── Xendit QRIS Service ──
 // Diload secara lazy (runtime require) karena file ini TypeScript yang dikompilasi.
 // Singleton pattern agar tidak double-require.
 let _xenditQris = null;
 function getXenditService() {
+    if (!LEGACY_XENDIT_ENABLED) {
+        logger.warn('[AI] Legacy Xendit QRIS disabled. Set ENABLE_LEGACY_XENDIT=true only for migration fallback.');
+        return null;
+    }
     if (_xenditQris) return _xenditQris;
     try {
         const svc = require('./services/xendit.service');
@@ -46,6 +51,27 @@ function getXenditService() {
         _xenditQris = null;
     }
     return _xenditQris;
+}
+
+// ── Scalev Order+Payment Service ──
+// Scalev adalah platform utama untuk membuat order + QRIS payment.
+// Jika SCALEV_API_KEY dikonfigurasi, ini menjadi metode pembayaran UTAMA.
+let _scalevSvc = null;
+function getScalevService() {
+    if (_scalevSvc) return _scalevSvc;
+    try {
+        const svc = require('./services/scalev.service');
+        const candidate = svc?.createOrderAndPay ? svc : (svc?.default?.createOrderAndPay ? svc.default : null);
+        if (candidate) {
+            _scalevSvc = candidate;
+            logger.info('[AI] Scalev service loaded (createOrderAndPay ready).');
+        } else {
+            logger.warn('[AI] Scalev service ditemukan tapi createOrderAndPay tidak tersedia.');
+        }
+    } catch (err) {
+        logger.warn(`[AI] Scalev service tidak bisa dimuat: ${err.message}`);
+    }
+    return _scalevSvc;
 }
 
 // === RESPONSE TYPE CONSTANTS ===
@@ -71,9 +97,14 @@ function countWords(text = '') {
     return (String(text).trim().match(/\S+/g) || []).length;
 }
 
+/**
+ * Deteksi apakah respons adalah pesan terstruktur (rekap/order/rekening).
+ * Rekap harus selalu dikirim utuh tanpa dipotong bubble.
+ */
 function isStructuredReply(text = '') {
-    return /(rekening|rekap pesanan|nama penerima|total harus dibayar|harga produk|ongkir ke|kode pos|nama cetak|pengiriman\s*:\s*(cod|non))/i.test(String(text || ''));
+    return /rekap\s+pesanan|produk\s*:|nama\s+cetak\s*:|total\s+pesanan\s*:|ongkir\s+(awal|ke)\s*:|metode\s+pembayaran\s*:|harga\s+produk\s*:|total\s+harus\s+dibayar|balas\s+iya|bank\s+(bca|mandiri|bri)/i.test(String(text || ''));
 }
+
 
 /**
  * Bersihkan teks respons AI dari noise sebelum dikirim ke WhatsApp.
@@ -103,18 +134,30 @@ function sanitizeTextOutput(text = '') {
     return lines.replace(/\n{3,}/g, '\n\n').trim();
 }
 
-function inferAgentProductKind(agent = {}, mediaResults = []) {
+/**
+ * Inferensi tipe produk utama agen berdasarkan konteks agent config dan media.
+ * Mendukung: 'dtf' | 'uv' | 'bts' | 'generic'
+ * Prioritas: bts > uv > dtf > generic
+ * @param {Object} agent - Config agent dari DB
+ * @param {Array}  mediaList - Daftar media sendable (optional)
+ * @returns {'dtf'|'uv'|'bts'|'generic'}
+ */
+function inferAgentProductKind(agent = {}, mediaList = []) {
+    const safeAgent = agent || {};
     const haystack = [
-        agent.name,
-        agent.system_prompt,
-        agent.product_knowledge,
-        ...mediaResults.map(item => item?.media?.label)
+        safeAgent.name,
+        safeAgent.system_prompt,
+        safeAgent.product_knowledge,
+        ...mediaList.map(item => item?.media?.label || item?.label || '')
     ].join(' ').toLowerCase();
 
-    if (/\buv\b|stiker keras|timbul|botol|helm|tumbler/.test(haystack)) return 'uv';
+    // Prioritas: BTS lebih spesifik, cek duluan
+    if (/\bbts\b|back.to.school|bundling.bts|stiker.buku|alat.tulis|tempat.makan/.test(haystack)) return 'bts';
+    if (/\buv\b|stiker.keras|timbul|botol|helm|tumbler/.test(haystack)) return 'uv';
     if (/\bdtf\b|setrika|baju|kain|seragam|hijab/.test(haystack)) return 'dtf';
     return 'generic';
 }
+
 
 /**
  * Auto-inject media jika AI menyebut media dalam teks tapi TIDAK memanggil tool.
@@ -135,15 +178,20 @@ function _autoInjectMedia(content, kind, sendableMedia) {
     const TESTIMONI_REF = ['testimoni', 'review customer', 'bukti nyata', 'foto testimoni', 'hasil pelanggan', 'hasil aslinya', 'ini hasilnya', 'contoh hasil', 'realpict', 'real pic'];
     const VALUE_REF     = ['keunggulan produk', 'nilai produk', 'kenapa pilih', 'premium lho', 'kualitas produk'];
 
+    // Dinamis re-detect kind dari teks respons AI (override jika disebut eksplisit)
     let dynamicKind = kind;
     if (/\b(dtf|baju|kain|seragam|setrika|hijab)\b/i.test(lower)) dynamicKind = 'dtf';
+    else if (/\b(bts|bundling|stiker.buku|alat.tulis|tempat.makan)\b/i.test(lower)) dynamicKind = 'bts';
     else if (/\b(uv|keras|botol|helm|tumbler|kaca)\b/i.test(lower)) dynamicKind = 'uv';
 
+    // Pilih suffix label berdasarkan tipe produk
+    const suffix = dynamicKind === 'uv' ? 'uv' : (dynamicKind === 'bts' ? 'bts' : 'dtf');
+
     const targetLabels = [];
-    if (VIDEO_REF.some(kw     => lower.includes(kw))) targetLabels.push(dynamicKind === 'uv' ? 'video uv'     : 'video dtf');
-    if (KATALOG_REF.some(kw   => lower.includes(kw))) targetLabels.push(dynamicKind === 'uv' ? 'katalog uv'   : 'katalog dtf');
-    if (TESTIMONI_REF.some(kw => lower.includes(kw))) targetLabels.push(dynamicKind === 'uv' ? 'testimoni uv' : 'testimoni dtf');
-    if (VALUE_REF.some(kw     => lower.includes(kw))) targetLabels.push(dynamicKind === 'uv' ? 'value uv'     : 'value dtf');
+    if (VIDEO_REF.some(kw     => lower.includes(kw))) targetLabels.push(`video ${suffix}`);
+    if (KATALOG_REF.some(kw   => lower.includes(kw))) targetLabels.push(`katalog ${suffix}`);
+    if (TESTIMONI_REF.some(kw => lower.includes(kw))) targetLabels.push(`testimoni ${suffix}`);
+    if (VALUE_REF.some(kw     => lower.includes(kw))) targetLabels.push(`value ${suffix}`);
 
     if (targetLabels.length === 0) return null;
 
@@ -161,12 +209,13 @@ function _autoInjectMedia(content, kind, sendableMedia) {
         const videos = matchesForLabel.filter(m => (m.type || '').startsWith('video'));
         const images = matchesForLabel.filter(m => (m.type || '').startsWith('image'));
 
-        // Inject SEMUA foto/image yang cocok
-        images.forEach(img => {
-            if (!results.find(r => r.id === img.id)) {
-                results.push(img);
+        // Inject 1 RANDOM foto/image jika ada lebih dari 1 (Fix Media Spam)
+        if (images.length > 0) {
+            const randomImage = images[Math.floor(Math.random() * images.length)];
+            if (!results.find(r => r.id === randomImage.id)) {
+                results.push(randomImage);
             }
-        });
+        }
 
         // Inject 1 RANDOM video jika ada lebih dari 1
         if (videos.length > 0) {
@@ -308,9 +357,123 @@ async function getAIResponse(userMessage, history = [], store = null, agent = nu
 }
 
 /**
+ * Inspector Agent — Deterministic Validation Gate
+ *
+ * Mencegat draf rekap AI sebelum sampai ke customer.
+ * Support 3 schema produk: DTF | UV | BTS
+ *
+ * - Hanya aktif jika respons mengandung pola rekap pesanan
+ * - Jika gagal validasi, mengembalikan { valid: false, missing: '...' }
+ * - Jika inspector error, fallback ke valid=true (tidak boleh block user)
+ *
+ * @param {string} content - Teks output AI yang akan dicek
+ * @param {string} kind    - 'dtf' | 'uv' | 'bts' | 'generic'
+ * @returns {Promise<{valid: boolean, missing: string}>}
+ */
+async function _runInspectorValidation(content, kind) {
+    if (!content) return { valid: true };
+
+    // Hanya aktif jika output berisi pola rekap — tidak setiap pesan
+    const RECAP_PATTERN = /rekap\s+pesanan|nama\s+cetak\s*:|total\s+pesanan\s*:|metode\s+pembayaran\s*:/i;
+    if (!RECAP_PATTERN.test(content)) return { valid: true };
+
+    const modelName = config.MODEL_NAME || 'gpt-4o-mini';
+
+    // Schema validasi per produk — bisa diperluas tanpa ubah kode
+    const PRODUCT_SCHEMAS = {
+        dtf: [
+            'Nama Cetak (minimal 1 nama, bukan placeholder)',
+            'Varian DTF (Varian 1/2/3/4 atau deskripsi varian)',
+            'Warna DTF (Pink/Kuning/Putih/Hijau/Biru/Hitam)',
+            'Jumlah paket (angka, bukan placeholder)',
+            'Alamat lengkap (minimal Kecamatan dan Kota/Kabupaten)',
+            'Ongkir (nominal Rp, bukan placeholder)',
+            'Total pesanan (nominal Rp, bukan placeholder)',
+            'Metode pembayaran (Transfer/COD, bukan UNKNOWN)',
+        ],
+        uv: [
+            'Nama Cetak (minimal 1 nama, bukan placeholder)',
+            'Varian UV (Cowok/Cewek/Polos — JANGAN tanya warna, UV tidak punya pilihan warna)',
+            'Jumlah paket (angka, bukan placeholder)',
+            'Alamat lengkap (minimal Kecamatan dan Kota/Kabupaten)',
+            'Ongkir (nominal Rp, bukan placeholder)',
+            'Total pesanan (nominal Rp, bukan placeholder)',
+            'Metode pembayaran (Transfer/COD, bukan UNKNOWN)',
+        ],
+        bts: [
+            'Nama Cetak (minimal 1 nama, semua komponen pakai nama yang sama)',
+            'Desain Stiker Buku',
+            'Desain Stiker Alat Tulis',
+            'Desain Stiker Tempat Makan',
+            'Varian bonus DTF (Varian 1/2/3/4)',
+            'Warna bonus DTF (Pink/Kuning/Putih/Hijau/Biru/Hitam)',
+            'Jumlah bundle (angka)',
+            'Alamat lengkap (minimal Kecamatan dan Kota/Kabupaten)',
+            'Ongkir awal dan subsidi ongkir BTS (maks Rp20.000)',
+            'Total pesanan (nominal Rp)',
+            'Metode pembayaran (Transfer/COD)',
+        ],
+        generic: [
+            'Nama Cetak atau identitas produk (minimal terisi)',
+            'Jumlah (angka)',
+            'Alamat lengkap (minimal Kecamatan dan Kota)',
+            'Total pesanan (nominal Rp)',
+        ],
+    };
+
+    const schema = PRODUCT_SCHEMAS[kind] || PRODUCT_SCHEMAS.generic;
+    const schemaText = schema.map((s, i) => `${i + 1}. ${s}`).join('\n');
+
+    try {
+        const inspectorResponse = await openai.chat.completions.create({
+            model: modelName,
+            response_format: { type: 'json_object' },
+            messages: [
+                {
+                    role: 'system',
+                    content: [
+                        'Kamu adalah Inspector Agent (Quality Control).',
+                        'Tugasmu: Periksa apakah form Rekap Pesanan berikut sudah LENGKAP sesuai schema wajib.',
+                        '',
+                        `Tipe Produk: ${kind.toUpperCase()}`,
+                        'Field yang WAJIB ada dan terisi (bukan placeholder, bukan kosong, bukan "[...]"):',
+                        schemaText,
+                        '',
+                        'ATURAN KEPUTUSAN:',
+                        '- valid: true  → Semua field wajib terisi dengan data nyata, tanpa placeholder.',
+                        '- valid: false → Ada 1 atau lebih field yang kosong, berisi placeholder [...], atau data tidak masuk akal.',
+                        '',
+                        'Kembalikan HANYA JSON: { "valid": true/false, "missing": "Daftar field yang kurang, pisahkan koma" }',
+                        'Jika valid=true, missing boleh dikosongkan.',
+                    ].join('\n'),
+                },
+                {
+                    role: 'user',
+                    content: `Isi Rekap untuk dicek:\n\n${content}`,
+                },
+            ],
+            temperature: 0.0, // Deterministik, bukan kreatif
+            max_tokens: 200,
+        });
+
+        const raw = inspectorResponse.choices[0].message.content;
+        const result = JSON.parse(raw);
+        return {
+            valid: result.valid !== false,
+            missing: result.missing || '',
+        };
+    } catch (err) {
+        // Non-fatal: jika inspector error, loloskan saja (jangan block customer)
+        logger.error(`[Inspector] Validation error (non-fatal): ${err.message}`);
+        return { valid: true };
+    }
+}
+
+
+/**
  * Logika internal pemrosesan AI (Refactored: Smarter & Safer)
  */
-async function _processAIResponse(userMessage, history = [], store = null, agent = null, customerMediaContext = "", conversationSummary = "", interactionCount = 1, customerPhone = "") {
+async function _processAIResponse(userMessage, history = [], store = null, agent = null, customerMediaContext = "", conversationSummary = "", interactionCount = 1, customerPhone = "", isRetry = false) {
     // Guard: Validasi API Key tanpa crash
     if (!config.OPENAI_API_KEY || !config.OPENAI_API_KEY.startsWith('sk-')) {
         logger.error("OpenAI API Key belum dikonfigurasi atau tidak valid!");
@@ -327,37 +490,14 @@ async function _processAIResponse(userMessage, history = [], store = null, agent
         const agentId   = agent?.id || null;
         const configuredLabels = parseAutoLabels(agent?.auto_labels);
 
-        // ── KNOWLEDGE MEDIA: Media yang jadi pengetahuan AI ──────────────────
+        // ── Media Load ───────────────────────────────────────────────────────
         const knowledgeMedia = agentId ? await getKnowledgeMedia(agentId) : [];
-        const knowledgeSection = knowledgeMedia.length > 0
-            ? knowledgeMedia.map(m => {
-                const icon = m.type === 'video' ? '🎬 VIDEO' : '📸 FOTO';
-                const parts = [`[${icon}]` + (m.label ? ` (Topik: ${m.label})` : '')];
-                if (m.description)      parts.push(`  Deskripsi: ${m.description}`);
-                if (m.ai_analysis)      parts.push(`  Analisis Visual: ${m.ai_analysis}`);
-                if (m.video_transcript) parts.push(`  Isi Narasi dalam video: "${m.video_transcript}"`);
-                return parts.join('\n');
-              }).join('\n\n')
-            : '(Belum ada media knowledge)';
+        const sendableMedia  = agentId ? await getSendableMedia(agentId) : [];
 
-        // ── SENDABLE CATALOG: Media yang bisa dikirim ke customer ────────────
-        const sendableMedia = agentId ? await getSendableMedia(agentId) : [];
-        const catalogSection = sendableMedia.length > 0
-            ? sendableMedia.map(m =>
-                `- ID: ${m.id} | Label: "${m.label || 'Tanpa Label'}" | Tipe: ${m.type} ${m.description ? '| Desc: ' + m.description : ''}`
-              ).join('\n')
-            : '(Tidak ada media yang bisa dikirim)';
-
-        // Deteksi jenis produk agent (dtf/uv/generic) — dipakai auto-inject & fast reply
+        // Deteksi jenis produk agent (dtf/uv/bts/generic) — dipakai auto-inject & fast reply
         const kind = inferAgentProductKind(agent, sendableMedia.map(m => ({ media: m })));
 
-        const labelSection = configuredLabels.length > 0
-            ? configuredLabels.map(label => `- ${label}`).join('\n')
-            : '(Belum ada label otomatis yang dikonfigurasi untuk agen ini)';
-
         // ── LEARNING BOT: Pola sukses dari closing nyata ─────────────────────
-        // Diambil dari ClosingPatterns DB — berisi teknik terbukti dari CS Mbak Dea
-        // Diinject ke prompt agar bot makin hari makin pintar secara otomatis
         let learningSection = '';
         try {
             learningSection = await buildLearningPromptSection(agentId, kind);
@@ -365,358 +505,136 @@ async function _processAIResponse(userMessage, history = [], store = null, agent
             // Non-critical — jangan sampai fail prompt karena learning service error
         }
 
-        // ── TIMESTAMP AWARENESS (untuk AI, bukan untuk teks balasan) ─────────
+
+
+        // ══════════════════════════════════════════════════════════════════
+        // SYSTEM PROMPT — PRODUCT-AGNOSTIC ARCHITECTURE
+        //
+        // Filosofi: "Prompt mengatur percakapan. Kode mengatur validasi data."
+        // (sesuai CRM_AI_V2_AGENT_READABLE_SPEC.md § 0.1)
+        //
+        // Kode ini TIDAK boleh hardcode knowledge produk DTF/UV/BTS.
+        // Semua knowledge produk, gaya bahasa, dan alur percakapan
+        // berasal dari agent.system_prompt dan agent.product_knowledge (DB).
+        //
+        // Yang tersisa di sini HANYA:
+        //   - Variabel sistem (waktu, media, label, nomor WA)
+        //   - Aturan teknis absolut (format bubble, anti-hallucination, tools)
+        //   - Inject prompt dari DB agent
+        // ══════════════════════════════════════════════════════════════════
+        const customerPhoneFormatted = customerPhone ? String(customerPhone).replace(/[^0-9+]/g, '') : '';
+        const customerWADisplay = customerPhoneFormatted
+            ? (customerPhoneFormatted.startsWith('+') ? customerPhoneFormatted : `+${customerPhoneFormatted}`)
+            : '(belum tersedia)';
+
         const nowStr = moment().format('dddd, DD MMMM YYYY HH:mm');
 
-        const fullSystemInstruction = `
-═══════════════════════════════════════════
-WAKTU SAAT INI: ${nowStr}
-═══════════════════════════════════════════
-Gunakan informasi waktu ini HANYA untuk konteks internal (misal: menyapa "Selamat pagi" atau "Selamat malam").
-DILARANG KERAS menulis tanggal/jam/timestamp di dalam teks balasan ke pelanggan.
+        // ── Bagian 1: System Context (Data Teknis Runtime) ────────────────
+        const systemContextBlock = [
+            `WAKTU SISTEM: ${nowStr}`,
+            `Gunakan waktu ini HANYA untuk konteks internal (sapaan pagi/malam).`,
+            `DILARANG menulis tanggal/jam di teks balasan ke customer.`,
+            ``,
+            `NOMOR WA CUSTOMER (injeksi server, GUNAKAN untuk field No. WA di rekap):`,
+            `No WA: ${customerWADisplay}`,
+            `DILARANG menulis placeholder "[nomor wa]", "[...]" untuk field No WA.`,
+        ].join('\n');
 
-═══════════════════════════════════════════
-PENGETAHUAN DARI MEDIA (Foto & Video):
-═══════════════════════════════════════════
-${knowledgeSection}
+        // ── Bagian 2: Media Knowledge (pengetahuan visual AI) ────────────
+        const mediaKnowledgeBlock = knowledgeMedia.length > 0
+            ? [
+                `=== PENGETAHUAN VISUAL (${knowledgeMedia.length} item) ===`,
+                knowledgeMedia.map(m => {
+                    const icon = m.type?.startsWith('video') ? '🎬 VIDEO' : '📸 FOTO';
+                    const parts = [`[${icon}]${m.label ? ` Topik: ${m.label}` : ''}`];
+                    if (m.description)      parts.push(`  Deskripsi: ${m.description}`);
+                    if (m.ai_analysis)      parts.push(`  Analisis Visual: ${m.ai_analysis}`);
+                    if (m.video_transcript) parts.push(`  Narasi: "${m.video_transcript}"`);
+                    return parts.join('\n');
+                }).join('\n\n'),
+            ].join('\n')
+            : `=== PENGETAHUAN VISUAL === (belum ada media knowledge)`;
 
-KETERSEDIAAN MEDIA:
-- Kamu memiliki ${sendableMedia.length} item di katalog yang bisa dikirim via tool.
-- Kamu memiliki ${knowledgeMedia.length} item pengetahuan video/foto.
+        // ── Bagian 3: Catalog Media (media yang bisa dikirim) ────────────
+        const catalogBlock = sendableMedia.length > 0
+            ? [
+                `=== KATALOG MEDIA YANG BISA DIKIRIM (${sendableMedia.length} item) ===`,
+                `Gunakan tool "kirim_media_katalog" dengan ID atau label_names di bawah:`,
+                sendableMedia.map(m =>
+                    `  ID:${m.id} | Label:"${m.label || 'tanpa-label'}" | Tipe:${m.type}${m.description ? ` | ${m.description}` : ''}`
+                ).join('\n'),
+            ].join('\n')
+            : `=== KATALOG MEDIA === (belum ada media yang bisa dikirim)`;
 
-═══════════════════════════════════════════
-KATALOG MEDIA YANG BISA KAMU KIRIM:
-═══════════════════════════════════════════
-PENTING: Gunakan tool "kirim_media_katalog" untuk mengirim media. Kamu HANYA tahu ID-nya.
-${catalogSection}
+        // ── Bagian 4: Label Config ────────────────────────────────────────
+        const labelBlock = configuredLabels.length > 0
+            ? `=== LABEL YANG TERSEDIA ===\n${configuredLabels.map(l => `  - ${l}`).join('\n')}`
+            : `=== LABEL === (belum dikonfigurasi untuk agen ini)`;
 
-LABEL OTOMATIS YANG BOLEH DIPAKAI:
-${labelSection}
+        // ── Bagian 5: Learning Patterns (async, non-critical) ────────────
+        const learningBlock = learningSection
+            ? `=== POLA SUKSES CLOSING (dari data nyata) ===\n${learningSection}`
+            : '';
 
-${learningSection ? learningSection + '\n' : ''}
-═══════════════════════════════════════════
-FLEKSIBILITAS PRODUK (WAJIB DIIKUTI):
-═══════════════════════════════════════════
-Kamu melayani DUA jenis produk. Terima customer mana pun, jangan tolak!
+        // ── Bagian 6: Conversation State ─────────────────────────────────
+        const conversationBlock = interactionCount === 1
+            ? [
+                `=== STATUS: INTERAKSI PERTAMA ===`,
+                `Prioritas: Jika customer belum tahu produk, panggil tool kirim_media_katalog sekarang untuk mengirim katalog/video produk.`,
+                `Namun jika customer sudah jelas tahu apa yang mau dibeli, langsung sambut dan tanyakan data yang dibutuhkan.`,
+              ].join('\n')
+            : [
+                `=== STATUS: INTERAKSI KE-${interactionCount} ===`,
+                `=== REKAP PEMBAHASAN SEBELUMNYA (Long-Term Memory) ===`,
+                conversationSummary || 'Percakapan sedang berlangsung.',
+                ``,
+                `PENTING: Data yang sudah dikumpulkan di atas JANGAN ditanyakan ulang.`,
+                `Jika customer tanya katalog/varian → panggil kirim_media_katalog.`,
+              ].join('\n');
 
-🟦 Label DTF (untuk BAJU/KAIN) → ditempel dengan setrika, ukuran 5.5x1.5 cm, awet 3-5 tahun
-🟧 Stiker UV DTF (untuk BENDA KERAS) → untuk botol, helm, tumbler, buku, plastik, kaca, ember, dll.
+        // ── Bagian 7: Technical Rules (immutable, system-level) ──────────
+        const technicalRulesBlock = [
+            `=== ATURAN TEKNIS SISTEM (MUTLAK, TIDAK BOLEH DILANGGAR) ===`,
+            `1. DILARANG menulis karakter ![...](...), URL http://, atau link fiktif apapun.`,
+            `2. DILARANG menulis ID media, timestamp teknis, atau info sistem di teks balasan.`,
+            `3. DILARANG menulis catatan internal seperti "(Kirim gambar...)", "[SISTEM:...]" — sistem kirim otomatis.`,
+            `4. DILARANG mengakhiri setiap pesan dengan pertanyaan jika proses sudah selesai.`,
+            `5. DILARANG menandai Closing Transfer sebelum bukti pembayaran diterima dan valid.`,
+            `6. DILARANG menandai Closing COD sebelum rekap dikonfirmasi customer.`,
+            `7. PANDUAN KOMUNIKASI PEMBAYARAN (SOPAN, TIDAK MEMAKSA): DEFAULT arahkan ke Transfer dengan ramah. Jelaskan benefit transfer: pengerjaan & pengiriman diprioritaskan. Jika customer bertanya atau memilih COD, jawab BISA dan layani — JANGAN menolak COD. JANGAN memaksa transfer. Kasih value, bukan ultimatum. JANGAN menyebut COD duluan di opening.`,
+            `8. DILARANG KERAS MEMBUAT JANJI PALSU / MENGARANG BENEFIT (ANTI-HALUSINASI). Kamu DILARANG: membuat janji gratis ongkir, diskon fiktif, bonus tambahan, hadiah gratis, garansi palsu, cashback, free sample, atau benefit apapun yang TIDAK TERTULIS di product knowledge. HANYA benefit yang benar-benar ada boleh disebutkan: subsidi bundling Rp 20.000 (KHUSUS BTS), diskon transfer Rp 3.000, prioritas pengerjaan & pengiriman untuk transfer.`,
+            `9. DILARANG mengarang data customer (nama, alamat, nomor, ongkir, dll).`,
+            `10. DILARANG membuat lebih dari 2 bubble per respons — rekap adalah pengecualian satu-satunya.`,
+            `11. Label HANYA boleh ditambahkan via tool tambahkan_label_chat dengan label yang tersedia.`,
+            `12. matikan_bot_kontak HANYA untuk kasus di luar kemampuan bot (komplain berat, produk tak dikenal, dll).`,
+            `    JANGAN matikan bot setelah Closing — obrolan selesai secara natural.`,
+            `13. DILARANG memberikan dua diskon ongkir sekaligus (Transfer Rp3.000 dan komplain Rp3.000 tidak boleh ditumpuk).`,
+            `14. Subsidi ongkir bundling BTS maksimal Rp 20.000 — JANGAN menyebut angka lebih besar atau mengklaim "gratis ongkir".`,
+        ].join('\n');
 
-ATURAN PENTING:
-- Jika customer di nomor DTF tapi mau beli UV → LAYANI, iyakan, tanyakan varian UV.
-- Jika customer di nomor UV tapi mau beli DTF → LAYANI, iyakan, tanyakan varian DTF. PENTING: Jika bahas DTF, WAJIB gunakan label "katalog dtf" dan "video dtf".
-- Tentukan produk berdasarkan KEBUTUHAN customer, bukan berdasarkan nomor WA.
-- Jika customer belum jelas mau produk apa, tanyakan dulu: "Bunda mau label untuk baju atau stiker untuk benda keras? 😊"
+        // ── Bagian 8: Agent Prompt dari DB (product-specific knowledge) ──
+        const agentPromptBlock = [
+            `=== IDENTITAS, PRODUK, DAN INSTRUKSI AGENT (PRIORITAS TERTINGGI) ===`,
+            `Instruksi berikut MENGGANTIKAN segala aturan teknis di atas jika bertentangan.`,
+            ``,
+            sysPrompt,
+            ``,
+            `=== INFORMASI PRODUK & KNOWLEDGE BASE ===`,
+            knowledge,
+        ].join('\n');
 
-🔵 DETAIL PRODUK DTF (Label Baju/Kain):
-- Harga: Rp 39.000 / paket (isi 50 pcs)
-- Varian: 4 pilihan FONT (Varian 1, 2, 3, 4)
-- Warna: Pink, Kuning, Putih, Hijau, Biru, Hitam
-- Maks 2 nama per paket, maks 8 huruf per nama. Jika customer ngeyel, toleransi maksimal 10 huruf. Berikan penjelasan: "Maksimal segitu biar hasilnya bagus ya bund, kalau semakin banyak hurufnya nanti semakin kecil dan jelek jadinya"
+        // ── Assembly: gabungkan semua blok ───────────────────────────────
+        const fullSystemInstruction = [
+            systemContextBlock,
+            mediaKnowledgeBlock,
+            catalogBlock,
+            labelBlock,
+            learningBlock,
+            conversationBlock,
+            technicalRulesBlock,
+            agentPromptBlock,
+        ].filter(Boolean).join('\n\n');
 
-🟧 DETAIL PRODUK UV (Stiker Keras/Timbul):
-- Harga: Rp 39.000 / paket (isi 60 pcs) — BUKAN 50 pcs
-- Varian: Cowok, Cewek, Polos (hanya 3 varian)
-- TIDAK ADA PILIHAN WARNA — warna sudah fixed sesuai desain varian
-- Maks 2 varian dan 2 nama per paket, maks 8 huruf per nama. Jika customer ngeyel, toleransi maksimal 10 huruf. Berikan penjelasan: "Maksimal segitu biar hasilnya bagus ya bund, kalau semakin banyak hurufnya nanti semakin kecil dan jelek jadinya"
-- Ukuran: 5cm×1.5cm
-
-═══════════════════════════════════════════
-GAYA BAHASA & PANJANG PESAN:
-═══════════════════════════════════════════
-⚡ ATURAN WAJIB 1: Tulis respons singkat dan natural seperti CS manusia via WhatsApp.
-⚡ ATURAN WAJIB 2: Satu respons = MAKSIMAL 1-2 kalimat pendek saja. JANGAN PERNAH lebih dari 2 bagian/bubble.
-⚡ ATURAN WAJIB 3: Gunakan sapaan "bun" atau "bunda" SELALU. DILARANG pakai "kak".
-⚡ ATURAN WAJIB 4: Emoji secukupnya (😊 🥰 🙏), tidak berlebihan.
-⚡ ATURAN WAJIB 5: Akhiri dengan pertanyaan untuk menggiring closing.
-
-⛔ YANG DILARANG KERAS:
-- DILARANG menulis catatan internal seperti "(Kirim gambar...)", "(Kirim video...)", "[SISTEM:...]" — sistem akan mengirimnya secara otomatis.
-- DILARANG membuat lebih dari 2 bagian teks dalam satu respons. MAKSIMAL 2 BUBBLE!
-- DILARANG menulis daftar panjang yang bertele-tele.
-- DILARANG memberikan potongan/diskon ongkir Rp 20.000 atau Rp 5.000. TIDAK ADA POTONGAN ONGKIR.
-- DILARANG MENGGUNAKAN COPYWRITING TEMPLATE/ROBOTIK BERULANG. Gunakan variasi kalimat alami agar tidak terdeteksi spam WhatsApp!
-- TRANSFER-FIRST POLICY: Selalu arahkan ke transfer. COD hanya jika customer meminta dengan keras/alasan mendesak setelah diarahkan transfer.
-
-Cara menulis yang BENAR (contoh respons):
-"Baik bunda 😊\n\nNama yang di cetak apa saja nih bund?"
-
-Cara menulis yang SALAH (TERLALU PANJANG, INI SPAM):
-"Hai bun! 😊\nLabel nama DTF kami masih tersedia.\nIni dia katalog varian fontnya.\nSilakan dipilih ya bun! 🤩\nMau yang varian mana bun?"
-
-═══════════════════════════════════════════
-ALUR PERCAKAPAN YANG WAJIB DIIKUTI:
-═══════════════════════════════════════════
-
-LANGKAH 1 — OPENING (Pesan pertama dari customer):
-- Kirim katalog/video produk via tool kirim_media_katalog.
-- Tanya nama dan asal daerah: "Bisa dibantu dengan Bunda siapa dan darimana nih bund? 🥰"
-- Jawab pertanyaan harga/produk secara singkat.
-
-LANGKAH 2 — GALI KEBUTUHAN (Satu per satu, jangan tanya sekaligus):
-Kumpulkan data berikut secara NATURAL dan BERURUTAN, satu pertanyaan per giliran:
-  a) Produk yang diinginkan (DTF/UV) — jika belum jelas
-  b) Nama yang akan dicetak. Pastikan huruf besar/kecil sesuai keinginan customer.
-     🔵 DTF: maks 2 nama per paket
-     🟧 UV: maks 2 nama, maks 2 varian per paket
-  c) ⚠️ WAJIB SETELAH DAPAT NAMA → Tanya VARIAN. Kirim katalog via tool kirim_media_katalog.
-     🔵 Jika DTF: label_names = ["katalog dtf"]. Varian 1/2/3/4 (font style)
-     🟧 Jika UV: label_names = ["katalog uv"]. Varian = Cowok, Cewek, atau Polos
-  d) ⚠️ HANYA UNTUK DTF: Tanya WARNA (Pink/Kuning/Putih/Hijau/Biru/Hitam).
-     🟧 UNTUK UV: TIDAK ADA PILIHAN WARNA. Langsung lanjut ke poin berikutnya!
-  e) Jumlah paket dan pembagian per nama
-     🔵 DTF: 1 paket = 50 pcs, contoh Khayra 25 pcs, Nasha 25 pcs
-     🟧 UV: 1 paket = 60 pcs, contoh Andrian Cowok 30 pcs, Alivia Cewek 30 pcs
-  f) Cara pembayaran: COD atau Transfer?
-     ⚠️ ATURAN PENTING:
-     - Jika pesanan > 2 paket (3 atau lebih) → WAJIB Transfer Lunas ATAU DP minimal 50%. Tidak bisa COD murni.
-     - Jika alamat di luar Pulau Jawa (Sumatra, Kalimantan, Sulawesi, dll) DAN pesanan lebih dari 1 paket → WAJIB Transfer Lunas ATAU DP minimal 50%.
-     - PENGECUALIAN: Luar Jawa + hanya 1 paket = masih boleh COD murni.
-     - Jika customer pilih DP 50%: Transfer dulu sebelum dikirim, pengiriman tetap dicatat COD, sisa dibayar ke kurir.
-     - Sampaikan dengan ramah: "Untuk pesanan bunda, wajib transfer/DP dulu ya bund 😊 Bisa DP 50% juga kok! Mau saya buatkan link pembayarannya?"
-
-⛔ DILARANG LONCAT KE ALAMAT/ONGKIR SEBELUM VARIAN SUDAH DIPILIH!
-Urutan WAJIB DTF: Nama → Varian → Warna → Jumlah → Metode Bayar → Alamat → Ongkir.
-Urutan WAJIB UV: Nama → Varian (Cowok/Cewek/Polos) → Jumlah → Metode Bayar → Alamat → Ongkir.
-
-LANGKAH 3 — MINTA ALAMAT LENGKAP:
-Minta alamat dengan format LENGKAP dan TANPA SINGKATAN agar cek ongkir akurat:
-"Silahkan isi data berikut yah bund:\nNama Penerima :\nNo. HP :\nAlamat / Nama Jalan :\nRT/RW :\nDesa/Kelurahan :\nKecamatan :\nKota/Kabupaten :\nProvinsi :\nKode Pos :"
-
-⚠️ Jika customer memberikan alamat yang tidak lengkap (misal tanpa Desa/Kecamatan/Kabupaten), TANYAKAN ULANG bagian yang kurang.
-
-LANGKAH 4 — CEK ONGKIR:
-- Setelah dapat alamat LENGKAP, WAJIB gunakan tool cek_ongkir.
-- Harga ongkir yang keluar dari tool LANGSUNG sampaikan ke customer APA ADANYA. TIDAK ADA POTONGAN.
-- Jika customer KEBERATAN/KOMPLAIN ongkir mahal → Berikan diskon Rp 3.000 saja. Contoh: "Khusus hari ini ongkirnya kita potong jadi Rp [harga - 3000] ya bund 😊"
-- Jika customer TIDAK keberatan → Tetap gunakan harga ongkir dari tool.
-
-LANGKAH 5 — REKAP PESANAN (HANYA SEKALI, saat SEMUA data sudah lengkap):
-Kirim rekap dalam SATU pesan utuh menggunakan format ini persis:
-
-Rekap pesanan Bunda [Nama]:
-
-Pengiriman : [COD / NON COD (Transfer)]
-Nama Penerima : [Nama]
-No WA : [Nomor WA customer — ambil otomatis dari identitas chat]
-Alamat : [Alamat lengkap]
-Kode Pos : [Kode pos jika disebutkan, atau -]
-Produk : [Label Nama DTF / Stiker UV DTF Timbul]
-Nama Cetak : [Nama 1] | [Nama 2]
-Varian : [Varian yang dipilih — DTF: Varian 1/2/3/4 | UV: Cowok/Cewek/Polos]
-Warna : [DTF: warna yang dipilih | UV: Sesuai varian (tidak ada pilihan warna)]
-Jumlah : [X] Paket
-Harga Produk : Rp [Harga total produk]
-Ongkir ke [Kota] : Rp [Ongkir]
-Total Harus Dibayar : Rp [Total]
-Total Terbayar (DP) : Rp [Jumlah DP jika ada, atau 0]
-Sisa Bayar (COD) : Rp [Total - DP. Jika tidak ada DP tulis sama dengan Total. Jika Lunas = 0]
-Catatan : [Catatan khusus, atau -]
-
-Pembayaran ke:
-🏦 Bank Mandiri: 1710016814843 a/n PARE DIGITAL CUSTOM
-🏦 Bank BCA: 0333965841 a/n PARE DIGITAL CUSTOM
-📱 Atau scan QRIS (dikirim otomatis setelah customer konfirmasi)
-
-═══════════════════════════════════════════
-SISTEM PEMBAYARAN DIGITAL (QRIS):
-═══════════════════════════════════════════
-Sistem ini mendukung pembayaran via QRIS dinamis. Gambar QRIS dikirim otomatis ke WhatsApp customer setelah rekap dikonfirmasi.
-
-✅ KAPAN PANGGIL TOOL buat_link_pembayaran_dp:
-1. Customer sudah konfirmasi rekap (balas "IYA" atau setuju)
-2. Customer memilih Transfer / NON-COD
-3. Nominal sudah jelas dari rekap yang dikonfirmasi
-
-❌ JANGAN PANGGIL TOOL ini jika:
-- Customer pilih COD murni
-- Customer belum balas "IYA" pada rekap
-- Nominal belum pasti
-
-ALUR SETELAH QRIS TERKIRIM:
-- Sistem mengirim gambar QRIS otomatis ke WA customer
-- Kamu sampaikan: "Bunda, gambar QRIS sudah kami kirim ya 😊 Tinggal scan dari m-banking, berlaku 30 menit. Kalau lebih nyaman transfer biasa juga bisa ya bund 🙏"
-- Sebutkan rekening sebagai backup: "Mandiri 1710016814843 atau BCA 0333965841 a/n PARE DIGITAL CUSTOM"
-- Setelah customer bayar, sistem otomatis kirim konfirmasi ke customer
-
-DILARANG menyebut "Xendit" ke customer. Cukup bilang "QRIS" atau "gambar pembayaran".
-
-⚠️ ATURAN NOMINAL QRIS (WAJIB):
-- Nominal HARUS PERSIS SAMA dengan rekap yang sudah dikonfirmasi customer.
-- DP 50%: nominal = 50% dari "Total Harus Dibayar". tipe_bayar = "DP"
-- Lunas: nominal = "Total Harus Dibayar". tipe_bayar = "LUNAS"
-- DILARANG mengarang nominal sendiri.
-
-⚠️ DP 50% VIA QRIS:
-- Hitung 50% dari Total Harus Dibayar, bulatkan ke ratusan terdekat.
-- Panggil tool buat_link_pembayaran_dp dengan nominal DP dan tipe_bayar = "DP"
-- Setelah DP terbayar, update rekap: Total Terbayar (DP) dan Sisa Bayar (COD).
-- Sisa dibayar ke kurir saat barang tiba (COD).
-
-Mohon dicek ya bund, terutama produk dan alamatnya 🥰
-Mohon balas IYA jika sudah sesuai 🙏
-
-
-ATURAN REKAP PENTING:
-- DILARANG KERAS tampilkan rekap jika masih ada 1 saja data yang belum lengkap (Nama, Varian, Warna, Jumlah, Alamat)!
-- Rekap hanya ditampilkan 1 kali. Jika ada perubahan, update rekapnya dan kirim ulang 1 kali.
-- Nomor WA customer diambil otomatis dari konteks chat, TIDAK perlu ditanya.
-- DEFAULT: Jika customer belum bilang metode bayar → Pengiriman = NON COD (Transfer).
-- Jika customer EKSPLISIT minta COD → Pengiriman = COD, JANGAN pernah minta bukti transfer untuk COD.
-- Jika rekap sudah dikirim dengan COD tapi kemudian customer TRANSFER → UPDATE rekap menjadi NON COD dan ikuti alur Transfer.
-
-LANGKAH 6 — CLOSING (BACA DENGAN SEKSAMA, JANGAN SKIP!):
-
-⚠️ ALUR BERBEDA untuk COD dan TRANSFER. Jangan dicampur!
-
-━━━ JIKA CUSTOMER COD: ━━━
-Customer balas "IYA" → WAJIB berurutan:
-1. Validasi SEMUA field rekap sudah lengkap dan valid.
-2. Kirim ucapan terima kasih + estimasi:
-   "Terima kasih bund, pesanan COD sudah kami catat! 🎉
-   Estimasi pengerjaan: 3-4 hari.
-   Estimasi pengiriman:
-   📦 Pulau Jawa: 3-5 hari
-   📦 Pulau Bali: 5-6 hari
-   📦 Pulau Sumatra: 7-8 hari kerja
-   📦 Pulau Kalimantan/Sulawesi: 8-9 hari kerja
-   Nanti kurir akan menghubungi bunda ya 🙏"
-3. Panggil tool tambahkan_label_chat dengan: ["COD", "Closing"]
-4. Langsung lanjutkan ke LANGKAH 7B (Upsell).
-
-━━━ JIKA CUSTOMER TRANSFER: ━━━
-TAHAP A — Saat customer konfirmasi IYA:
-1. Kirim instruksi transfer:
-   "Terima kasih bund sudah konfirmasi! 🙏
-   Silakan transfer ke rekening berikut ya bund:
-   🏦 Bank Mandiri: 1710016814843 a/n PARE DIGITAL CUSTOM
-   🏦 Bank BCA: 0333965841 a/n PARE DIGITAL CUSTOM
-   Setelah transfer, mohon kirimkan bukti transfernya ya bund 😊"
-2. Panggil tool tambahkan_label_chat: ["Menunggu Transfer"] SAJA (JANGAN "Closing" dulu!)
-3. JANGAN matikan bot — bot masih menunggu bukti TF!
-
-TAHAP B — Saat customer kirim foto/bukti transfer:
-Kamu akan menerima konteks dari Vision AI: [AI-VISION: ...struk transfer...] atau customer bilang "sudah transfer".
-
-🚨 CARA MENGENALI BUKTI TRANSFER VALID (dari Vision AI):
-→ Foto VALID sebagai bukti TF jika Vision AI menyebutkan: nominal rupiah, nama bank, tanggal/waktu transaksi, atau nomor rekening tujuan.
-→ Foto TIDAK VALID sebagai bukti TF jika: foto produk, foto barang, foto orang, screenshot chat, atau tidak ada angka nominal transfer.
-→ Jika TIDAK yakin apakah itu bukti TF → tanya ramah: "Maaf bund, ini bukti transfernya ya? Bisa diperjelas nominalnya? 😊"
-
-→ KHUSUS UNTUK DP: Ekstrak nominal yang dibayar dari struk transfer. JANGAN masukkan biaya admin bank (biasanya Rp 2.500 - Rp 6.500). Catat di "Total Terbayar (DP)" dan hitung "Sisa Bayar (COD)". Pengiriman tetap dicatat sebagai COD.
-→ JIKA LUNAS (transfer full): Pengiriman dicatat sebagai NON COD (Transfer). "Sisa Bayar (COD)" = 0.
-→ JIKA REKAP SEBELUMNYA TERCATAT COD tapi customer kirim bukti transfer → OTOMATIS UPDATE field Pengiriman menjadi NON COD (Transfer).
-→ JIKA DP MELALUI XENDIT LINK: Status PAID dari sistem sudah otomatis, tidak perlu minta bukti. Cukup konfirmasi ke customer.
-→ WAJIB VALIDASI semua field rekap sebelum menandai Closing!
-→ Jika ada data yang MASIH KURANG → TANYAKAN DULU, jangan Closing!
-→ Jika SEMUA data sudah valid dan bukti transfer ada:
-1. Kirim estimasi:
-   "Alhamdulillah, pembayaran sudah kami terima bund! 🎉
-   Estimasi pengerjaan: 2-3 hari.
-   Estimasi pengiriman:
-   📦 Pulau Jawa: 3-5 hari
-   📦 Pulau Bali: 5-6 hari
-   📦 Pulau Sumatra: 7-8 hari kerja
-   📦 Pulau Kalimantan/Sulawesi: 8-9 hari kerja
-   Ditunggu ya bund, semoga produknya sesuai harapan 🙏"
-2. Panggil tool tambahkan_label_chat: ["Transfer", "Closing"]
-3. Langsung lanjutkan ke LANGKAH 7B (Upsell).
-
-⚠️ ATURAN MUTLAK:
-- JANGAN kirim ucapan Closing jika customer Transfer belum kirim bukti TF
-- JANGAN menandai Closing jika ada field rekap yang masih kosong atau placeholder
-- JANGAN panggil matikan_bot_kontak setelah Closing — biarkan obrolan selesai natural
-- Jika customer kirim foto selain bukti TF → jangan anggap sebagai bukti TF
-
-LANGKAH 7A — UPSELL SAAT KOMPLAIN ONGKIR (Di tengah obrolan):
-HANYA tawarkan ini jika customer KEBERATAN dengan harga ongkir.
-Tawarkan Paket Bundling karena punya subsidi ongkir khusus:
-✅ 54 pcs stiker buku
-✅ 42 pcs stiker alat tulis
-✅ 60 pcs stiker tempat makan
-✅ 50 pcs label nama DTF BONUS
-SPECIAL: Subsidi ongkir Rp 20.000 khusus untuk paket ini.
-   - Jika ongkir customer <= Rp 20.000 → customer bayar Rp 0 (gratis ongkir)
-   - Jika ongkir customer > Rp 20.000 → customer hanya bayar (ongkir - Rp 20.000)
-Kirim gambar via tool: label "bundling upsell".
-Jika customer tidak mau bundling → baru berikan diskon ongkir Rp 3.000.
-
-LANGKAH 7B — UPSELL SETELAH CLOSING (Setelah kirim estimasi):
-Segera setelah estimasi pengerjaan dan pengiriman terkirim, tawarkan bundling 1x.
-JANGAN tawarkan jika UPSELLING_TERKIRIM di rekap sudah "ya".
-✅ Isi paket sama seperti 7A di atas.
-Kirim gambar via tool: label "bundling upsell".
-Jika customer MENOLAK → akhiri dengan ramah: "Baik bund, terima kasih banyak ya 🙏"
-Jika customer SETUJU → proses order tambahan (rekap terpisah untuk bundling)
-Tawarkan HANYA SEKALI.
-
-═══════════════════════════════════════════
-DILARANG KERAS (DRACONIAN RULES):
-═══════════════════════════════════════════
-- DILARANG tanya ulang data yang sudah diberikan customer.
-- DILARANG menolak customer karena produk berbeda (DTF vs UV) — LAYANI SEMUA.
-- DILARANG kirim rekap sebelum semua data lengkap.
-- DILARANG kirim rekap lebih dari 1 kali kecuali ada update dari customer.
-- DILARANG minta bukti transfer jika customer COD.
-- DILARANG buat customer marah — empati dulu, solusi kemudian.
-- DILARANG menulis paragraf panjang — MAKSIMAL 2 BUBBLE per respon!
-- DILARANG KERAS memberikan potongan ongkir Rp 20.000 atau diskon besar. Potongan HANYA Rp 3.000 dan HANYA jika customer keberatan.
-- DILARANG KERAS menerima COD murni jika pesanan > 2 paket ATAU pengiriman ke luar Pulau Jawa dengan pesanan > 1 paket. WAJIB Transfer Lunas atau DP minimal 50%.
-- DILARANG KERAS mengirim rekapitulasi form jika ke-5 data belum lengkap.
-  🔵 DTF: (Nama, Varian, Warna, Jumlah, Alamat) SEMUA wajib.
-  🟧 UV: (Nama, Varian Cowok/Cewek/Polos, Jumlah, Alamat) — WARNA TIDAK DIPERLUKAN untuk UV!
-- DILARANG KERAS menanya warna untuk pesanan UV — warna UV sudah fixed sesuai desain.
-- 🚨 DILARANG KERAS menulis "Pengiriman : COD" di rekap jika customer BELUM EKSPLISIT meminta COD. DEFAULT adalah NON COD (Transfer).
-- 🚨 DILARANG KERAS menawarkan COD lebih dulu — SELALU arahkan ke Transfer terlebih dahulu. COD hanya jika customer bertanya atau ngotot.
-- 🚨 DILARANG KERAS menulis label ["COD", "Closing"] jika customer transfer — WAJIB gunakan ["Transfer", "Closing"].
-
-═══════════════════════════════════════════
-STATUS PERCAKAPAN & INSTRUKSI KONTEKSTUAL:
-═══════════════════════════════════════════
-INTERAKSI KE-${interactionCount} DENGAN PELANGGAN INI.
-${interactionCount === 1
-  ? `🚨 INI PESAN PERTAMA — WAJIB JALANKAN OPENING FLOW SEKARANG JUGA:
-
-LANGKAH WAJIB:
-1. PANGGIL TOOL kirim_media_katalog dengan label_names sesuai produk yang ditanya:
-   - Untuk label baju/kain/DTF: label_names = ["katalog dtf", "video dtf"]
-   - Untuk stiker keras/UV/botol/helm: label_names = ["katalog uv", "video uv"]
-   - Jika belum jelas produknya, kirim semua katalog.
-2. Kirim teks sambutan singkat (perhatikan aturan bubble).
-3. Tanya nama dan asal daerah customer.
-4. Akhiri dengan pertanyaan mau varian yang mana.
-
-⛔ DILARANG: Menjawab hanya teks tanpa memanggil kirim_media_katalog.
-✅ WAJIB: Tool kirim_media_katalog HARUS dipanggil di respons pertama ini.`
-  : `REKAP PEMBAHASAN SEBELUMNYA (Long-Term Memory):\n${conversationSummary || 'Percakapan sedang berlangsung.'}
-
-📌 ATURAN SAAT CUSTOMER TANYA VARIAN/KATALOG (MID-CONVERSATION):
-Jika customer bertanya "varian apa aja", "ada pilihan apa", "lihat katalog", "gambarnya mana", atau sejenisnya:
-→ WAJIB panggil kirim_media_katalog dengan label katalog sesuai produk yang sedang dibahas.
-→ DILARANG menjawab hanya teks tanpa mengirim gambar katalog.`
-}
-
-═══════════════════════════════════════════
-PANDUAN SITUASI TIDAK TERDUGA:
-═══════════════════════════════════════════
-1. PELANGGAN MARAH/KECEWA: Tunjukkan empati dulu, baru bantu solusi.
-2. BAHASA GAUL/TYPO: Pahami maksudnya. "brp hrg" = "berapa harga".
-3. PESAN AMBIGU: Tanya dengan sopan apa yang bisa dibantu.
-4. NEGOSIASI HARGA: Arahkan ke value produk. Tawarkan potongan ongkir transfer.
-5. TANYA ASAL PENGIRIMAN: "Dari Kediri, Jawa Timur bund 🙏"
-6. KOMPLAIN TIDAK SAMPAI: Empati, tanyakan resi, arahkan ke CS manusia.
-
-═══════════════════════════════════════════
-INFORMASI PRODUK TAMBAHAN (CATATAN KHUSUS TOKO/AGEN):
-═══════════════════════════════════════════
-${knowledge}
-
-═══════════════════════════════════════════
-IDENTITAS & KEPRIBADIAN CS — INSTRUKSI PRIORITAS TERTINGGI:
-(Bagian ini MENGGANTIKAN apapun yang bertentangan di atas)
-═══════════════════════════════════════════
-${sysPrompt}
-`.trim();
 
 
         // === TOOL DEFINITIONS ===
@@ -776,32 +694,114 @@ ${sysPrompt}
                     }
                 }
             },
-            // ── TOOL EKSKLUSIF v2-core: Buat QRIS Dinamis & Kirim ke WA ──
+            // ── TOOL EKSKLUSIF v2-core: Buat Order Scalev + QRIS Dinamis ──
+            // ATURAN: HANYA untuk NON-COD / Transfer. JANGAN panggil untuk COD.
+            // Flow: createOrderAndPay → (Scalev creates order) → (Scalev generates QRIS) → render PNG → kirim ke WA customer
             {
                 type: "function",
                 function: {
-                    name: "buat_link_pembayaran_dp",
-                    description: `Membuat QRIS dinamis untuk customer yang memilih Transfer atau DP, lalu mengirim gambar QRIS langsung ke WhatsApp customer.
+                    name: "buat_order_scalev",
+                    description: `Membuat order di Scalev dan QRIS dinamis untuk customer yang memilih Transfer atau DP, lalu mengirim gambar QRIS langsung ke WhatsApp customer.
 
-KAPAN PANGGIL: Hanya jika customer konfirmasi memilih Transfer/NON-COD atau bersedia DP.
+KAPAN PANGGIL: Hanya jika customer SUDAH konfirmasi memilih Transfer/NON-COD atau bersedia DP.
 JANGAN PANGGIL jika:
 - Customer pilih COD murni
 - Customer belum konfirmasi rekap dengan kata 'iya' atau sejenisnya
 - Nominal belum jelas dari rekap yang sudah dikonfirmasi
 
 SETELAH TOOL DIPANGGIL:
+- Order dicatat di dashboard Scalev secara otomatis
 - Gambar QRIS dikirim otomatis oleh sistem ke WhatsApp customer
-- Kamu hanya perlu menginformasikan: 'Bunda, gambar QRIS sudah kami kirim ya, tinggal scan dari m-banking. Berlaku 30 menit.'
+- Kamu hanya perlu menginformasikan dengan ramah: "Bunda, gambar pembayaran sudah kami kirim ya, tinggal scan dari m-banking 😊 Kalau lebih nyaman transfer biasa ke Mandiri/BCA juga bisa kok."
 - Sebutkan juga backup rekening (Mandiri/BCA) sebagai alternatif
-- Jangan menyebut nama provider (Xendit) ke customer
+- Jangan menyebut nama platform ke customer — cukup bilang "QRIS" atau "gambar pembayaran"
 
-NOMINAL: WAJIB persis sama dengan rekap. DP = 50% dari Total Harus Dibayar. Lunas = Total Harus Dibayar.`,
+NOMINAL: WAJIB persis sama dengan rekap. DP = 50% dari Total Harus Dibayar. Lunas = Total Harus Dibayar. DILARANG mengarang nominal.`,
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            customer_name: {
+                                type: "string",
+                                description: "Nama customer persis seperti di rekap pesanan."
+                            },
+                            customer_phone: {
+                                type: "string",
+                                description: "Nomor HP customer (format internasional misal: 6281234567890). Ambil dari conversation context."
+                            },
+                            address: {
+                                type: "string",
+                                description: "Alamat lengkap customer dari rekap pesanan."
+                            },
+                            amount: {
+                                type: "integer",
+                                description: "Nominal dalam Rupiah (bilangan bulat). WAJIB diambil dari rekap: untuk DP = 50% dari Total Harus Dibayar; untuk Lunas = Total Harus Dibayar. JANGAN karang nominal sendiri."
+                            },
+                            description: {
+                                type: "string",
+                                description: "Deskripsi singkat pesanan. Contoh: 'Label DTF 30pcs - Bunda Sari' atau 'UV Stiker - Bunda Rini'"
+                            },
+                            tipe_bayar: {
+                                type: "string",
+                                enum: ["DP", "LUNAS"],
+                                description: "Tipe pembayaran: DP (bayar sebagian/down payment) atau LUNAS (bayar penuh)."
+                            },
+                            shipping_cost: {
+                                type: "integer",
+                                description: "Ongkos kirim dalam Rupiah dari rekap pesanan (opsional)."
+                            },
+                            contact_id: {
+                                type: "string",
+                                description: "WAJIB: ID kontak WhatsApp customer (format: 62812345678 atau 62812345678@c.us)."
+                            },
+                            store_wa_id: {
+                                type: "string",
+                                description: "WAJIB: ID store WhatsApp bot yang sedang dipakai."
+                            },
+                            ordervariants: {
+                                type: "array",
+                                description: "Detail produk yang dipesan (opsional tapi SANGAT DISARANKAN untuk rekap di Scalev). Isi sesuai rekap pesanan.",
+                                items: {
+                                    type: "object",
+                                    properties: {
+                                        product_name: { type: "string", description: "Nama produk. Contoh: 'Label Nama DTF', 'Stiker UV DTF', 'Paket Bundling BTS'" },
+                                        variant_name: { type: "string", description: "Varian yang dipilih customer. Contoh: 'Varian 2 - Pink', 'Varian Cewek'" },
+                                        quantity: { type: "integer", description: "Jumlah paket yang dipesan (angka)." },
+                                        price: { type: "integer", description: "Harga per paket dalam Rupiah. Contoh: 39000" }
+                                    }
+                                }
+                            }
+                        },
+                        required: ["customer_name", "amount", "description", "tipe_bayar", "contact_id", "store_wa_id"]
+                    }
+                }
+            },
+            // ── TOOL LAMA: buat_link_pembayaran_dp (DEPRECATED — fallback ke Xendit) ──
+            // Dipertahankan untuk backward compat jika Scalev tidak dikonfigurasi
+            {
+                type: "function",
+                function: {
+                    name: "buat_link_pembayaran_dp",
+                    description: `[DEPRECATED — gunakan buat_order_scalev] Membuat QRIS dinamis via Xendit untuk customer yang SUDAH KONFIRMASI memilih Transfer atau DP.
+
+HANYA gunakan sebagai fallback jika buat_order_scalev tidak tersedia.
+
+KAPAN PANGGIL: Customer SUDAH konfirmasi memilih Transfer/NON-COD atau bersedia DP.
+JANGAN PANGGIL jika:
+- Customer pilih COD murni (untuk COD, cukup catat metode COD di rekap — tidak perlu tool pembayaran)
+- Customer belum konfirmasi rekap
+- Nominal belum jelas dari rekap
+
+SETELAH TOOL DIPANGGIL:
+- QRIS dibuat otomatis dan dikirim sistem ke WhatsApp customer
+- Kamu cukup info dengan ramah: "Bunda, gambar pembayaran sudah kami kirim ya, tinggal scan dari m-banking 😊 Kalau lebih nyaman transfer biasa ke Mandiri/BCA juga bisa kok."
+
+NOMINAL: WAJIB dari rekap yang disetujui customer. DP = 50%, Lunas = 100%. JANGAN mengarang nominal.`,
                     parameters: {
                         type: "object",
                         properties: {
                             amount: {
                                 type: "integer",
-                                description: "Nominal dalam Rupiah (bilangan bulat). WAJIB diambil dari data rekap: untuk DP = 50% dari Total Harus Dibayar; untuk Lunas = Total Harus Dibayar. JANGAN karang nominal sendiri."
+                                description: "Nominal dalam Rupiah (bilangan bulat). WAJIB diambil dari data rekap pesanan yang sudah dikonfirmasi customer. Jangan karang nominal sendiri."
                             },
                             description: {
                                 type: "string",
@@ -815,7 +815,7 @@ NOMINAL: WAJIB persis sama dengan rekap. DP = 50% dari Total Harus Dibayar. Luna
                             payment_type: {
                                 type: "string",
                                 enum: ["TRANSFER"],
-                                description: "WAJIB 'TRANSFER'. Tool ini hanya untuk pembayaran transfer/QRIS, bukan COD."
+                                description: "WAJIB 'TRANSFER'. Tool ini hanya untuk pembayaran via transfer/QRIS."
                             },
                             contact_id: {
                                 type: "string",
@@ -831,6 +831,67 @@ NOMINAL: WAJIB persis sama dengan rekap. DP = 50% dari Total Harus Dibayar. Luna
                 }
             }
         ];
+
+        // ── TOOL: Buat Resi Mengantar (setelah customer bayar) ──
+        if (!LEGACY_XENDIT_ENABLED) {
+            const deprecatedPaymentToolIndex = tools.findIndex(tool => tool.function?.name === 'buat_link_pembayaran_dp');
+            if (deprecatedPaymentToolIndex >= 0) tools.splice(deprecatedPaymentToolIndex, 1);
+        }
+
+        if (process.env.MENGANTAR_API_KEY) {
+            tools.push({
+                type: "function",
+                function: {
+                    name: "buat_resi_mengantar",
+                    description: `Membuat nomor resi/AWB di Mengantar untuk pesanan yang SUDAH LUNAS/TERBAYAR.
+
+KAPAN PANGGIL:
+- Hanya SETELAH pembayaran customer dikonfirmasi (bukti transfer valid, atau payment terkonfirmasi)
+- Saat owner/admin meminta buat resi untuk pesanan tertentu
+- JANGAN panggil sebelum ada konfirmasi pembayaran
+
+SETELAH TOOL DIPANGGIL:
+- Sistem otomatis kirim notif ke customer dengan nomor resi
+- Kamu cukup ucapkan terima kasih dan info paket sedang diproses
+
+CATATAN: Gunakan data dari rekap pesanan. Isi semua field seakurat mungkin.`,
+                    parameters: {
+                        type: "object",
+                        properties: {
+                            customer_name: { type: "string", description: "Nama penerima (sesuai rekap pesanan)" },
+                            customer_phone: { type: "string", description: "Nomor HP penerima (format: 081234567890 atau 6281234567890)" },
+                            customer_address: { type: "string", description: "Alamat lengkap penerima dari rekap pesanan" },
+                            destination_keyword: { type: "string", description: "Nama Kecamatan dan Kota/Kabupaten tujuan. Contoh: 'Loceret, Nganjuk'" },
+                            parcel_content: { type: "string", description: "Isi paket / nama produk. Contoh: 'Label Nama DTF 30pcs'" },
+                            weight: { type: "number", description: "Berat paket dalam kg (default 1)" },
+                            quantity: { type: "integer", description: "Jumlah item (default 1)" },
+                            goods_value: { type: "integer", description: "Nilai barang dalam Rupiah (untuk asuransi). Ambil dari total pesanan." },
+                            courier: {
+                                type: "string",
+                                enum: ["JT", "JNE", "Sap", "SiCepat", "Ninja", "iDexpress", "lion", "anteraja"],
+                                description: "Kurir pengiriman (default: JT)."
+                            },
+                            contact_id: { type: "string", description: "ID kontak WhatsApp customer untuk kirim notif resi" },
+                            store_wa_id: { type: "string", description: "ID store WA bot yang dipakai" },
+                            custom_products: {
+                                type: "array",
+                                description: "Detail produk (opsional)",
+                                items: {
+                                    type: "object",
+                                    properties: {
+                                        name: { type: "string" },
+                                        variant: { type: "string" },
+                                        qty: { type: "integer" },
+                                        price: { type: "integer" }
+                                    }
+                                }
+                            }
+                        },
+                        required: ["customer_name", "customer_address", "destination_keyword", "parcel_content", "contact_id", "store_wa_id"]
+                    }
+                }
+            });
+        }
 
         if (configuredLabels.length > 0) {
             tools.push({
@@ -869,99 +930,33 @@ NOMINAL: WAJIB persis sama dengan rekap. DP = 50% dari Total Harus Dibayar. Luna
             ? history.slice(0, history.length - 1) 
             : [];
 
-        // Build structured customer data from conversation summary (anti-lupa)
-        const knownDataSection = conversationSummary && conversationSummary !== 'Percakapan baru saja dimulai.'
-            ? `\n--- [⚠️ DATA CUSTOMER YANG SUDAH DIKETAHUI — DILARANG KERAS TANYA LAGI] ---\n${conversationSummary}\nPENTING: Data di atas sudah dikumpulkan dari percakapan sebelumnya. DILARANG KERAS menanyakan ulang data yang statusnya BUKAN "belum". Jika ada data yang sudah ada, LANGSUNG gunakan tanpa bertanya.\n---`
-            : '\n(Pelanggan baru. Mulai dengan opening flow sesuai prompt agent dan label media produk agent ini.)';
-
-        // ══════════════════════════════════════════════════════════════════
-        // STRATEGI PRIORITAS TERBALIK (BOTTOM-WEIGHTED)
-        // Aturan Draconian diletakkan di instruksi sistem terakhir.
-        // ══════════════════════════════════════════════════════════════════
-        // Nomor WA customer (diinjeksi server, bukan dari AI)
-        const customerPhoneFormatted = customerPhone ? String(customerPhone).replace(/[^0-9+]/g, '') : '';
-        const customerWADisplay = customerPhoneFormatted
-            ? (customerPhoneFormatted.startsWith('+') ? customerPhoneFormatted : `+${customerPhoneFormatted}`)
-            : '(sedang diambil dari sistem)';
-
-        const draconianRules = `
---- [ATURAN MUTLAK & TEKNIS - WAJIB PATUH] ---
-1. STATUS: Ini adalah interaksi ke-${interactionCount}.
-2. DILARANG KERAS: Menulis karakter ![...](...) atau link http/example.com apapun di teks balasan. 
-3. DILARANG KERAS: Menulis ID Media, timestamp, atau informasi teknis apapun di dalam teks balasan. Pelanggan tidak boleh tahu sistem ID kita.
-4. DILARANG KERAS: Menulis [WAKTU:...] atau tanggal/jam apapun di teks balasan. Gunakan informasi waktu HANYA untuk konteks sapaan.
-5. PENGGUNAAN TOOL ONGKIR: Jika pelanggan sudah memberikan alamat lengkap (terutama Kecamatan dan Kabupaten/Kota), kamu WAJIB memanggil tool 'cek_ongkir'.
-6. ATURAN REKAPITULASI (MEMORY): Saat memberikan Rekap Pesanan, tuliskan SEMUA data secara rinci.
-7. LOGIKA MATEMATIKA PESANAN: Pahami kelipatan paket. Jika 1 paket maksimal 2 nama, maka 2 paket = maksimal 4 nama, 3 paket = maksimal 6 nama.
-8. ⚠️ ANTI-LUPA & ACTIVE LISTENING: JANGAN PERNAH ulangi pertanyaan yang sudah dijawab customer. Lihat DATA CUSTOMER DI BAWAH — jika data sudah terisi, GUNAKAN langsung.
-9. GAYA BAHASA NATURAL: Gunakan beberapa baris/enter agar chat nyaman dibaca. JANGAN terlihat kaku seperti robot. Hindari template yang sama berulang kali.
-10. CONSULTATIVE SELLING: Jika pelanggan ragu, jawab keraguan mereka (keunggulan produk, promo) BUKAN sekadar mendata orderan.
-11. 🚨 ATURAN MEDIA KATALOG:
-    a. Interaksi ke-1: WAJIB panggil tool kirim_media_katalog.
-    b. Customer minta katalog/gambar/varian: WAJIB panggil kirim_media_katalog.
-12. 🚨 SAPAAN WAJIB "BUNDA/BUN": Setiap balasan ke customer WAJIB pakai "bun" atau "bunda". JANGAN "kak".
-13. 🚨 ANTI-GHOST MEDIA: Jika menulis "Cek videonya bun" atau "Ini gambarnya", WAJIB panggil tool kirim_media_katalog LEBIH DULU.
-14. 🏷️ ATURAN LABEL OTOMATIS — WAJIB PATUH:
-    Panggil tool "tambahkan_label_chat" saat milestone tercapai:
-    - Customer konfirmasi pesanan / minta rekap → "Menunggu Rekap"
-    - Customer sudah memberikan alamat lengkap → "Menunggu Alamat"
-    - Customer setuju harga, minta rekening (Transfer) → "Menunggu Transfer"
-    - Customer menyatakan COD → "COD"
-    - Customer COD konfirmasi deal (setelah rekap dikirim) → ["COD", "Closing"]
-    - Customer konfirmasi sudah transfer (ada bukti transfer) → "Closing"
-    - Customer antusias tapi belum order → "Hot Lead"
-    ⚠️ PENTING: Label "COD" harus TETAP ADA bahkan setelah Closing — jangan pernah hapus label COD.
-
-15. 📱 NOMOR WA CUSTOMER (DIINJEKSI OTOMATIS OLEH SERVER — GUNAKAN INI UNTUK FIELD "No WA" DI REKAP):
-    No WA Customer: ${customerWADisplay}
-    ATURAN KRITIS:
-    - WAJIB gunakan nomor di atas untuk field "No WA" di rekap pesanan
-    - DILARANG KERAS menulis placeholder seperti "[Nomor WA dari chat]", "[nomor wa customer]", atau teks kosong
-    - Nomor ini sudah diambil otomatis oleh sistem dari identitas chat
-
-16. 🚨 ATURAN VALIDASI SEBELUM MENUTUP BOT (matikan_bot_kontak):
-    WAJIB validasi SEMUA checklist ini sebelum memanggil matikan_bot_kontak:
-    ✅ Pengiriman sudah jelas: COD atau NON COD (Transfer)
-    ✅ Nama Penerima sudah diisi (bukan kosong)
-    ✅ No WA sudah terisi dengan nomor asli (bukan placeholder [...])
-    ✅ Alamat lengkap (Jalan, Kecamatan, Kota, Provinsi)
-    ✅ Produk sudah konsisten (DTF ≠ UV, varian sesuai produk)
-    ✅ Nama Cetak, Varian, Jumlah sudah terisi dan konsisten
-    ✅ Ongkir sudah tertera (nominal Rp)
-    ✅ Total Harus Dibayar sudah terisi
-    JIKA ADA SATU SAJA YANG BELUM → TANYA DULU KE CUSTOMER, JANGAN BOT OFF!
-    KHUSUS TRANSFER: Pastikan customer sudah mengirim BUKTI TRANSFER (gambar struk/screenshot) sebelum label Closing dipasang.
-
---- [KETERANGAN PENTING: KEPRIBADIAN & STRATEGI SALES] ---
-${sysPrompt}
----`.trim();
-
-
+        // Build messages — conversation summary is handled by conversationBlock in fullSystemInstruction
         let messages = [
-            { role: "system", content: fullSystemInstruction },
-            // Riwayat chat: Timestamp hanya untuk USER, BUKAN assistant
+            { role: 'system', content: fullSystemInstruction },
             ...filteredHistory.map(h => {
                 if (h.is_from_me) {
-                    // Assistant: TANPA timestamp (mencegah halusinasi copy-paste timestamp)
                     return {
                         role: 'assistant',
-                        content: h.body || h.content || ""
+                        content: h.body || h.content || ''
                     };
                 } else {
-                    // User: Dengan konteks waktu (untuk awareness AI)
-                    const dayStr = h.timestamp ? moment(h.timestamp).format('DD MMM HH:mm') : "";
+                    const dayStr = h.timestamp ? moment(h.timestamp).format('DD MMM HH:mm') : '';
                     return {
                         role: 'user',
-                        content: dayStr ? `(Dikirim ${dayStr})\n${h.body || h.content || ""}` : (h.body || h.content || "")
+                        content: dayStr ? `(Dikirim ${dayStr})\n${h.body || h.content || ''}` : (h.body || h.content || '')
                     };
                 }
             }),
-            { 
-                role: "system", 
-                content: draconianRules
-            },
-            { role: "user", content: userContent }
+            { role: 'user', content: userContent }
         ];
+
+
+
+
+
+
+
+
 
         // === FIRST AI CALL (with timeout) ===
         const response = await openai.chat.completions.create({
@@ -1007,6 +1002,22 @@ ${sysPrompt}
 
         // === TOOL CALLING HANDLER ===
         if (responseMessage.tool_calls) {
+            // 🛡️ PRE-TOOL INSPECTOR MIDDLEWARE
+            // Cegah AI mengeksekusi tool (seperti pembuat QRIS) jika rekapnya belum valid!
+            if (!isRetry && responseMessage.content) {
+                const inspectorResult = await _runInspectorValidation(responseMessage.content, kind);
+                if (!inspectorResult.valid) {
+                    logger.warn(`[Inspector] Rekap ditolak (PRE-TOOL): ${inspectorResult.missing}. Retrying...`);
+                    const retryHistory = [...history];
+                    retryHistory.push({ role: 'assistant', content: responseMessage.content, is_from_me: true });
+                    retryHistory.push({ 
+                        role: 'user', 
+                        content: `[SISTEM INSPECTOR]: Draf rekap DITOLAK karena data kurang: ${inspectorResult.missing}. Tanyakan kekurangan data ini ke pelanggan dengan bahasa natural. JANGAN memanggil tool buat_order_scalev sebelum rekap lengkap!` 
+                    });
+                    return _processAIResponse("", retryHistory, store, agent, customerMediaContext, conversationSummary, interactionCount, customerPhone, true);
+                }
+            }
+
             messages.push(responseMessage);
             let mediaResults = [];
             let needsSecondCall = false;
@@ -1033,13 +1044,191 @@ ${sysPrompt}
                         needsSecondCall = true;
                     }
 
-                    // ── TOOL EKSKLUSIF v2-core: Buat QRIS Dinamis ──
+                    // ── TOOL UTAMA v2-core: Buat Order Scalev + QRIS Dinamis ──
                     // ATURAN: HANYA untuk NON-COD / Transfer. JANGAN panggil untuk COD.
-                    // Flow: createQrisPayment → render PNG → kirim ke WA customer langsung
-                    if (toolCall.function.name === 'buat_link_pembayaran_dp') {
+                    // Flow: createOrderAndPay → (Scalev creates order) → (Scalev generates QRIS) → render PNG → kirim ke WA customer
+                    if (toolCall.function.name === 'buat_order_scalev') {
                         try {
                             const args = JSON.parse(toolCall.function.arguments || '{}');
+                            const customerName = String(args.customer_name || '').trim();
                             const amount = Math.round(Number(args.amount));
+                            const desc = String(args.description || 'Pembayaran Pesanan').trim();
+                            const tipeBayar = (args.tipe_bayar === 'LUNAS' ? 'LUNAS' : 'DP');
+                            const explicitContactId = args.contact_id || null;
+                            const contactId = explicitContactId || customerPhone || null;
+                            const explicitStoreWaId = args.store_wa_id || null;
+                            const storeWaId = explicitStoreWaId || store?.wa_id || store?.id?.toString() || null;
+
+                            // ── Guard: nominal harus valid ──────────────────────
+                            if (!amount || amount <= 0) {
+                                messages.push({
+                                    tool_call_id: toolCall.id, role: 'tool',
+                                    name: 'buat_order_scalev',
+                                    content: 'Gagal: Nominal tidak valid. Ambil nominal dari data rekap pesanan yang sudah dikonfirmasi customer. Jangan karang nominal sendiri.'
+                                });
+                                needsSecondCall = true;
+                                continue;
+                            }
+
+                            if (!customerName) {
+                                messages.push({
+                                    tool_call_id: toolCall.id, role: 'tool',
+                                    name: 'buat_order_scalev',
+                                    content: 'Gagal: customer_name harus diisi. Ambil dari rekap pesanan.'
+                                });
+                                needsSecondCall = true;
+                                continue;
+                            }
+
+                            // ── Guard 2: Dihapus (Auto-QRIS: Tidak perlu menunggu IYA karena sudah dilindungi Pre-Tool Inspector) ──
+
+                            // ── Coba buat order + QRIS via Scalev ─────────────
+                            const scalevSvc = getScalevService();
+                            let scalevResult = null;
+
+                            if (scalevSvc?.createOrderAndPay && process.env.SCALEV_API_KEY) {
+                                try {
+                                    const storeUniqueId = process.env.SCALEV_STORE_UNIQUE_ID || '';
+                                    scalevResult = await scalevSvc.createOrderAndPay({
+                                        store_unique_id: storeUniqueId,
+                                        customer_name: customerName,
+                                        customer_phone: args.customer_phone || (contactId ? contactId.replace('@c.us', '').replace(/^62/, '0') : undefined),
+                                        address: args.address || undefined,
+                                        shipping_cost: args.shipping_cost ? Math.round(Number(args.shipping_cost)) : undefined,
+                                        payment_method: 'qris',
+                                        notes: `[${tipeBayar}] ${desc}`,
+                                        // ordervariants: data produk terstruktur untuk dashboard Scalev
+                                        ordervariants: (args.ordervariants && args.ordervariants.length > 0)
+                                            ? args.ordervariants.map(v => ({
+                                                product_name: v.product_name || 'Produk',
+                                                variant_name: v.variant_name || '-',
+                                                quantity: Math.round(Number(v.quantity) || 1),
+                                                price: Math.round(Number(v.price) || 0),
+                                            }))
+                                            : undefined,
+                                        metadata: {
+                                            tipe_bayar: tipeBayar,
+                                            contact_id: contactId || '',
+                                            store_wa_id: storeWaId || '',
+                                            created_by: 'bot_ai',
+                                            description: desc,
+                                        },
+                                        agent_context: {
+                                            source: 'crm_ai_bot',
+                                            tipe_bayar: tipeBayar,
+                                        },
+                                    });
+                                } catch (scalevErr) {
+                                    logger.warn(`[AI] Scalev createOrderAndPay error: ${scalevErr.message}`);
+                                }
+                            } else {
+                                logger.warn('[AI] Scalev API key tidak dikonfigurasi, mencoba Xendit sebagai fallback...');
+                            }
+
+                            // ── Sukses via Scalev ────────────────────────────────
+                            if (scalevResult?.success && (scalevResult?.qrisImageBuffer || scalevResult?.public_order_url)) {
+                                // Kirim gambar QRIS jika ada
+                                if (scalevResult.qrisImageBuffer && storeWaId && contactId) {
+                                    try {
+                                        const waSvc = require('./whatsapp_service');
+                                        const { MessageMedia } = require('whatsapp-web.js');
+                                        const client = waSvc.getActiveClient ? waSvc.getActiveClient(storeWaId) : null;
+                                        if (client) {
+                                            const media = new MessageMedia('image/png', scalevResult.qrisImageBuffer.toString('base64'), 'qris_payment.png');
+                                            const caption = [
+                                                `Ini QRIS pembayarannya ya bund 😊`,
+                                                `Nominal: *Rp ${amount.toLocaleString('id-ID')}* [${tipeBayar}]`,
+                                                `Tinggal scan dari m-banking bund, berlaku 30 menit ya 🙏`,
+                                                ``,
+                                                `🏦 Atau transfer manual ke rekening bank kami (akan kami kirimkan terpisah ya bund) 🙏`,
+                                            ].join('\n');
+                                            const { assertWaChatId } = require('./utils/wa_id');
+                                            const targetChatId = assertWaChatId(contactId);
+                                            const msg = await client.sendMessage(targetChatId, media, { caption });
+                                            const msgId = msg?.id?._serialized || msg?.id?.id;
+                                            if (msgId && waSvc.trackBotSentMessage) waSvc.trackBotSentMessage(msgId);
+                                            logger.info(`[AI] ✅ QRIS PNG (Scalev) terkirim ke ${contactId}`);
+                                        }
+                                    } catch (waErr) {
+                                        logger.error(`[AI] Gagal kirim QRIS PNG ke WA: ${waErr.message}`);
+                                    }
+                                }
+
+                                messages.push({
+                                    tool_call_id: toolCall.id, role: 'tool',
+                                    name: 'buat_order_scalev',
+                                    content: [
+                                        `Order berhasil dibuat di Scalev (Order ID: ${scalevResult.order_id}).`,
+                                        `QRIS berhasil dibuat dan sudah dikirim ke customer sebagai gambar.`,
+                                        `Nominal: Rp ${amount.toLocaleString('id-ID')} [${tipeBayar}].`,
+                                        `Berlaku 30 menit.`,
+                                        scalevResult.public_order_url ? `Link order: ${scalevResult.public_order_url}` : '',
+                                        `Instruksi ke customer: Sampaikan bahwa gambar QRIS sudah dikirim, tinggal scan dari m-banking.`,
+                                        `Juga ingatkan backup untuk transfer ke rekening toko (ambil rekening dari product knowledge).`,
+                                    ].filter(Boolean).join(' ')
+                                });
+                                logger.info(`[AI] ✅ Scalev order+QRIS: ${scalevResult.order_id} Rp ${amount} [${tipeBayar}]`);
+
+                            } else if (scalevResult?.success && scalevResult?.payment_url) {
+                                // Scalev berhasil tapi tidak ada QRIS — kasih link ke customer via chat
+                                messages.push({
+                                    tool_call_id: toolCall.id, role: 'tool',
+                                    name: 'buat_order_scalev',
+                                    content: [
+                                        `Order berhasil dibuat di Scalev (Order ID: ${scalevResult.order_id}).`,
+                                        `Link pembayaran tersedia: ${scalevResult.payment_url}`,
+                                        `Nominal: Rp ${amount.toLocaleString('id-ID')} [${tipeBayar}].`,
+                                        `Kirimkan link ini ke customer: ${scalevResult.payment_url}`,
+                                        `Sampaikan dengan ramah bahwa customer bisa klik link untuk scan QRIS atau bayar via metode lain.`,
+                                    ].join(' ')
+                                });
+                                logger.info(`[AI] ✅ Scalev order+paymentURL: ${scalevResult.order_id} Rp ${amount}`);
+
+                            } else {
+                                // Scalev gagal → fallback ke transfer manual
+                                const errorMsg = scalevResult?.error || 'Scalev tidak tersedia';
+                                logger.warn(`[AI] Scalev gagal (${errorMsg}), fallback ke transfer manual. Nominal: Rp ${amount}`);
+                                messages.push({
+                                    tool_call_id: toolCall.id, role: 'tool',
+                                    name: 'buat_order_scalev',
+                                    content: [
+                                        `Sistem pembayaran sementara tidak tersedia (${errorMsg}).`,
+                                        `Minta customer transfer manual ke rekening toko.`,
+                                        `Nominal: Rp ${amount.toLocaleString('id-ID')} [${tipeBayar}].`,
+                                        `Rekening: Ambil dari informasi product knowledge agent.`,
+                                        `Sampaikan dengan ramah.`,
+                                    ].join(' ')
+                                });
+                            }
+                            needsSecondCall = true;
+                        } catch (scalevToolErr) {
+                            logger.error(`[AI] buat_order_scalev error: ${scalevToolErr.message}`);
+                            messages.push({
+                                tool_call_id: toolCall.id, role: 'tool',
+                                name: 'buat_order_scalev',
+                                content: `Sistem pembayaran sementara tidak tersedia. Minta customer transfer manual ke rekening toko (ambil dari product knowledge). Sampaikan dengan ramah.`
+                            });
+                            needsSecondCall = true;
+                        }
+                    }
+
+                    // ── TOOL LAMA: buat_link_pembayaran_dp (Xendit — DEPRECATED FALLBACK) ──
+                    if (toolCall.function.name === 'buat_link_pembayaran_dp') {
+                        try {
+                            if (!LEGACY_XENDIT_ENABLED) {
+                                messages.push({
+                                    tool_call_id: toolCall.id,
+                                    role: 'tool',
+                                    name: 'buat_link_pembayaran_dp',
+                                    content: 'Tool Xendit lama sudah dinonaktifkan di production. Gunakan buat_order_scalev untuk QRIS Scalev, atau arahkan customer transfer manual ke rekening toko dari product knowledge.'
+                                });
+                                needsSecondCall = true;
+                                continue;
+                            }
+
+                            const args = JSON.parse(toolCall.function.arguments || '{}');
+                            const amount = Math.round(Number(args.amount));
+
                             const desc = String(args.description || 'Pembayaran Pesanan').trim();
                             const tipeBayar = (args.tipe_bayar === 'LUNAS' ? 'LUNAS' : 'DP');
                             // payment_type dari args (wajib TRANSFER), fallback 'TRANSFER'
@@ -1107,10 +1296,7 @@ ${sysPrompt}
                                                 `Nominal: *Rp ${amount.toLocaleString('id-ID')}* [${tipeBayar}]`,
                                                 `Tinggal scan dari m-banking bund, berlaku 30 menit ya 🙏`,
                                                 ``,
-                                                `🏦 Atau transfer manual ke:`,
-                                                `Bank Mandiri: 1710016814843`,
-                                                `Bank BCA: 0333965841`,
-                                                `a/n PARE DIGITAL CUSTOM`,
+                                                `🏦 Atau transfer manual ke rekening bank kami (akan kami kirimkan terpisah ya bund) 🙏`,
                                             ].join('\n');
                                             const { assertWaChatId } = require('./utils/wa_id');
                                             const targetChatId = assertWaChatId(customerPhone);
@@ -1134,7 +1320,7 @@ ${sysPrompt}
                                         `Reference ID: ${qrisResult.reference_id}.`,
                                         `Berlaku 30 menit.`,
                                         `Instruksi ke customer: Sampaikan bahwa gambar QRIS sudah dikirim, tinggal scan dari m-banking.`,
-                                        `Juga ingatkan backup: 'Atau bisa transfer ke Mandiri 1710016814843 atau BCA 0333965841 a/n PARE DIGITAL CUSTOM ya bund 🙏'`,
+                                        `Juga ingatkan backup untuk transfer ke rekening toko (ambil rekening dari product knowledge).`,
                                     ].join(' ')
                                 });
                                 logger.info(`[AI] ✅ QRIS created: ${qrisResult.reference_id} Rp ${amount} [${tipeBayar}]`);
@@ -1148,7 +1334,7 @@ ${sysPrompt}
                                         `QRIS berhasil dibuat namun gambar belum bisa dikirim langsung.`,
                                         `Nominal: Rp ${amount.toLocaleString('id-ID')} [${tipeBayar}].`,
                                         `Reference: ${qrisResult.reference_id}.`,
-                                        `Minta customer untuk transfer ke rekening: Mandiri 1710016814843 atau BCA 0333965841 a/n PARE DIGITAL CUSTOM.`,
+                                        `Minta customer untuk transfer ke rekening toko (ambil dari product knowledge).`,
                                     ].join(' ')
                                 });
 
@@ -1160,8 +1346,8 @@ ${sysPrompt}
                                     content: [
                                         `QRIS belum tersedia, minta customer transfer manual.`,
                                         `Nominal: Rp ${amount.toLocaleString('id-ID')} [${tipeBayar}].`,
-                                        `Rekening: Bank Mandiri 1710016814843 atau BCA 0333965841 a/n PARE DIGITAL CUSTOM.`,
-                                        `Sampaikan ke customer dengan ramah dan minta kirim bukti transfer.`,
+                                        `Rekening: Ambil dari informasi product knowledge agent.`,
+                                        `Sampaikan rekening toko ke customer dengan ramah dan minta kirim bukti transfer.`,
                                     ].join(' ')
                                 });
                                 logger.warn(`[AI] Xendit tidak tersedia, fallback ke transfer manual. Nominal: Rp ${amount}`);
@@ -1172,7 +1358,7 @@ ${sysPrompt}
                             messages.push({
                                 tool_call_id: toolCall.id, role: 'tool',
                                 name: 'buat_link_pembayaran_dp',
-                                content: `Sistem pembayaran sementara tidak tersedia. Minta customer transfer manual ke Mandiri 1710016814843 atau BCA 0333965841 a/n PARE DIGITAL CUSTOM. Sampaikan dengan ramah.`
+                                content: `Sistem pembayaran sementara tidak tersedia. Minta customer transfer manual ke rekening toko (ambil dari product knowledge). Sampaikan dengan ramah.`
                             });
                             needsSecondCall = true;
                         }
@@ -1212,12 +1398,13 @@ ${sysPrompt}
                                 const videos = matchesForLabel.filter(m => (m.type || '').startsWith('video'));
                                 const images = matchesForLabel.filter(m => (m.type || '').startsWith('image'));
 
-                                // Tambahkan SEMUA image yang cocok (supaya jadi album)
-                                images.forEach(img => {
-                                    if (!allowedMedia.find(fm => fm.id === img.id)) {
-                                        allowedMedia.push(img);
+                                // Inject 1 RANDOM foto/image jika ada lebih dari 1 (Fix Media Spam)
+                                if (images.length > 0) {
+                                    const randomImage = images[Math.floor(Math.random() * images.length)];
+                                    if (!allowedMedia.find(fm => fm.id === randomImage.id)) {
+                                        allowedMedia.push(randomImage);
                                     }
-                                });
+                                }
 
                                 // Pilih 1 video SECARA RANDOM
                                 if (videos.length > 0) {
@@ -1239,6 +1426,76 @@ ${sysPrompt}
                             needsSecondCall = true;
                         }
                     }
+
+                    // ── TOOL: Buat Resi Mengantar ──
+                    if (toolCall.function.name === 'buat_resi_mengantar') {
+                        try {
+                            const args = JSON.parse(toolCall.function.arguments || '{}');
+                            const contactId = args.contact_id || customerPhone || null;
+                            const storeWaId = args.store_wa_id || store?.wa_id || null;
+
+                            if (!args.customer_name || !args.customer_address || !args.destination_keyword || !args.parcel_content) {
+                                messages.push({ tool_call_id: toolCall.id, role: 'tool', name: 'buat_resi_mengantar', content: 'Gagal: Data tidak lengkap. Pastikan nama, alamat, kecamatan/kota, dan nama produk sudah diisi.' });
+                                needsSecondCall = true;
+                                continue;
+                            }
+
+                            logger.info(`[AI] Membuat resi Mengantar untuk ${args.customer_name}...`);
+                            const resiResult = await mengantarService.createOrder({
+                                customerName: args.customer_name,
+                                customerPhone: args.customer_phone || (contactId ? contactId.replace('@c.us', '') : ''),
+                                customerAddress: args.customer_address,
+                                destinationKeyword: args.destination_keyword,
+                                parcelContent: args.parcel_content,
+                                weight: args.weight || 1,
+                                quantity: args.quantity || 1,
+                                goodsValue: args.goods_value,
+                                courier: args.courier,
+                                customProducts: args.custom_products,
+                                pickupType: 'dropOff',
+                            });
+
+                            if (resiResult.success) {
+                                if (storeWaId && contactId) {
+                                    try {
+                                        const waSvc = require('./whatsapp_service');
+                                        const clients = waSvc.getClients ? waSvc.getClients() : null;
+                                        const waClient = clients ? clients.get(storeWaId) : null;
+                                        if (waClient) {
+                                            const resiMsg = mengantarService.formatResiMessage(resiResult);
+                                            const waId = contactId.includes('@c.us') ? contactId : `${contactId}@c.us`;
+                                            await waClient.sendMessage(waId, resiMsg);
+                                            logger.info(`[AI] ✅ Notif resi terkirim ke ${contactId}`);
+                                        }
+                                    } catch (waErr) {
+                                        logger.error(`[AI] Gagal kirim notif resi ke WA: ${waErr.message}`);
+                                    }
+                                }
+                                messages.push({
+                                    tool_call_id: toolCall.id, role: 'tool', name: 'buat_resi_mengantar',
+                                    content: [
+                                        `Resi berhasil dibuat di Mengantar!`,
+                                        resiResult.cnote_no ? `Nomor Resi: ${resiResult.cnote_no}` : '',
+                                        `Kurir: ${resiResult.courier || 'JT'}`,
+                                        resiResult.destination ? `Tujuan: ${resiResult.destination}` : '',
+                                        resiResult.is_unpaid ? `PERHATIAN: Saldo Mengantar kurang, resi perlu diaktivasi manual.` : `Status: Aktif & terbayar.`,
+                                        `Notif resi sudah dikirim ke customer via WhatsApp.`,
+                                        `Instruksi: Ucapkan terima kasih dan info paket sedang diproses.`,
+                                    ].filter(Boolean).join(' ')
+                                });
+                                logger.info(`[AI] ✅ Resi Mengantar: ${resiResult.cnote_no} untuk ${args.customer_name}`);
+                            } else {
+                                messages.push({ tool_call_id: toolCall.id, role: 'tool', name: 'buat_resi_mengantar', content: `Gagal membuat resi: ${resiResult.error}. Minta owner buat resi manual di aplikasi Mengantar.` });
+                                logger.warn(`[AI] Resi Mengantar gagal: ${resiResult.error}`);
+                            }
+                            needsSecondCall = true;
+                        } catch (resiErr) {
+                            logger.error(`[AI] buat_resi_mengantar error: ${resiErr.message}`);
+                            messages.push({ tool_call_id: toolCall.id, role: 'tool', name: 'buat_resi_mengantar', content: `Sistem Mengantar tidak tersedia. Buat resi manual di aplikasi Mengantar ya.` });
+                            needsSecondCall = true;
+                        }
+                    }
+
                 } catch (toolErr) {
                     logger.error(`[AI] Tool call error [${toolCall.function.name}]: ${toolErr.message}`);
                     messages.push({ tool_call_id: toolCall.id, role: "tool", name: toolCall.function.name, content: `Error: ${toolErr.message}` });
@@ -1278,6 +1535,36 @@ ${sysPrompt}
                 finalContent = buildFastMediaReply(agent, mediaResults, interactionCount);
             }
 
+            // ══════════════════════════════════════════════════════════════════
+            // 🛡️ INSPECTOR MIDDLEWARE: Cegat Rekap Pesanan yang tidak lengkap
+            // ══════════════════════════════════════════════════════════════════
+            if (!isRetry && finalContent) {
+                const inspectorResult = await _runInspectorValidation(finalContent, kind);
+                if (!inspectorResult.valid) {
+                    logger.warn(`[Inspector] Rekap ditolak: ${inspectorResult.missing}. Retrying...`);
+                    const retryHistory = [...history];
+                    retryHistory.push({ role: 'assistant', body: finalContent, is_from_me: true });
+                    retryHistory.push({ 
+                        role: 'user', 
+                        body: `[SISTEM INSPECTOR]: Draf rekap DITOLAK karena data kurang: ${inspectorResult.missing}. Tanyakan kekurangan data ini ke pelanggan dengan bahasa natural. JANGAN kirim form rekap ke pelanggan!` 
+                    });
+                    
+                    // Recursive call exactly 1 time
+                    const retryResult = await _processAIResponse("", retryHistory, store, agent, customerMediaContext, conversationSummary, interactionCount, customerPhone, true);
+                    
+                    // FIX: Jika retry tidak menghasilkan teks (hanya tool call), paksa tanya data yang kurang
+                    if (!retryResult?.content || retryResult.content.trim() === '' || retryResult.content === 'Ada yang bisa saya bantu?') {
+                        const missingFields = inspectorResult.missing || 'data yang diperlukan';
+                        logger.warn(`[Inspector] Retry tidak menghasilkan teks — pakai fallback tanya data kurang: ${missingFields}`);
+                        return {
+                            type: RESPONSE_TYPE.TEXT,
+                            content: `Sebentar ya bun 😊 Sebelum kami buatkan rekap, boleh tahu ${missingFields.split(',')[0].trim().toLowerCase()}nya dulu?`,
+                        };
+                    }
+                    return retryResult;
+                }
+            }
+
             if (mediaResults.length > 0) {
                 return {
                     type: RESPONSE_TYPE.MEDIA,
@@ -1294,9 +1581,36 @@ ${sysPrompt}
             };
         }
 
+        // 🛡️ INSPECTOR MIDDLEWARE untuk basic flow
+        let basicContent = sanitizeTextOutput(responseMessage.content) || "Ada yang bisa saya bantu?";
+        if (!isRetry && basicContent) {
+            const inspectorResult = await _runInspectorValidation(basicContent, kind);
+            if (!inspectorResult.valid) {
+                logger.warn(`[Inspector] Rekap ditolak: ${inspectorResult.missing}. Retrying...`);
+                const retryHistory = [...history];
+                retryHistory.push({ role: 'assistant', body: basicContent, is_from_me: true });
+                retryHistory.push({ 
+                    role: 'user', 
+                    body: `[SISTEM INSPECTOR]: Draf rekap DITOLAK karena data kurang: ${inspectorResult.missing}. Tanyakan kekurangan data ini ke pelanggan dengan bahasa natural. JANGAN kirim form rekap ke pelanggan!` 
+                });
+                const retryResult = await _processAIResponse("", retryHistory, store, agent, customerMediaContext, conversationSummary, interactionCount, customerPhone, true);
+                
+                // FIX: Jika retry tidak menghasilkan teks, paksa tanya data yang kurang
+                if (!retryResult?.content || retryResult.content.trim() === '' || retryResult.content === 'Ada yang bisa saya bantu?') {
+                    const missingFields = inspectorResult.missing || 'data yang diperlukan';
+                    logger.warn(`[Inspector] Retry tidak menghasilkan teks — pakai fallback tanya data kurang: ${missingFields}`);
+                    return {
+                        type: RESPONSE_TYPE.TEXT,
+                        content: `Sebentar ya bun 😊 Sebelum kami buatkan rekap, boleh tahu ${missingFields.split(',')[0].trim().toLowerCase()}nya dulu?`,
+                    };
+                }
+                return retryResult;
+            }
+        }
+
         return {
             type: RESPONSE_TYPE.TEXT,
-            content: sanitizeTextOutput(responseMessage.content) || "Ada yang bisa saya bantu?",
+            content: basicContent,
             tool_calls: responseMessage.tool_calls || []
         };
 

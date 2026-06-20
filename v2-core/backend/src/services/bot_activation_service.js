@@ -72,7 +72,16 @@ function getActivationFollowUpTime() {
  *
  * @param {string} storeWaId - ID store/WA yang baru diaktifkan
  */
+// ── Global lock: cegah BotActivation jalan 2x bersamaan untuk store yang sama ──
+const _activationLocks = new Set();
+
 async function onBotActivated(storeWaId) {
+    // Cegah double-activation untuk store yang sama
+    if (_activationLocks.has(storeWaId)) {
+        logger.warn(`[BotActivation] 🔒 [${storeWaId}] Sudah berjalan, skip duplikat.`);
+        return;
+    }
+    _activationLocks.add(storeWaId);
     logger.info(`[BotActivation] 🔄 Bot [${storeWaId}] dinyalakan. Memulai scan konteks percakapan...`);
 
     try {
@@ -106,10 +115,18 @@ async function onBotActivated(storeWaId) {
 
         if (activeContacts.length === 0) {
             logger.info(`[BotActivation] Tidak ada kontak aktif dalam 30 hari untuk [${storeWaId}]. Selesai.`);
+            _activationLocks.delete(storeWaId);
             return;
         }
 
-        logger.info(`[BotActivation] Ditemukan ${activeContacts.length} kontak aktif untuk dievaluasi.`);
+        // ── RATE LIMITER: Batasi maks 150 kontak per aktivasi untuk mencegah banjir ──
+        const MAX_CONTACTS = 150;
+        const contactsToProcess = activeContacts.slice(0, MAX_CONTACTS);
+        if (activeContacts.length > MAX_CONTACTS) {
+            logger.warn(`[BotActivation] [${storeWaId}] ${activeContacts.length} kontak ditemukan, diproses ${MAX_CONTACTS} terbaru saja.`);
+        }
+
+        logger.info(`[BotActivation] Ditemukan ${activeContacts.length} kontak aktif untuk dievaluasi (proses: ${contactsToProcess.length}).`);
 
         let countSkipped = 0;
         let countRescheduled = 0;
@@ -119,7 +136,7 @@ async function onBotActivated(storeWaId) {
         // (Tidak mungkin tahu exact waktu bot dimatikan dari DB saat ini)
         const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-        for (const row of activeContacts) {
+        for (const row of contactsToProcess) {
             const contactId = row.contact_id;
             const contactName = row.contact_display_name || row.sender_name || 'kak';
 
@@ -140,8 +157,8 @@ async function onBotActivated(storeWaId) {
                 logger.warn(`[BotActivation] Gagal evaluasi kontak [${contactId}]: ${contactErr.message}`);
             }
 
-            // Jeda kecil antar kontak agar tidak membebani DB sekaligus
-            await new Promise(r => setTimeout(r, 50));
+            // ── RATE LIMITER: 400ms jeda antar kontak untuk mencegah DB + event loop flood ──
+            await new Promise(r => setTimeout(r, 400));
         }
 
         logger.success(
@@ -152,6 +169,9 @@ async function onBotActivated(storeWaId) {
 
     } catch (err) {
         logger.error(`[BotActivation] Error saat scan aktivasi [${storeWaId}]: ${err.message}`);
+    } finally {
+        // SELALU hapus lock meski error, agar bisa jalan lagi nanti
+        _activationLocks.delete(storeWaId);
     }
 }
 
