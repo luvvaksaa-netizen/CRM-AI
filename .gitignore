@@ -5,6 +5,9 @@ public/uploads/
 database.sqlite
 database.sqlite-shm
 database.sqlite-wal
+database-production.sqlite
+database-production.sqlite-shm
+database-production.sqlite-wal
 data/
 chat_history.json
 settings.json
@@ -24,6 +27,7 @@ cloudflared.exe
 # Environment
 .env
 .env.local
+.env.example
 *.env
 
 # Audit and temp files
@@ -38,3 +42,15 @@ data/sessions/*
 
 # Docker (keep Dockerfile and .dockerignore for deployment)
 # Dockerfile and .dockerignore HARUS di-upload
+
+# Temp/scratch files (tidak perlu di-push)
+*.diff
+*.txt
+reply*.md
+triage*.md
+fullstack*.md
+knowledge.txt
+desc.txt
+suk*.txt
+audit_output.txt
+db_analysis_output.txt

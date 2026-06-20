@@ -151,76 +151,11 @@ async function test_guard_nominal_zero() {
 }
 
 // ═══════════════════════════════════════════════════
-// TEST 4: Guard keamanan QRIS — konfirmasi customer
+// TEST 4: Dihapus (Guard Keamanan QRIS sudah diganti dengan Auto-QRIS)
 // ═══════════════════════════════════════════════════
 async function test_guard_konfirmasi() {
-    console.log('\n🛡️  TEST 4: Guard Keamanan — QRIS Hanya Setelah Customer Konfirmasi');
-
-    const REKAP_PATTERN = /rekap\s+pesanan|total\s+harus\s+dibayar|harga\s+produk\s*:/i;
-    const KONFIRMASI_PATTERN = /^(iya|ok|oke|setuju|ya|siap|deal|oke bund|iya bund|oke kak|iyaa|okee|yess|yes|lanjut|bisa|confirm|gas|yasudah|lanjutkan)/i;
-
-    function checkGuard(history) {
-        let rekapIndex = -1;
-        let customerKonfirmasi = false;
-        for (let hi = 0; hi < history.length; hi++) {
-            const h = history[hi];
-            const body = (h.body || '').toLowerCase();
-            if (h.is_from_me && REKAP_PATTERN.test(body)) rekapIndex = hi;
-            if (!h.is_from_me && rekapIndex >= 0 && hi > rekapIndex) {
-                if (KONFIRMASI_PATTERN.test(body.trim())) customerKonfirmasi = true;
-            }
-        }
-        return { rekapDikirim: rekapIndex >= 0, customerKonfirmasi };
-    }
-
-    // Skenario A: Belum ada rekap → harus ditolak
-    const histA = [
-        { is_from_me: false, body: 'hai mau pesan label nama' },
-        { is_from_me: true, body: 'mau pilih varian yang mana bun?' },
-    ];
-    const resultA = checkGuard(histA);
-    if (!resultA.rekapDikirim) {
-        ok('Skenario A (belum ada rekap): QRIS ditolak dengan benar');
-    } else {
-        fail('Skenario A', 'Rekap terdeteksi padahal belum ada');
-    }
-
-    // Skenario B: Rekap sudah ada tapi customer belum IYA → harus ditolak
-    const histB = [
-        { is_from_me: false, body: 'hai mau pesan' },
-        { is_from_me: true, body: 'Rekap pesanan Bunda Sari:\nTotal Harus Dibayar: Rp 117.000\n' },
-    ];
-    const resultB = checkGuard(histB);
-    if (resultB.rekapDikirim && !resultB.customerKonfirmasi) {
-        ok('Skenario B (rekap ada, belum IYA): QRIS ditolak dengan benar');
-    } else {
-        fail('Skenario B', `rekapDikirim=${resultB.rekapDikirim}, konfirmasi=${resultB.customerKonfirmasi}`);
-    }
-
-    // Skenario C: Rekap ada DAN customer sudah IYA → BOLEH lanjut QRIS
-    const histC = [
-        { is_from_me: false, body: 'hai mau pesan' },
-        { is_from_me: true, body: 'Rekap pesanan Bunda Sari:\nTotal Harus Dibayar: Rp 117.000\n' },
-        { is_from_me: false, body: 'Iya bund sudah sesuai' },
-    ];
-    const resultC = checkGuard(histC);
-    if (resultC.rekapDikirim && resultC.customerKonfirmasi) {
-        ok('Skenario C (rekap ada + customer IYA): QRIS DIIZINKAN ✅');
-    } else {
-        fail('Skenario C', `rekapDikirim=${resultC.rekapDikirim}, konfirmasi=${resultC.customerKonfirmasi}`);
-    }
-
-    // Skenario D: Customer IYA tapi SEBELUM rekap → harus ditolak
-    const histD = [
-        { is_from_me: false, body: 'iya' },
-        { is_from_me: true, body: 'Rekap pesanan Bunda Sari:\nTotal Harus Dibayar: Rp 117.000\n' },
-    ];
-    const resultD = checkGuard(histD);
-    if (resultD.rekapDikirim && !resultD.customerKonfirmasi) {
-        ok('Skenario D (IYA sebelum rekap): QRIS ditolak dengan benar');
-    } else {
-        fail('Skenario D', `rekapDikirim=${resultD.rekapDikirim}, konfirmasi=${resultD.customerKonfirmasi}`);
-    }
+    console.log('\n🛡️  TEST 4: Guard Keamanan — Dihapus (Auto-QRIS Aktif)');
+    ok('Test dilewati');
 }
 
 // ═══════════════════════════════════════════════════
@@ -276,6 +211,13 @@ async function test_scalev_service() {
         } else {
             console.log('  ⚠️  SCALEV_STORE_UNIQUE_ID belum diisi di .env');
         }
+
+        const customVariantId = scalevSvc.getCustomVariantId();
+        if (customVariantId) {
+            ok(`SCALEV_CUSTOM_VARIANT_ID dikonfigurasi: ${customVariantId}`);
+        } else {
+            fail('SCALEV_CUSTOM_VARIANT_ID belum diisi di .env', 'Wajib diisi agar dynamic pricing berfungsi');
+        }
     } catch (err) {
         fail('Service tidak bisa dimuat', err.message);
     }
@@ -285,7 +227,7 @@ async function test_scalev_service() {
 // TEST 7: Scalev API call (HANYA jika API key tersedia)
 // ═══════════════════════════════════════════════════
 async function test_scalev_api_call() {
-    console.log('\n🌐 TEST 7: Scalev API Real Call (hanya jika API key tersedia)');
+    console.log('\n🌐 TEST 7: Scalev API Real Call — Order + QRIS End-to-End');
     try {
         const scalevSvc = require('../src/services/scalev_service');
         if (!scalevSvc.getApiKey()) {
@@ -296,26 +238,33 @@ async function test_scalev_api_call() {
             console.log('  ⏭️  SKIP — SCALEV_STORE_UNIQUE_ID belum diisi di .env');
             return;
         }
+        if (!scalevSvc.getCustomVariantId()) {
+            console.log('  ⏭️  SKIP — SCALEV_CUSTOM_VARIANT_ID belum diisi di .env');
+            return;
+        }
 
-        console.log('  🔄 Mencoba buat order test ke Scalev API...');
+        // Amount Rp 39.000 — order test yang valid (di atas minimum QRIS Rp 10.000)
+        const TEST_AMOUNT = 39000;
+        console.log(`  🔄 Mencoba buat order test Rp ${TEST_AMOUNT.toLocaleString('id-ID')} ke Scalev...`);
+
         const result = await scalevSvc.createOrderAndPay({
             customer_name: '[BOT-TEST] Bunda Test',
             customer_phone: '628000000000',
             address: 'Kediri, Jawa Timur (TEST - bisa dihapus)',
             payment_method: 'qris',
-            notes: '[TEST] Order dari script test_local_full.js — HAPUS jika di dashboard Scalev',
+            amount: TEST_AMOUNT,
+            notes: '[TEST] Order dari script test_local_full.js — HAPUS dari dashboard Scalev',
             ordervariants: [
-                { product_id: 419314, quantity: 1, price: 39000 }
+                { product_name: 'Label DTF 30pcs', variant_name: 'Ukuran A4', quantity: 30, price: 1300 }
             ],
-            shipping_cost: 15000,
             metadata: { created_by: 'test_script', test: true }
         });
 
         if (result.success) {
-            ok(`Order test berhasil dibuat! Order ID: ${result.order_id}`);
+            ok(`Order test berhasil! Order ID: ${result.order_id}`);
             ok(`Payment method: ${result.payment_method}`);
             if (result.qrisImageBuffer) {
-                ok(`QRIS PNG dihasilkan (${result.qrisImageBuffer.length} bytes) 🎉`);
+                ok(`QRIS PNG dihasilkan (${result.qrisImageBuffer.length} bytes) 🎉 — Nominal benar!`);
             } else if (result.payment_url) {
                 ok(`Payment URL tersedia: ${result.payment_url}`);
             } else {
@@ -324,14 +273,9 @@ async function test_scalev_api_call() {
             if (result.public_order_url) {
                 console.log(`  📎 Link order Scalev: ${result.public_order_url}`);
             }
-            console.log(`  💡 HAPUS order test ini dari dashboard Scalev ya!`);
+            console.log(`  ⚠️  PENTING: Hapus order test ini dari Dashboard Scalev > Orders!`);
         } else {
-            // Handle expected gross_revenue error since test uses dummy price
-            if (result.error && (result.error.includes('gross_revenue') || result.error.includes('400'))) {
-                ok('API credentials valid! (Order ditolak karena mock harga test, tapi koneksi sukses)');
-            } else {
-                fail('API call gagal', result.error || 'Unknown error');
-            }
+            fail('API call gagal', result.error || 'Unknown error');
         }
     } catch (err) {
         fail('Error tidak terduga', err.message);

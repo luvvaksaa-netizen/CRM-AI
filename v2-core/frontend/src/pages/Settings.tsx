@@ -180,6 +180,7 @@ const Settings = () => {
   const [mengantarSaving, setMengantarSaving] = useState(false);
   const [mengantarForm, setMengantarForm] = useState({
     api_key: '',
+    address_id: '',
     sender_name: '',
     phone: '',
   });
@@ -241,6 +242,7 @@ const Settings = () => {
       const cfg = res.data.config || res.data;
       setMengantarForm({
         api_key: cfg.api_key_raw || cfg.api_key || '',
+        address_id: cfg.address_id || '',
         sender_name: cfg.sender_name || '',
         phone: cfg.phone || '',
       });

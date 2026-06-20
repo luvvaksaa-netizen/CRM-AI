@@ -404,7 +404,7 @@ function triggerCsManualSummaryUpdate(storeWaId, contactId, senderName) {
     const timerId = setTimeout(async () => {
         _externalSummaryDebounce.delete(key);
         await _triggerSummaryUpdate(storeWaId, contactId, senderName);
-    }, 30 * 1000); // Debounce 30 detik dari pesan CS terakhir
+    }, 10 * 60 * 1000); // Debounce 10 menit: CS summary tidak perlu real-time, hemat token
 
     _externalSummaryDebounce.set(key, timerId);
 }

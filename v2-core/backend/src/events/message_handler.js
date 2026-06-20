@@ -382,12 +382,8 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
             return;
         }
 
-        // ── BACKGROUND SUMMARY UPDATE (hanya saat bot AKTIF) ──────────────
-        // Rekap percakapan diperbarui setiap kali customer mengirim pesan
-        // dan bot merespons. TIDAK dijalankan saat sinkronisasi startup
-        // agar chat lama tidak di-follow-up otomatis.
-        // Debounced 60 detik agar tidak membebani OpenAI saat customer kirim banyak pesan.
-        _triggerBackgroundSummaryIfNeeded(storeWaId, contactId, senderName);
+        // Summary diperbarui HANYA setelah bot berhasil membalas (_updateConversationSummary)
+        // Memanggil summary di sini (saat pesan masuk) adalah pemborosan ganda — DIHAPUS.
 
         // ═══════════════════════════════════════════════════════
         // FIREWALL 2: HUMAN OVERRIDE (Bot Dipause per-kontak)

@@ -1,27 +1,34 @@
 # WA-AI-CS Documentation Index
 
 > **Platform:** WhatsApp AI Customer Service & CRM  
-> **Version:** 1.7+  
-> **Dianalisis:** 2026-05-20  
-> **Status:** Production Running, hybrid WWebJS + WA-JS
+> **Version:** 2.0 (Post-Refactoring — Product-Agnostic Architecture)  
+> **Diperbarui:** Juni 2026  
+> **Status:** Production Running, v2-core + Legacy Parity
+
+---
+
+## 🚀 MULAI DARI SINI
+
+> **Panduan lengkap untuk owner dan operator:**  
+> 👉 **[19_PANDUAN_MAKSIMAL.md](./19_PANDUAN_MAKSIMAL.md)** — Setup, konfigurasi agent, template prompt, media, troubleshooting, tips closing
 
 ---
 
 ## Navigasi Dokumen
 
-| # | Dokumen | Deskripsi |
-|---|---------|-----------|
-| 01 | [Project Overview](./01_PROJECT_OVERVIEW.md) | Tujuan, arsitektur, tech stack, struktur folder, alur data |
-| 02 | [Database Schema](./02_DATABASE_SCHEMA.md) | ERD dan semua model database |
-| 03 | [AI Engine](./03_AI_ENGINE.md) | Cara kerja AI, tool calling, sanitizer, prompt strategy |
-| 04 | [API Reference](./04_API_REFERENCE.md) | REST API + Socket.io events |
-| 05 | [Uncommitted Changes](./05_UNCOMMITTED_CHANGES.md) | Analisis perubahan lokal |
-| 06 | [Gaps & Upgrades](./06_GAPS_AND_UPGRADES.md) | Celah, prioritas, dan status perbaikan |
-| 07 | [Development Rules](./07_DEVELOPMENT_RULES.md) | Aturan coding dan standar arsitektur |
-| 08 | [WA-JS Integration Plan](./08_WAJS_INTEGRATION_PLAN.md) | Integrasi WA-JS/WPPConnect dan roadmap migrasi |
-| 09 | [Operations Guide](./09_OPERATIONS_GUIDE.md) | `.env`, deployment, troubleshooting, backup/recovery |
-| 10 | [User Guide](./10_USER_GUIDE.md) | Panduan pengguna dashboard |
-| 11 | [Implementation Update 2026-05-19](./11_IMPLEMENTATION_UPDATE_2026-05-19.md) | Catatan implementasi terbaru |
+| # | Dokumen | Deskripsi | Status |
+|---|---------|-----------|--------|
+| **19** | **[📘 Panduan Maksimal](./19_PANDUAN_MAKSIMAL.md)** | **Setup lengkap, template prompt, media, troubleshooting** | ✅ **TERBARU** |
+| **CRM_AI_V2** | [V2 Agent Spec](./CRM_AI_V2_AGENT_READABLE_SPEC.md) | Spec teknis v2-core, schema validator, kontrak developer | ✅ Aktif |
+| **17** | [Master Agent Prompt](./17_MASTER_AGENT_PROMPT_ARAHAN_OWNER.md) | Template prompt DTF & UV dari owner | ✅ Aktif |
+| 01 | [Project Overview](./01_PROJECT_OVERVIEW.md) | Tujuan, arsitektur, tech stack, struktur folder | Lama |
+| 02 | [Database Schema](./02_DATABASE_SCHEMA.md) | ERD dan semua model database | Lama |
+| 03 | [AI Engine](./03_AI_ENGINE.md) | Cara kerja AI, tool calling, sanitizer, prompt strategy | Lama |
+| 04 | [API Reference](./04_API_REFERENCE.md) | REST API + Socket.io events | Lama |
+| 09 | [Operations Guide](./09_OPERATIONS_GUIDE.md) | `.env`, deployment, troubleshooting, backup/recovery | Lama |
+| 15 | [Panduan Penggunaan (lama)](./15_PANDUAN_PENGGUNAAN.md) | Panduan versi sebelumnya | ⚠️ Digantikan No.19 |
+| 16 | [Panduan Upload Media](./16_PANDUAN_UPLOAD_MEDIA.md) | Cara upload media | Masih berlaku |
+| 18 | [Bot Toggle Behavior](./18_BOT_TOGGLE_BEHAVIOR.md) | Perilaku toggle ON/OFF bot | Masih berlaku |
 
 ---
 
