@@ -41,9 +41,12 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: 3002,
-        DATA_DIR: 'D:\\CRM-AI\\data',
-        // Arahkan Puppeteer ke Chrome yang sudah terinstall (build .31)
-        PUPPETEER_EXECUTABLE_PATH: 'C:\\Users\\Codinger\\.cache\\puppeteer\\chrome\\win64-146.0.7680.31\\chrome-win64\\chrome.exe',
+        DATA_DIR: 'C:\\Users\\Lenovo\\Documents\\CRM-AI\\data',
+        // Fallback rahasia jika .env tidak ada
+        ADMIN_USER: 'admin',
+        ADMIN_PASS: 'KirimFotoSecure99!',
+        JWT_SECRET: 'v2core-crm-jwt-secret-lenovo-desktop-2024-xK9mP',
+        CORS_ORIGINS: 'http://localhost:5173,http://localhost:3002',
       },
     },
     {
