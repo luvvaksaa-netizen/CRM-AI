@@ -44,7 +44,7 @@ const config = {
     RAJAONGKIR_API_KEY: process.env.RAJAONGKIR_API_KEY,
     KOMERCE_BASE_URL:   'https://rajaongkir.komerce.id/api/v1',
     CLIENT_NAME:        process.env.CLIENT_NAME || 'WA-AI-CS-Bot',
-    MODEL_NAME:         process.env.MODEL_NAME  || 'deepseek-chat',
+    MODEL_NAME:         process.env.MODEL_NAME  || 'deepseek-v4-pro',
     ORIGIN_NAME:        process.env.ORIGIN_NAME || 'Kediri',
 
     // Paths (Terpusat)
