@@ -67,7 +67,7 @@ export const getContacts = async (req: Request, res: Response, next: NextFunctio
         m.contact_display_name,
         m.body           AS last_message,
         m.timestamp      AS last_seen,
-        COALESCE(u.unread_count, 0) AS unread_count
+        CASE WHEN m.is_from_me = 1 THEN 0 ELSE COALESCE(u.unread_count, 0) END AS unread_count
       FROM ${tableName} m
       INNER JOIN (
         SELECT contact_id, MAX(id) AS max_id

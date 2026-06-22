@@ -623,7 +623,9 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
     await new Promise(r => setTimeout(r, Math.floor(Math.random() * THINKING_DELAY_JITTER_MS) + THINKING_DELAY_MIN_MS));
 
     // 5. Status Mengetik
-    // Typing WA sengaja ditunda sampai respons siap dikirim, agar tidak muncul lama lalu hilang.
+    // Mulai typing indicator SEBELUM AI dipanggil agar customer tahu bot sedang memproses
+    stopTyping = _startTypingHeartbeat(chat, storeWaId, contactId, lastMessage.client, Math.max(WA_TYPING_HARD_STOP_MS, 15000));
+    const startTimeAI = Date.now();
 
     // 6. PROSES AI (dengan pesan yang sudah digabung)
     const interactionCount = history.filter(h => !h.is_from_me).length + 1;
@@ -637,9 +639,11 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
     const outboundBubbles = prepareOutboundBubbles(fallbackContent);
     const primaryTextForDelay = outboundBubbles[0] || fallbackContent;
 
-    // 7. Siapkan jeda mengetik singkat. Heartbeat dimulai nanti, tepat sebelum kirim.
-    // Hard cap 4500ms agar total waktu typing + kirim customer selalu < 7 detik
-    const typingDelay = Math.min(calculateTypingDelay(primaryTextForDelay), 4500);
+    // 7. Hitung sisa jeda mengetik
+    const timeTakenByAI = Date.now() - startTimeAI;
+    const targetTypingDelay = Math.min(calculateTypingDelay(primaryTextForDelay), 4500);
+    // Jika AI sudah memakan waktu lebih lama dari target typing, tidak perlu menunggu lagi
+    const remainingTypingDelay = Math.max(0, targetTypingDelay - timeTakenByAI);
 
     // 8. Eksekusi Tool Khusus Non-Pesan (misal: Auto-Label)
     if (aiResult.tool_calls && aiResult.tool_calls.length > 0) {
@@ -670,8 +674,9 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
         }
     }
 
-    stopTyping = _startTypingHeartbeat(chat, storeWaId, contactId, lastMessage.client, Math.max(WA_TYPING_HARD_STOP_MS, typingDelay + 1000));
-    await new Promise(r => setTimeout(r, typingDelay));
+    if (remainingTypingDelay > 0) {
+        await new Promise(r => setTimeout(r, remainingTypingDelay));
+    }
 
     // 9. KIRIM RESPONS
     try {
@@ -748,7 +753,7 @@ async function _sendActiveMessage(storeWaId, contactId, payload, options = {}) {
         const client = await waitForActiveClient(storeWaId);
         try {
             const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('WA sendMessage timeout (15s)')), 15000)
+                setTimeout(() => reject(new Error('WA sendMessage timeout (60s)')), 60000)
             );
             return await Promise.race([
                 client.sendMessage(contactId, payload, options),

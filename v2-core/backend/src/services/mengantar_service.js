@@ -126,17 +126,35 @@ function _buildInlineService() {
             const cleanDest = destinationCity.toLowerCase().replace(/kota\s+/g, '').replace(/kabupaten\s+/g, '').replace(/kecamatan\s+/g, '').trim();
             const destData = await searchAddress(cleanDest);
             if (!destData) return `Aduh bund, wilayah "${destinationCity}" tidak terdeteksi 🙏 Bisa sebutkan nama Kecamatan atau Kota/Kabupaten yang lebih spesifik? 😊`;
+            
+            // Dynamically get origin_id based on configured address
+            let originId = KEDIRI_KOTA_ORIGIN_ID;
+            const defaultAddressId = _getDefaultAddressId();
+            if (defaultAddressId) {
+                try {
+                    const addrs = await getAddresses();
+                    const matched = addrs.find(a => a._id === defaultAddressId);
+                    if (matched && matched.PICKUP_AUTOFILL) {
+                        originId = matched.PICKUP_AUTOFILL;
+                    }
+                } catch (e) {
+                    console.error('[Mengantar] Gagal mengambil origin_id dinamis:', e);
+                }
+            }
+
             const weight = Math.max(1, Math.ceil(weightGrams / 1000));
-            const pricingData = await checkShippingFeePublic(KEDIRI_KOTA_ORIGIN_ID, destData.id, weight);
+            const pricingData = await checkShippingFeePublic(originId, destData.id, weight);
             if (!pricingData || !Object.keys(pricingData).length) return `Wah, maaf bund. Saat ini belum ada layanan pengiriman ke ${destData.label} dari Kediri 🙏`;
             const MARKUP = 3000;
             for (const courierKey of ['JT', 'JNE']) {
                 const data = pricingData[courierKey];
-                if (!data || data.unsupported || !(data.estimatedSpecialPrice || data.estimatedPrice || 0)) continue;
-                const finalPrice = (data.estimatedSpecialPrice || data.estimatedPrice) + MARKUP;
+                if (!data || data.unsupported || !(data.price || data.estimatedPrice || data.estimatedSpecialPrice || 0)) continue;
+                // Gunakan harga normal (bukan diskon) agar penjual bisa mendapat margin dari diskon ekspedisi
+                const basePrice = data.price || data.estimatedPrice || data.estimatedSpecialPrice || 0;
+                const finalPrice = basePrice + MARKUP;
                 let etd = data.estimatedDate || data.estimate_delivery || '';
                 if (!etd || etd === '-') etd = _getEtdByProvince(destData.province);
-                return `Hore! Ini hasil cek ongkir dari Kediri ke ${destData.label} (${weight}kg):\n\n✅ Pengiriman Reguler\n   Harga: Rp ${finalPrice.toLocaleString('id-ID')}\n   Estimasi: ${etd}\n\nBisa dibantu konfirmasi untuk lanjut pesanannya bund? 😊`;
+                return `Hore! Ini hasil cek ongkir ke ${destData.label} (${weight}kg):\n\n✅ Pengiriman Reguler\n   Harga: Rp ${finalPrice.toLocaleString('id-ID')}\n   Estimasi: ${etd}\n\nBisa dibantu konfirmasi untuk lanjut pesanannya bund? 😊`;
             }
             const shopeeLink = process.env.SHOPEE_LINK || '';
             return shopeeLink

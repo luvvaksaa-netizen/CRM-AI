@@ -461,7 +461,8 @@ async function _runInspectorValidation(content, kind) {
         });
 
         const raw = inspectorResponse.choices[0].message.content;
-        const result = JSON.parse(raw);
+        const cleanRaw = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
+        const result = JSON.parse(cleanRaw);
         return {
             valid: result.valid !== false,
             missing: result.missing || '',
@@ -614,6 +615,10 @@ async function _processAIResponse(userMessage, history = [], store = null, agent
             `    JANGAN matikan bot setelah Closing — obrolan selesai secara natural.`,
             `13. DILARANG memberikan dua diskon ongkir sekaligus (Transfer Rp3.000 dan komplain Rp3.000 tidak boleh ditumpuk).`,
             `14. Subsidi ongkir bundling BTS maksimal Rp 20.000 — JANGAN menyebut angka lebih besar atau mengklaim "gratis ongkir".`,
+            `15. DILARANG KERAS menyebutkan nama merek ekspedisi (seperti J&T, JNE, Pos, dll) di pesan kepada customer. Selalu sebutkan sebagai "Pengiriman Reguler" atau "Pengiriman COD".`,
+            ...(process.env.SCALEV_API_KEY ? [
+                `16. INTEGRASI SCALEV AKTIF: Jika customer sepakat untuk melakukan pembayaran via Transfer atau DP, kamu WAJIB memanggil tool 'buat_order_scalev' untuk membuat pesanan dan menerbitkan QRIS dinamis. SEKALIGUS di pesan yang sama, kamu WAJIB memberikan nomor rekening manual (dari Product Knowledge) sebagai opsi alternatif. Contoh: "Bund, ini QRIS-nya ya, atau kalau mau manual bisa transfer ke rekening BCA 123xxxx. Silakan dipilih bund."`
+            ] : []),
         ].join('\n');
 
         // ── Bagian 8: Agent Prompt dari DB (product-specific knowledge) ──
@@ -1753,7 +1758,7 @@ ALAMAT: [alamat lengkap atau "belum"]
 HARGA: [sudah disebutkan / belum]
 ONGKIR: [nominal aktual, contoh: "Rp 18.000" atau "belum dicek". JANGAN tulis hanya "sudah dicek".]
 METODE BAYAR: [Transfer / COD / belum]
-STATUS: [opening / gali kebutuhan / negosiasi / menunggu alamat / menunggu rekap / menunggu transfer / closing / selesai / cancel]
+STATUS: [transfer / cod / closing / selesai / cancel]
 UPSELLING_TERKIRIM: [ya / tidak]
 NEXT ACTION: [langkah selanjutnya yang perlu dilakukan]
 WA_LABELS: [label paling relevan. Format array, contoh: [Closing] atau [COD, Closing]]
@@ -1764,15 +1769,12 @@ ATURAN FIELD ONGKIR:
 - Belum dicek → tulis "belum dicek"
 - DILARANG tulis hanya "sudah dicek" tanpa nominal
 
-ATURAN WA_LABELS:
-- Opening/baru → [AI Lead Baru]
-- Gali kebutuhan → [AI Lead Aktif]
-- Data belum lengkap, belum direkap → [Menunggu Rekap]
-- COD, belum konfirmasi deal → [COD]
-- Transfer, belum ada bukti → [Menunggu Transfer]
-- COD + sudah konfirmasi deal → [Closing, COD]
-- Transfer + sudah kirim bukti → [Closing]
-- Batal/tidak jadi → [Cancel]
+ATURAN WA_LABELS & STATUS:
+- Batal/tidak jadi → STATUS: [cancel] dan WA_LABELS: [Cancel]
+- Sedang deal COD (menunggu atau konfirmasi awal) → STATUS: [cod] dan WA_LABELS: [COD]
+- COD + sudah deal final / dikonfirmasi alamatnya → STATUS: [closing] dan WA_LABELS: [COD, Closing]
+- Transfer / QRIS diberikan (tapi belum bayar) → STATUS: [transfer] dan WA_LABELS: [Transfer]
+- Transfer + sudah kirim bukti pembayaran valid → STATUS: [closing] dan WA_LABELS: [Transfer, Closing]
 
 ATURAN KRITIS — STATUS "closing" HANYA BOLEH DIISI JIKA SEMUA KONDISI BERIKUT TERPENUHI:
 ✅ NAMA CUSTOMER sudah ada (bukan "belum")

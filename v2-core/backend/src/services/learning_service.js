@@ -372,7 +372,7 @@ async function _runClosingAnalysis({ storeWaId, contactId, agentId, chatText, so
                          && analysis.data_lengkap === true;
 
         if (!isQualified) {
-            logger.warn(
+            logger.info(
                 `[Learning] ⛔ Quality Gate GAGAL untuk [${contactId || sourceFile || 'dataset'}]. ` +
                 `Score: ${finalScore}/10, alur_lengkap: ${analysis.alur_lengkap}, data_lengkap: ${analysis.data_lengkap}. ` +
                 `Pola TIDAK disimpan untuk mencegah bot belajar dari data tidak valid.`

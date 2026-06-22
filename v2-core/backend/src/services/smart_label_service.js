@@ -25,46 +25,26 @@ const logger = require('../utils/logger');
 const STATUS_LABEL_MAP = [
   // Prioritas tertinggi — closing/selesai atau batal
   { pattern: /\bstatus:\s*(closing|selesai)\b/i,           label: 'Closing',           color: 1  }, // Hijau
-  { pattern: /\bstatus:\s*(batal|cancel|nggak jadi)\b/i,   label: 'Cancel',            color: 11 }, // Abu-abu tua/Merah pudar
-  // Menunggu pembayaran
-  { pattern: /\bstatus:\s*menunggu\s*transfer\b/i,         label: 'Menunggu Transfer', color: 7  }, // Kuning
-  // Menunggu data dari customer
-  { pattern: /\bstatus:\s*menunggu\s*rekap\b/i,            label: 'Menunggu Rekap',    color: 6  }, // Orange
-  { pattern: /\bstatus:\s*menunggu\s*alamat\b/i,           label: 'Menunggu Alamat',   color: 6  }, // Orange
-  // Negosiasi / diskusi harga
-  { pattern: /\bstatus:\s*negosiasi\b/i,                   label: 'Hot Lead',          color: 14 }, // Merah muda
-  // Gali kebutuhan (lead aktif)
-  { pattern: /\bstatus:\s*gali\s*kebutuhan\b/i,            label: 'AI Lead Aktif',     color: 2  }, // Biru muda
-  // Opening (baru mulai)
-  { pattern: /\bstatus:\s*opening\b/i,                     label: 'AI Lead Baru',      color: 4  }, // Abu-abu
-];
-
-// Label yang DIHAPUS saat status berubah ke closing (tidak relevan lagi)
-// PENTING: 'COD' sengaja TIDAK dihapus — CS butuh info metode pembayaran setelah closing
-const LABELS_TO_REMOVE_ON_CLOSING = [
-  'Hot Lead', 'AI Lead Aktif', 'AI Lead Baru',
-  'Menunggu Transfer', 'Menunggu Rekap', 'Menunggu Alamat', 'Cancel'
+  { pattern: /\bstatus:\s*(batal|cancel|nggak jadi)\b/i,   label: 'Cancel',            color: 11 }, // Abu-abu tua
+  // Menunggu pembayaran atau sudah Transfer (Tanpa status closing)
+  { pattern: /\bstatus:\s*transfer\b/i,                    label: 'Transfer',          color: 7  }, // Kuning
+  // COD (deal awal COD)
+  { pattern: /\bstatus:\s*cod\b/i,                         label: 'COD',               color: 8  }, // Biru/Ungu
 ];
 
 // Label yang DIHAPUS saat status berubah ke cancel
 const LABELS_TO_REMOVE_ON_CANCEL = [
-  'Hot Lead', 'AI Lead Aktif', 'AI Lead Baru',
-  'Menunggu Transfer', 'Menunggu Rekap', 'Menunggu Alamat', 'Closing', 'COD'
+  'Transfer', 'Closing', 'COD'
 ];
 
 // ══════════════════════════════════════════════════════════════════
 // FIX #4 — LABEL LOCK (IMMUTABLE)
-// Label-label ini TIDAK BOLEH pernah dihapus atau ditimpa oleh update
-// summary berikutnya (misal: saat bot follow-up, label Closing tidak boleh
-// berubah menjadi "AI Lead Aktif" hanya karena summary di-regenerate).
 // ══════════════════════════════════════════════════════════════════
 const IMMUTABLE_LABELS = new Set(['Closing', 'Cancel']);
 
-// Label funnel (status perjalanan) yang BOLEH ditimpa saat status berubah
-const FUNNEL_LABELS = new Set([
-  'AI Lead Baru', 'AI Lead Aktif', 'Hot Lead',
-  'Menunggu Rekap', 'Menunggu Alamat', 'Menunggu Transfer'
-]);
+// Funnel labels dihapus karena tidak dipakai lagi, 
+// tapi variabel dipertahankan kosong agar tidak memutus dependensi eksisting.
+const FUNNEL_LABELS = new Set([]);
 
 // Field WA_LABELS di rekap — format: WA_LABELS: [label1, label2]
 const WA_LABELS_FIELD_RE = /^WA_LABELS:\s*\[([^\]]*)\]/im;
@@ -271,12 +251,37 @@ function validateMetodeBayarConsistency(summaryText, currentLabels) {
  */
 async function applyLabelsFromSummary(storeWaId, contactId, summaryText, waClient = null) {
   try {
-    const { ChatSummary } = require('../models/index');
+    const { ChatSummary, ChatMessage } = require('../models/index');
 
     // FIX SUK-59 #2: Load existing summary for DB-level validation (before both if blocks)
     const existingSummary = await ChatSummary.findOne({ where: { store_wa_id: storeWaId, contact_id: contactId } });
     const contactName = existingSummary?.contact_name;
     const contactPhone = existingSummary?.contact_phone;
+
+    // 0. Ekstrak Tanggal Lead Pertama
+    let leadLabel = null;
+    try {
+      const firstMessage = await ChatMessage.findOne({
+        where: { store_wa_id: storeWaId, contact_id: contactId },
+        order: [['timestamp', 'ASC']]
+      });
+      if (firstMessage && firstMessage.timestamp) {
+        const dateObj = new Date(firstMessage.timestamp);
+        const dd = String(dateObj.getDate()).padStart(2, '0');
+        const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+        const yyyy = dateObj.getFullYear();
+        leadLabel = `Lead (${dd}/${mm}/${yyyy})`;
+      } else {
+        // Fallback hari ini jika DB kosong
+        const dateObj = new Date();
+        const dd = String(dateObj.getDate()).padStart(2, '0');
+        const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+        const yyyy = dateObj.getFullYear();
+        leadLabel = `Lead (${dd}/${mm}/${yyyy})`;
+      }
+    } catch (err) {
+      logger.warn(`[SmartLabel] Gagal ekstrak Lead date untuk [${contactId}]: ${err.message}`);
+    }
 
     // 1. Deteksi label dari STATUS field
     let detectedRule = detectLabelFromSummary(summaryText);
@@ -300,7 +305,7 @@ async function applyLabelsFromSummary(storeWaId, contactId, summaryText, waClien
       }
     }
 
-    // Gabungkan: label dari STATUS + explicit labels dari AI
+    // Gabungkan: label dari STATUS + explicit labels dari AI + Lead Date
     const labelsToApply = [];
     if (detectedRule) labelsToApply.push(detectedRule);
 
@@ -311,12 +316,25 @@ async function applyLabelsFromSummary(storeWaId, contactId, summaryText, waClien
       }
     }
 
+    // Selalu sisipkan Lead Label jika belum terhapus oleh aturan Closing/Cancel
+    if (leadLabel && !labelsToApply.find(r => r.label === leadLabel)) {
+       labelsToApply.push({ label: leadLabel, color: 0 }); // Putih/Abu
+    }
+
     if (labelsToApply.length === 0) {
       // Tidak ada label yang terdeteksi — tidak perlu aksi apapun
       return;
     }
 
-    const labelNames = labelsToApply.map(r => r.label);
+    let labelNames = labelsToApply.map(r => r.label);
+
+    // Hapus Lead label jika ada status Closing atau Cancel
+    const hasClosingOrCancel = labelNames.some(l => /closing|cancel/i.test(l));
+    if (hasClosingOrCancel) {
+       labelNames = labelNames.filter(l => !l.startsWith('Lead ('));
+       const idx = labelsToApply.findIndex(r => r.label.startsWith('Lead ('));
+       if (idx !== -1) labelsToApply.splice(idx, 1);
+    }
     logger.info(`[SmartLabel] [${storeWaId}] Kontak [${contactId}] → Label: ${labelNames.join(', ')}`);
 
     // 🔍 Fase 1 — Cross-Validation: validasi konsistensi METODE BAYAR vs label Closing
@@ -375,9 +393,22 @@ async function applyLabelsFromSummary(storeWaId, contactId, summaryText, waClien
       }
     }
 
-    // 5. 🧠 LEARNING BOT TRIGGER — Jika ada label Closing, analisis percakapan
-    //    untuk ekstrak pola sukses. Non-blocking, berjalan di background.
+    // 5. Eksekusi Scalev Cancel jika Transfer Manual + Closing
     const hasClosingLabel = labelNames.some(l => l.toLowerCase() === 'closing');
+    const hasTransferLabel = labelNames.some(l => l.toLowerCase() === 'transfer');
+    
+    if (hasClosingLabel && hasTransferLabel && contactPhone) {
+       try {
+          const scalevService = require('./scalev.service');
+          scalevService.cancelOrderIfManualTransfer(storeWaId, contactPhone)
+            .catch(e => logger.warn(`[Scalev] Background cancel error: ${e.message}`));
+       } catch (err) {
+          logger.warn(`[Scalev] Gagal trigger pembatalan manual transfer: ${err.message}`);
+       }
+    }
+
+    // 6. 🧠 LEARNING BOT TRIGGER — Jika ada label Closing, analisis percakapan
+    //    untuk ekstrak pola sukses. Non-blocking, berjalan di background.
     if (hasClosingLabel) {
       try {
         const { onClosingDetected } = require('./learning_service');

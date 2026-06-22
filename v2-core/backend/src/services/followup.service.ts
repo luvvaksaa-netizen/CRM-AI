@@ -150,19 +150,54 @@ async function executeFollowUp(followUp: any): Promise<void> {
     return;
   }
 
-  // 3. Guard: Cek apakah percakapan sudah closing
+  // 3. Guard: Cek apakah percakapan sudah closing atau label mengandung Closing
   const freshSummary: any = await (ChatSummary as any).findOne({
     where: { store_wa_id: followUp.store_wa_id, contact_id: followUp.contact_id }
   });
 
-  if (freshSummary?.summary) {
-    const { isConversationClosed } = require('./bot_activation_service');
-    if (isConversationClosed(freshSummary.summary)) {
-      await followUp.update({ status: 'cancelled', cancel_reason: 'Percakapan sudah closing/selesai' });
-      logger.info(`[FollowUp] Dibatalkan (closing): stage-${followUp.stage} [${followUp.contact_id}]`);
+  if (freshSummary) {
+    const waLabels: string[] = [];
+    try {
+      if (freshSummary.wa_labels) {
+        Object.assign(waLabels, JSON.parse(freshSummary.wa_labels));
+      }
+    } catch (_) {}
+
+    const hasClosingLabel = waLabels.some((l: string) => l.toLowerCase().includes('closing'));
+
+    if (hasClosingLabel) {
+      await followUp.update({ status: 'cancelled', cancel_reason: 'Label sudah mengandung Closing' });
+      logger.info(`[FollowUp] Dibatalkan (label closing): stage-${followUp.stage} [${followUp.contact_id}]`);
       emitFollowUpUpdate(followUp.store_wa_id);
       return;
     }
+
+    if (freshSummary.summary) {
+      const { isConversationClosed } = require('./bot_activation_service');
+      if (isConversationClosed(freshSummary.summary)) {
+        await followUp.update({ status: 'cancelled', cancel_reason: 'Percakapan sudah closing/selesai' });
+        logger.info(`[FollowUp] Dibatalkan (closing): stage-${followUp.stage} [${followUp.contact_id}]`);
+        emitFollowUpUpdate(followUp.store_wa_id);
+        return;
+      }
+    }
+  }
+
+  // 3.5 Guard: Cek pesan terakhir apakah berasal dari kita (is_from_me = true)
+  // Memblokir eksekusi otomatis jika agen/bot sudah membalas dan ini menyebabkan tumpang tindih.
+  const lastMsg = await (ChatMessage as any).findOne({
+    where: {
+      store_wa_id: followUp.store_wa_id,
+      contact_id: followUp.contact_id,
+    },
+    order: [['timestamp', 'DESC']]
+  });
+
+  if (lastMsg && lastMsg.is_from_me) {
+    await followUp.update({ status: 'cancelled', cancel_reason: 'Pesan terakhir sudah berasal dari kita' });
+    logger.info(`[FollowUp] Dibatalkan (is_from_me: true): stage-${followUp.stage} [${followUp.contact_id}]`);
+    emitFollowUpUpdate(followUp.store_wa_id);
+    return;
   }
 
   // 4. Guard: Cek apakah CS sudah membalas manual dari HP

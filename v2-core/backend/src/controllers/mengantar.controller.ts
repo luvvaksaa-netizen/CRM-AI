@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import * as MengantarService from '../services/mengantar.service';
-import { AppConfig } from '../models';
+import { AppConfig, ChatSummary } from '../models';
 
 export const getAddresses = async (_req: Request, res: Response, next: NextFunction) => {
   try {
@@ -15,12 +15,51 @@ export const getOrders = async (req: Request, res: Response, next: NextFunction)
   try {
     const filters: any = {
       page: parseInt(req.query.page as string) || 1,
-      size: parseInt(req.query.size as string) || 25,
+      size: parseInt(req.query.size as string) || 500,
     };
     if (req.query.courier) filters.courier = req.query.courier as string;
     if (req.query.tracking_id) filters.tracking_id = req.query.tracking_id as string;
     if (req.query.order_id) filters.order_id = req.query.order_id as string;
+    
+    const dbAddressId = await AppConfig.findOne({ where: { key: 'mengantar_address_id' } });
+    if (dbAddressId) {
+       // Filter khusus origin id yang terdaftar untuk limitasi scope
+       filters.origin_id = dbAddressId.getDataValue('value');
+    }
+
     const result = await MengantarService.getOrders(filters);
+
+    // MAPPING DATA KE CONTACT DATABASE
+    if (result.success && Array.isArray(result.data)) {
+        try {
+            const summaries = await ChatSummary.findAll({ attributes: ['contact_phone', 'store_wa_id', 'contact_name', 'contact_id'] });
+            const summaryMap: Record<string, any> = {};
+            for (const s of summaries) {
+                if ((s as any).contact_phone) {
+                    const norm = (s as any).contact_phone.replace(/\D/g, '');
+                    if (norm) {
+                        summaryMap[norm] = s.toJSON();
+                    }
+                }
+            }
+
+            result.data = result.data.map((order: any) => {
+                const cPhone = String(order.customer_phone || order.phone || '').replace(/\D/g, '');
+                if (cPhone) {
+                    const match = summaryMap[cPhone] || 
+                                  summaryMap[cPhone.startsWith('0') ? '62' + cPhone.slice(1) : ''] ||
+                                  summaryMap[cPhone.startsWith('62') ? '0' + cPhone.slice(2) : ''];
+                    if (match) {
+                        order.crm_mapped_contact = match;
+                    }
+                }
+                return order;
+            });
+        } catch (dbErr) {
+            console.error('[Mengantar Controller] Failed to map contacts:', dbErr);
+        }
+    }
+
     res.json(result);
   } catch (e) {
     next(e);
@@ -97,6 +136,35 @@ export const createOrder = async (req: Request, res: Response, next: NextFunctio
 
     if (!result.success) {
       return res.status(400).json(result);
+    }
+
+    // AUTO SEND RESI KE CUSTOMER
+    try {
+        const { sendManualMessage } = require('../whatsapp_service');
+        const cPhone = String(customerPhone).replace(/\D/g, '');
+        
+        const summaries = await ChatSummary.findAll({ attributes: ['contact_phone', 'store_wa_id', 'contact_id'] });
+        let matchedSummary = null;
+        for (const s of summaries) {
+            if ((s as any).contact_phone) {
+                const norm = (s as any).contact_phone.replace(/\D/g, '');
+                if (norm === cPhone || (norm.startsWith('0') ? '62'+norm.slice(1) : norm) === cPhone || (norm.startsWith('62') ? '0'+norm.slice(2) : norm) === cPhone) {
+                    matchedSummary = s;
+                    break;
+                }
+            }
+        }
+        
+        if (matchedSummary) {
+            const { formatResiMessage } = require('../services/mengantar.service');
+            const resiMsg = formatResiMessage(result);
+            await sendManualMessage((matchedSummary as any).store_wa_id, (matchedSummary as any).contact_id, resiMsg);
+            console.log(`[Auto-Resi] Resi dikirim otomatis ke ${customerPhone} via ${(matchedSummary as any).store_wa_id}`);
+        } else {
+             console.log(`[Auto-Resi] Kontak ${customerPhone} tidak ditemukan di DB. Pesan WA resi tidak dikirim otomatis.`);
+        }
+    } catch(waErr: any) {
+        console.error('[Auto-Resi] Gagal mengirim pesan otomatis:', waErr.message);
     }
 
     res.json(result);

@@ -320,6 +320,7 @@ function createWhatsAppClient(storeWaId) {
             clientId: storeWaId 
         }),
         puppeteer: {
+            protocolTimeout: 120000,
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
@@ -1257,6 +1258,7 @@ function createTempClient(io) {
     const client = new Client({
         authStrategy: new LocalAuth({ clientId: tempId }),
         puppeteer: {
+            protocolTimeout: 120000,
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',

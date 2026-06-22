@@ -583,3 +583,65 @@ export async function processWebhook(
     return { received: false, status: 'error' };
   }
 }
+
+// ═══════════════════════════════════════════════════════════════
+// CANCEL ORDER
+// ═══════════════════════════════════════════════════════════════
+
+export async function cancelOrderIfManualTransfer(storeUniqueId: string, customerPhone: string): Promise<boolean> {
+  const client = getClient();
+  if (!client) return false;
+  if (!customerPhone) return false;
+
+  try {
+    // Cari order terakhir berdasarkan nomor HP
+    // Scalev v3 list order endpoint: GET /v3/orders
+    const res = await client.get('/v3/orders', {
+      params: { 
+        limit: 20, 
+        store_unique_id: storeUniqueId || getStoreUniqueId(),
+      }
+    });
+
+    const orders = res.data?.data || res.data || [];
+    
+    // Normalisasi phone (hapus +62, 08, dsb agar matching lebih kebal)
+    const normalizePhone = (p: string) => (p || '').replace(/\D/g, '').replace(/^(62|0)/, '');
+    const targetPhone = normalizePhone(customerPhone);
+
+    const pendingOrder = orders.find((o: any) => {
+       const oPhone = normalizePhone(o.customer?.phone || o.customer_phone || '');
+       const isUnpaid = o.payment_status === 'unpaid' || o.payment_status === 'pending';
+       const isNotCanceled = o.status !== 'canceled' && o.status !== 'cancelled';
+       return oPhone === targetPhone && isUnpaid && isNotCanceled;
+    });
+
+    if (pendingOrder) {
+       const orderId = pendingOrder.order_id || pendingOrder.id;
+       logger.info(`[Scalev] Ditemukan order menggantung (${orderId}) untuk ${customerPhone}. Mencoba cancel...`);
+       
+       // Sesuai dokumentasi: duplicate-and-cancel
+       try {
+           await client.post(`/v3/orders/${orderId}/duplicate-and-cancel`, {});
+           logger.info(`[Scalev] ✅ Order ${orderId} berhasil di-duplicate-and-cancel (dibatalkan).`);
+           return true;
+       } catch (err1: any) {
+           // Fallback: PUT status
+           try {
+               await client.put(`/v3/orders/${orderId}`, { status: 'canceled' });
+               logger.info(`[Scalev] ✅ Order ${orderId} berhasil diubah statusnya menjadi canceled.`);
+               return true;
+           } catch (err2: any) {
+               logger.warn(`[Scalev] Gagal cancel order ${orderId}: ${err2.message}`);
+               return false;
+           }
+       }
+    } else {
+       logger.info(`[Scalev] Tidak ada order pending yang cocok untuk di-cancel bagi HP ${customerPhone}.`);
+       return false;
+    }
+  } catch (err: any) {
+    logger.error('[Scalev] Error saat check/cancel order:', err.message);
+    return false;
+  }
+}

@@ -344,6 +344,20 @@ const ChatManagement = () => {
       const currentContact = useChatStore.getState().activeContact;
       if (currentContact && data.msg?.contact_id === currentContact.contact_id) {
         useChatStore.getState().addMessage(data.msg);
+        
+        // Safety sync: refetch silently after a short delay to ensure UI consistency
+        setTimeout(() => {
+           const active = useChatStore.getState().activeContact;
+           if (active && active.contact_id === data.msg.contact_id) {
+               api.get(`/chat/${selectedStore}`, {
+                  params: { contactId: active.contact_id, limit: 50, paginated: 'true' },
+               }).then(res => {
+                  const newMessages = res.data.messages;
+                  useChatStore.getState().setMessages(newMessages);
+               }).catch(() => {});
+           }
+        }, 800);
+
         if (!data.msg.is_from_me) {
           api.post(`/chat/${selectedStore}/${currentContact.contact_id}/read`).catch(() => {});
         }
@@ -1266,7 +1280,7 @@ const ChatManagement = () => {
                           {renderMessage(msg)}
                        </div>
                     )}
-                    followOutput="smooth"
+                    followOutput="auto"
                     alignToBottom
                   />
                 )}

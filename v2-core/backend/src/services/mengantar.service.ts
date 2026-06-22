@@ -248,7 +248,7 @@ function _getEtdByProvince(province: string): string {
 function _isUnsupported(d: any): boolean {
     if (!d) return true;
     if (d.unsupported === true) return true;
-    if ((d.estimatedSpecialPrice || d.estimatedPrice || d.price || 0) === 0) return true;
+    if ((d.price || d.estimatedPrice || d.estimatedSpecialPrice || 0) === 0) return true;
     return false;
 }
 
@@ -262,8 +262,23 @@ export async function getShippingCost(destinationCity: string, weightGrams: numb
             return `Aduh bund, wilayah "${destinationCity}" tidak terdeteksi di sistem pengiriman kami 🙏 Bisa sebutkan nama Kecamatan atau Kota/Kabupaten yang lebih spesifik? 😊`;
         }
 
+        // Dynamically get origin_id based on configured address
+        let originId = KEDIRI_KOTA_ORIGIN_ID;
+        const defaultAddressId = process.env.MENGANTAR_ADDRESS_ID;
+        if (defaultAddressId) {
+            try {
+                const addrs = await getAddresses();
+                const matched = addrs.find((a: any) => a._id === defaultAddressId);
+                if (matched && matched.PICKUP_AUTOFILL) {
+                    originId = matched.PICKUP_AUTOFILL;
+                }
+            } catch (e) {
+                console.error('[Mengantar] Gagal mengambil origin_id dinamis:', e);
+            }
+        }
+
         const weight = Math.max(1, Math.ceil(weightGrams / 1000));
-        const pricingData = await checkShippingFeePublic(KEDIRI_KOTA_ORIGIN_ID, destData.id, weight);
+        const pricingData = await checkShippingFeePublic(originId, destData.id, weight);
 
         if (!pricingData || Object.keys(pricingData).length === 0) {
             return `Wah, maaf bund. Saat ini belum ada layanan pengiriman ke ${destData.label} dari Kediri 🙏`;
@@ -274,12 +289,13 @@ export async function getShippingCost(destinationCity: string, weightGrams: numb
             const data = pricingData[courierKey];
             if (_isUnsupported(data)) continue;
 
-            const basePrice = data.estimatedSpecialPrice || data.estimatedPrice || data.price || 0;
+            // Gunakan harga normal (bukan diskon) agar penjual bisa mendapat margin dari diskon ekspedisi
+            const basePrice = data.price || data.estimatedPrice || data.estimatedSpecialPrice || 0;
             const finalPrice = basePrice + MARKUP;
             let etd: string = data.estimatedDate || data.estimate_delivery || '';
             if (!etd || etd === '-') etd = _getEtdByProvince(destData.province);
 
-            return `Hore! Ini hasil cek ongkir dari Kediri ke ${destData.label} (${weight}kg):\n\n✅ Pengiriman Reguler\n   Harga: Rp ${finalPrice.toLocaleString('id-ID')}\n   Estimasi: ${etd}\n\nBisa dibantu konfirmasi untuk lanjut pesanannya bund? 😊`;
+            return `Hore! Ini hasil cek ongkir ke ${destData.label} (${weight}kg):\n\n✅ Pengiriman Reguler\n   Harga: Rp ${finalPrice.toLocaleString('id-ID')}\n   Estimasi: ${etd}\n\nBisa dibantu konfirmasi untuk lanjut pesanannya bund? 😊`;
         }
 
         const shopeeLink = process.env.SHOPEE_LINK || '';
@@ -373,10 +389,32 @@ export async function createOrder(params: MengantarCreateOrderParams): Promise<M
         const payload = { courier: courierName, pickup, orders: [orderItem] };
         console.log(`[Mengantar] Membuat order: ${customerName} → ${destLabel || destId} via ${courierName}`);
 
-        const res = await client.post('/order', payload);
-        const data = res.data;
+        let res;
+        let data;
+        try {
+            res = await client.post('/order', payload);
+            data = res.data;
+        } catch (err: any) {
+            data = err.response?.data || { success: false, message: err.message };
+        }
+
         if (!data.success) {
-            return { success: false, error: data.message || 'Gagal membuat order di Mengantar' };
+            const errMsg = (data.message || data.error || '').toLowerCase();
+            // Jika J&T gagal karena tidak menjangkau, otomatis coba JNE
+            if (courierName.toUpperCase() === 'JT' && (errMsg.includes('jangkau') || errMsg.includes('coverage') || errMsg.includes('area') || errMsg.includes('support') || errMsg.includes('layanan') || errMsg.includes('tersedia'))) {
+                console.log(`[Mengantar] J&T tidak menjangkau ${destLabel || destId}, otomatis mencoba JNE...`);
+                payload.courier = 'JNE';
+                try {
+                    res = await client.post('/order', payload);
+                    data = res.data;
+                } catch (retryErr: any) {
+                    data = retryErr.response?.data || { success: false, message: retryErr.message };
+                }
+            }
+        }
+
+        if (!data.success) {
+            return { success: false, error: data.message || data.error || 'Gagal membuat order di Mengantar' };
         }
 
         const orders: any[] = data.data || [];
