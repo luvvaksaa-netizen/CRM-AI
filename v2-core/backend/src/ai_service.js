@@ -1860,7 +1860,7 @@ function calculateTypingDelay(text, minCharDelay = 12, maxDelay = 300) {
 async function generateOrganicFollowUp(customerName, chatContext, stageInstruction, productKnowledge) {
     try {
         const response = await openai.chat.completions.create({
-            model: "gpt-4o-mini", // Cepat dan murah untuk tugas teks pendek
+            model: config.MODEL_NAME, // Cepat dan murah untuk tugas teks pendek
             messages: [
                 { 
                     role: "system", 
@@ -1892,7 +1892,7 @@ ATURAN ANTI-BANNED WA (SANGAT KRITIKAL):
         // Track cost for follow-up
         if (response && response.usage) {
             logRequest({
-                model: "gpt-4o-mini",
+                model: config.MODEL_NAME,
                 promptTokens: response.usage.prompt_tokens,
                 completionTokens: response.usage.completion_tokens,
                 endpoint: 'chat',
