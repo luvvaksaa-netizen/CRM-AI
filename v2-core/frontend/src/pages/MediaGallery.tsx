@@ -297,7 +297,7 @@ const MediaGallery = () => {
     (m.description || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const getUploadUrl = (filename: string) => `http://localhost:3002/uploads/${filename}`;
+  const getUploadUrl = (filename: string) => `/uploads/${filename}`;
 
   return (
     <div className="space-y-6">
