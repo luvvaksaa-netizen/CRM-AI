@@ -8,6 +8,7 @@ import { socketService } from './services/socket.service';
 import { initDB, sequelize } from './config/database';
 
 const app = express();
+app.set('trust proxy', 1); // Wajib untuk express-rate-limit di belakang Cloudflare Tunnel
 
 const allowedOrigins = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(',').map(o => o.trim())
