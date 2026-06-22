@@ -402,6 +402,26 @@ async function applyLabelsFromSummary(storeWaId, contactId, summaryText, waClien
           const scalevService = require('./scalev.service');
           scalevService.cancelOrderIfManualTransfer(storeWaId, contactPhone)
             .catch(e => logger.warn(`[Scalev] Background cancel error: ${e.message}`));
+
+          // Kirim Invoice Manual Transfer
+          try {
+             const { generateInvoiceText } = require('./invoice.service');
+             const invoiceText = await generateInvoiceText({
+                customerPhone: contactPhone,
+                method: 'Transfer Manual'
+             }, storeWaId);
+
+             if (invoiceText) {
+                const { sendManualMessage } = require('../whatsapp_service');
+                // Beri delay sedikit agar WA API tidak kena rate limit
+                setTimeout(() => {
+                   sendManualMessage(storeWaId, contactId, invoiceText)
+                     .catch(e => logger.warn(`[Invoice] Gagal kirim struk manual transfer: ${e.message}`));
+                }, 2000);
+             }
+          } catch (invErr) {
+             logger.warn(`[Invoice] Error saat men-generate invoice manual: ${invErr.message}`);
+          }
        } catch (err) {
           logger.warn(`[Scalev] Gagal trigger pembatalan manual transfer: ${err.message}`);
        }

@@ -546,23 +546,34 @@ export async function processWebhook(
 
       logger.info(`[Scalev] ✅ ORDER PAID: ${orderId} customer: ${customerName} ${customerPhone} Rp ${totalAmount}`);
 
-      // Kirim notif WA ke customer
+      // Kirim notif WA ke customer (berupa Struk Invoice)
       if (customerPhone && opts?.sendWaNotification && storeWaId) {
-        const waNotif = [
-          `Alhamdulillah, pembayaran Rp ${Number(totalAmount).toLocaleString('id-ID')} sudah kami terima bund! 🎉`,
-          ``,
-          `Estimasi pengerjaan: 2-3 hari kerja.`,
-          `📦 Pulau Jawa: 3-5 hari`,
-          `📦 Luar Jawa: 5-9 hari kerja`,
-          ``,
-          `Ditunggu ya bund, semoga produknya sesuai harapan 🙏`,
-        ].join('\n');
-
         try {
-          await opts.sendWaNotification(storeWaId, customerPhone, waNotif);
-          logger.info(`[Scalev] ✅ Notif WA terkirim ke ${customerPhone}`);
+          const { generateInvoiceText } = require('./invoice.service');
+          
+          let addressStr = '';
+          try {
+            if (orderData.customer?.address) {
+               const addr = orderData.customer.address;
+               addressStr = `${addr.street ? addr.street + ', ' : ''}${addr.subdistrict_name ? addr.subdistrict_name + ', ' : ''}${addr.city_name ? addr.city_name : ''}`.trim();
+            }
+          } catch (_) {}
+
+          let courierName = orderData.courier?.name || orderData.shipping_method?.name || 'Reguler';
+
+          const invoiceText = await generateInvoiceText({
+             customerName: customerName,
+             customerPhone: customerPhone,
+             method: 'Otomatis / QRIS Scalev',
+             totalAmount: totalAmount,
+             courier: courierName,
+             address: addressStr
+          }, storeWaId);
+
+          await opts.sendWaNotification(storeWaId, customerPhone, invoiceText);
+          logger.info(`[Scalev] ✅ Invoice WA terkirim ke ${customerPhone}`);
         } catch (waErr: any) {
-          logger.error(`[Scalev] Gagal kirim notif WA: ${waErr.message}`);
+          logger.error(`[Scalev] Gagal kirim invoice WA: ${waErr.message}`);
         }
       }
 

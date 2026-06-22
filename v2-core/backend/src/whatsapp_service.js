@@ -541,9 +541,11 @@ function setupEventListeners(client, storeWaId, io) {
             // Ambil info kontak untuk log yang lebih terbaca
             let logDisplay = `[${message.to}]`;
             try {
-                const contact = await message.getContact();
+                // Untuk pesan dari HP, getContact() akan mereturn identitas diri kita sendiri.
+                // Oleh karena itu, kita fetch contact tujuan dengan getContactById.
+                const recipientContact = await message.client.getContactById(message.to);
                 const { buildContactIdentity } = require('./utils/contact_identity');
-                const identity = buildContactIdentity(message.to, contact);
+                const identity = buildContactIdentity(message.to, recipientContact);
                 logDisplay = `[${identity.displayName || ''}${identity.phone ? ' | +' + identity.phone : ''}] (${message.to})`;
             } catch (e) { /* ignore */ }
 
