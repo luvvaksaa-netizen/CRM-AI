@@ -1821,7 +1821,9 @@ ATURAN UPSELLING_TERKIRIM:
 async function transcribeAudio(audioPath) {
     if (!fs.existsSync(audioPath)) return null;
     try {
-        const response = await openai.audio.transcriptions.create({
+        // Gunakan client OpenAI asli khusus untuk Whisper, JANGAN pakai client DeepSeek
+        const nativeOpenAI = new OpenAI({ apiKey: config.OPENAI_API_KEY });
+        const response = await nativeOpenAI.audio.transcriptions.create({
             file: fs.createReadStream(audioPath),
             model: "whisper-1",
             language: "id" // Fokus ke Bahasa Indonesia
