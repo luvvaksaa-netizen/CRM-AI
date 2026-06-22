@@ -235,11 +235,16 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
         const isSticker = message.type === 'sticker';
         
         if (message.hasMedia && !isSticker) {
-            // Timeout Wrapper: Mencegah hang jika pesan sudah dihapus
-            const media = await _downloadMediaWithTimeout(message, 20000);
-            if (!media) {
-                logger.warn(`[${storeWaId}] Media gagal diunduh (mungkin sudah dihapus). Lanjut proses teks.`);
+            // Skip download media saat proses sinkronisasi chat lama (shouldAIReply = false)
+            // agar server tidak macet (stuck) dan pesan realtime bisa masuk lancar.
+            if (!shouldAIReply) {
+                customerMediaContext = '[MEDIA (Tersinkronisasi)]';
             } else {
+                // Timeout Wrapper: Mencegah hang jika pesan sudah dihapus
+                const media = await _downloadMediaWithTimeout(message, 20000);
+                if (!media) {
+                    logger.warn(`[${storeWaId}] Media gagal diunduh (mungkin sudah dihapus). Lanjut proses teks.`);
+                } else {
                 // A. FOTO (Vision)
                 if (media.mimetype.startsWith('image/')) {
                     logger.info(`[${storeWaId}] Menerima foto dari pelanggan. Menganalisis...`);
@@ -278,7 +283,10 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
                     }
                 }
             }
-        } else if (isSticker) {
+        }
+        }
+        
+        if (isSticker) {
             customerMediaContext = `(Pelanggan Mengirim Stiker)`;
         }
 
