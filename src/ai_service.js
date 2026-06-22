@@ -19,7 +19,10 @@ const mengantarService = require('./services/mengantar_service');
 const { getSendableMedia, getKnowledgeMedia } = require('./services/media_service');
 const { MediaAsset } = require('./database/index');
 
-const openai = new OpenAI({ apiKey: config.OPENAI_API_KEY });
+const openai = new OpenAI({ 
+    apiKey: process.env.DEEPSEEK_API_KEY || config.OPENAI_API_KEY,
+    baseURL: 'https://api.deepseek.com/v1' 
+});
 const { buildLearningPromptSection } = require('./services/learning_service');
 
 // ── Scalev Order+Payment Service (lazy load) ──

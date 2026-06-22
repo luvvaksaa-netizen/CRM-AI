@@ -24,7 +24,10 @@ const path = require('path');
 const logger = require('../utils/logger');
 const config = require('../config');
 
-const openai = new OpenAI({ apiKey: config.OPENAI_API_KEY });
+const openai = new OpenAI({ 
+    apiKey: process.env.DEEPSEEK_API_KEY || config.OPENAI_API_KEY,
+    baseURL: process.env.DEEPSEEK_API_KEY ? 'https://api.deepseek.com/v1' : undefined
+});
 
 // Threshold similarity untuk dedup pola (0.0-1.0)
 const SIMILARITY_THRESHOLD = 0.75;
@@ -178,12 +181,12 @@ ${chatText.slice(0, 8000)}
 Berikan output JSON yang valid. Extract MAKSIMAL 5 pola terbaik saja.`;
 
     const response = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: process.env.DEEPSEEK_API_KEY ? 'deepseek-chat' : 'gpt-4o-mini',
         messages: [{ role: 'user', content: prompt }],
         response_format: { type: 'json_object' },
         temperature: 0.2,
         max_tokens: 2000
-    }, { timeout: 30000 });
+    }, { timeout: 60000 });
 
     const content = response.choices[0]?.message?.content || '{}';
     return JSON.parse(content);

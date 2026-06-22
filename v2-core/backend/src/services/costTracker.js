@@ -9,8 +9,13 @@ const { OpenAICostLog } = require('../models');
 const logger = require('../utils/logger');
 
 // ─── MODEL PRICING (per 1M tokens, USD) ───
-// Update sesuai harga terbaru OpenAI
+// Update sesuai harga terbaru OpenAI & DeepSeek
 const MODEL_PRICING = {
+  // DeepSeek Models (V3 Pricing - Cache Miss)
+  'deepseek-chat':       { input: 0.270,  output: 1.100 },
+  'deepseek-coder':      { input: 0.270,  output: 1.100 },
+  
+  // OpenAI Models
   'gpt-4o-mini':         { input: 0.150,  output: 0.600 },
   'gpt-4o':              { input: 2.50,   output: 10.00 },
   'gpt-4o-2024-08-06':   { input: 2.50,   output: 10.00 },

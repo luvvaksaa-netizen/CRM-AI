@@ -747,7 +747,13 @@ async function _sendActiveMessage(storeWaId, contactId, payload, options = {}) {
     for (let attempt = 1; attempt <= 2; attempt++) {
         const client = await waitForActiveClient(storeWaId);
         try {
-            return await client.sendMessage(contactId, payload, options);
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('WA sendMessage timeout (15s)')), 15000)
+            );
+            return await Promise.race([
+                client.sendMessage(contactId, payload, options),
+                timeoutPromise
+            ]);
         } catch (error) {
             lastError = error;
             if (!_isDetachedFrameError(error) || attempt === 2) {
@@ -851,7 +857,8 @@ async function _sendTextBubbles(message, chat, storeWaId, contactId, bubbles, bo
             await new Promise(r => setTimeout(r, BETWEEN_BUBBLE_DELAY_MS));
         }
 
-        const quotedMessageId = i === 0 ? _getMessageId(message) : '';
+        const isFirstBubble = (i === 0);
+        const quotedMessageId = isFirstBubble ? _getMessageId(message) : '';
         const sendOptions = quotedMessageId
             ? { quotedMessageId, ignoreQuoteErrors: true }
             : {};
@@ -859,7 +866,10 @@ async function _sendTextBubbles(message, chat, storeWaId, contactId, bubbles, bo
 
         // Capture WA message ID to prevent message_create event from double-logging
         const waMessageId = sentMsg?.id?._serialized || sentMsg?.id?.id || null;
-        await _logBotReply(storeWaId, contactId, bubble, botName, waMessageId, _quoteContextFromMessage(message, 'Pelanggan'));
+        
+        // Hanya bubble pertama yang memiliki konteks quote di UI Dashboard
+        const quotedContext = isFirstBubble ? _quoteContextFromMessage(message, 'Pelanggan') : {};
+        await _logBotReply(storeWaId, contactId, bubble, botName, waMessageId, quotedContext);
     }
 }
 
@@ -1084,10 +1094,140 @@ function _triggerBackgroundSummaryIfNeeded(storeWaId, contactId, senderName) {
     _bgSummaryDebounce.set(key, timerId);
 }
 
+// ══════════════════════════════════════════════════════════════════
+// SAPU BERSIH (SWEEP UNANSWERED CHATS)
+// ══════════════════════════════════════════════════════════════════
+async function sweepUnansweredChats(storeWaId) {
+    const { Op } = require('sequelize');
+    const { socketService } = require('../services/socket.service');
+    const { getActiveClient } = require('../whatsapp_service');
+
+    try {
+        socketService.emitSyncProgress(storeWaId, { status: 'starting', message: 'Menganalisis obrolan tertunda dalam 2 hari terakhir...' });
+        
+        const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
+        const chats = await ChatMessage.findAll({
+            where: { 
+                store_wa_id: storeWaId,
+                timestamp: { [Op.gte]: twoDaysAgo }
+            },
+            order: [['timestamp', 'DESC']]
+        });
+
+        // Kumpulkan semua pesan unreplied per kontak
+        const unansweredBatches = {};
+        for (const msg of chats) {
+            const contactId = msg.contact_id;
+            if (!unansweredBatches[contactId]) {
+                unansweredBatches[contactId] = {
+                    messages: [],
+                    contact: msg.get({ plain: true }),
+                    isUnanswered: true
+                };
+            }
+            
+            if (unansweredBatches[contactId].isUnanswered) {
+                if (msg.is_from_me) {
+                    unansweredBatches[contactId].isUnanswered = false;
+                } else {
+                    // Karena chats diurutkan DESC (terbaru di atas), kita unshift agar urutannya kronologis (lama -> baru)
+                    unansweredBatches[contactId].messages.unshift(msg.body);
+                }
+            }
+        }
+
+        // Saring hanya kontak yang pesan terakhirnya adalah pelanggan
+        // dan Bot tidak sedang dimatikan secara manual (pausedContacts)
+        const unanswered = Object.values(unansweredBatches).filter(batch => {
+            const m = batch.contact;
+            if (m.is_from_me) return false;
+            if (pausedContacts.has(`${storeWaId}_${m.contact_id}`)) return false;
+            if (batch.messages.length === 0) return false;
+            return true;
+        });
+
+        if (unanswered.length === 0) {
+            socketService.emitSyncProgress(storeWaId, { status: 'completed', message: 'Hore! Tidak ada chat tertunda yang perlu dibalas.' });
+            return { success: true, count: 0 };
+        }
+
+        const total = unanswered.length;
+        socketService.emitSyncProgress(storeWaId, { 
+            status: 'syncing_messages', 
+            total: total, 
+            current: 0, 
+            message: `Menemukan ${total} chat tertunda. Mulai membalas...` 
+        });
+
+        const client = getActiveClient(storeWaId);
+        let processed = 0;
+
+        for (const batchItem of unanswered) {
+            try {
+                const msg = batchItem.contact;
+                const contactId = msg.contact_id;
+                processed++;
+                socketService.emitSyncProgress(storeWaId, { 
+                    status: 'syncing_messages', 
+                    total: total, 
+                    current: processed,
+                    message: `Membalas [${msg.sender_name || contactId}] (${processed}/${total})...`
+                });
+
+                // Buat mock message untuk diumpankan ke AI
+                const mockMessage = {
+                    client: client,
+                    from: contactId,
+                    to: storeWaId,
+                    body: msg.body,
+                    id: { _serialized: msg.wa_message_id, id: msg.wa_message_id },
+                    hasMedia: msg.has_media || false,
+                    isStatus: false,
+                    fromMe: false,
+                    getChat: async () => {
+                        if (client && typeof client.getChatById === 'function') {
+                            return await client.getChatById(contactId);
+                        }
+                        return null;
+                    }
+                };
+
+                const batch = {
+                    messages: batchItem.messages, // <-- Kirim semua pesan sekaligus agar AI tidak membalas bubble satu per satu
+                    mediaContexts: [],
+                    tempPaths: [],
+                    senderName: msg.sender_name,
+                    lastMessage: mockMessage
+                };
+
+                // Proses AI secara independen
+                await _processAIReplyUnlocked(storeWaId, contactId, batch);
+                
+                // Jeda aman 3.5 detik antar kontak untuk menghindari rate-limiting WA & OpenAI
+                await new Promise(r => setTimeout(r, 3500));
+            } catch (e) {
+                logger.warn(`[${storeWaId}] Gagal sweep reply untuk [${msg.contact_id}]: ${e.message}`);
+            }
+        }
+
+        socketService.emitSyncProgress(storeWaId, { 
+            status: 'completed', 
+            message: `Sapu Bersih Selesai! Berhasil membalas ${processed} chat tertunda.` 
+        });
+        logger.success(`[${storeWaId}] Sweep Unanswered Chats selesai. Terbalas ${processed} kontak.`);
+        return { success: true, count: processed };
+    } catch (err) {
+        logger.error(`[${storeWaId}] Error Sweep Unanswered: ${err.message}`);
+        socketService.emitSyncProgress(storeWaId, { status: 'error', message: `Gagal sapu bersih: ${err.message}` });
+        return { success: false, error: err.message };
+    }
+}
+
 module.exports = { 
     handleMessage,
     pauseBotForContact,
     resumeBotForContact,
+    sweepUnansweredChats,
     pausedContacts,
     getActiveAIRepliesCount: () => activeAIReplies.size
 };

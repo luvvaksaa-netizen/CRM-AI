@@ -113,7 +113,7 @@ const TABS: TabItem[] = [
   { id: 'backup', label: 'Database Backup', icon: Database },
   { id: 'wa', label: 'WA Engine', icon: Wifi },
   { id: 'stores', label: 'Per-Store', icon: Store },
-  { id: 'billing', label: 'OpenAI Billing', icon: DollarSign },
+  { id: 'billing', label: 'AI Billing', icon: DollarSign },
   { id: 'mengantar', label: 'Mengantar / Expedisi', icon: Package },
 ];
 
@@ -1033,30 +1033,49 @@ const Settings = () => {
               )}
             </div>
           )}
-          {/* ─── Tab: OpenAI Billing ─── */}
+          {/* ─── Tab: AI Billing ─── */}
           {activeTab === 'billing' && (
             <div className="space-y-6">
               {/* API Key Status */}
-              <div className="bg-slate-900/40 dark:bg-white border border-slate-800/50 dark:border-slate-200 p-5 rounded-2xl backdrop-blur-xl">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <Bot className="w-5 h-5 text-blue-400" />
-                    <div>
-                      <p className="font-bold text-white dark:text-slate-900">OpenAI API Key</p>
-                      <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
-                        {billingConfig?.has_api_key
-                          ? '✅ API Key terdeteksi dari environment (.env)'
-                          : '❌ Belum dikonfigurasi. Set OPENAI_API_KEY di file .env'}
-                      </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="flex items-center justify-between bg-slate-800/50 dark:bg-slate-100 p-3 rounded-xl border border-slate-700/50 dark:border-slate-300">
+                    <div className="flex items-center gap-3">
+                      <Bot className="w-5 h-5 text-blue-400" />
+                      <div>
+                        <p className="font-bold text-white dark:text-slate-900 text-sm">DeepSeek API Key</p>
+                        <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                          {billingConfig?.has_api_key
+                            ? '✅ Terdeteksi (Chat & Teks)'
+                            : '❌ Belum dikonfigurasi'}
+                        </p>
+                      </div>
                     </div>
+                    {billingConfig?.has_api_key ? (
+                      <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                    ) : (
+                      <XCircle className="w-5 h-5 text-red-400" />
+                    )}
                   </div>
-                  {billingConfig?.has_api_key ? (
-                    <CheckCircle2 className="w-6 h-6 text-emerald-400" />
-                  ) : (
-                    <XCircle className="w-6 h-6 text-red-400" />
-                  )}
+                  
+                  <div className="flex items-center justify-between bg-slate-800/50 dark:bg-slate-100 p-3 rounded-xl border border-slate-700/50 dark:border-slate-300">
+                    <div className="flex items-center gap-3">
+                      <Bot className="w-5 h-5 text-purple-400" />
+                      <div>
+                        <p className="font-bold text-white dark:text-slate-900 text-sm">OpenAI API Key</p>
+                        <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                          {billingConfig?.has_api_key
+                            ? '✅ Terdeteksi (Vision & Audio)'
+                            : '❌ Belum dikonfigurasi'}
+                        </p>
+                      </div>
+                    </div>
+                    {billingConfig?.has_api_key ? (
+                      <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                    ) : (
+                      <XCircle className="w-5 h-5 text-red-400" />
+                    )}
+                  </div>
                 </div>
-              </div>
 
               <Card className="p-5">
                 <h2 className="text-lg font-bold text-white dark:text-slate-900 flex items-center gap-2 mb-5">
@@ -1205,6 +1224,7 @@ const Settings = () => {
                   <div>
                     <p className="text-sm font-medium text-white dark:text-slate-900 mb-1">Informasi</p>
                     <ul className="text-xs text-slate-400 dark:text-slate-500 space-y-1 list-disc list-inside">
+                      <li>DeepSeek API Key dibaca dari <code className="text-blue-400 bg-slate-800 dark:bg-slate-100 px-1 rounded">DEEPSEEK_API_KEY</code> di file .env backend</li>
                       <li>OpenAI API Key dibaca dari <code className="text-blue-400 bg-slate-800 dark:bg-slate-100 px-1 rounded">OPENAI_API_KEY</code> di file .env backend</li>
                       <li>Untuk billing API, gunakan <strong>Organization Key</strong> (bukan Project Key)</li>
                       <li>Buat Bot Telegram via <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" className="text-blue-400 underline">@BotFather</a></li>

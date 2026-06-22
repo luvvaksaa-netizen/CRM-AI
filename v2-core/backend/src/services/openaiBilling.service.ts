@@ -189,8 +189,8 @@ export function restartScheduler() {
 
 // ─── API key check (for frontend to know if key is set) ───
 export function hasApiKey(): boolean {
-  // Check if we can do org billing (has org key) or just basic tracking
-  return !!(process.env.OPENAI_ORG_API_KEY || process.env.OPENAI_API_KEY);
+  // Check if we can do billing tracking (has any AI key)
+  return !!(process.env.OPENAI_API_KEY || process.env.DEEPSEEK_API_KEY);
 }
 
 export function hasOrgApiKey(): boolean {

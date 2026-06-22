@@ -935,6 +935,157 @@ async function forwardMessages(storeWaId, to, messageIds, options = {}) {
 }
 
 /**
+ * Mendapatkan pesan historis langsung dari WhatsApp (sinkronisasi)
+ * dan menyimpannya ke database.
+ */
+async function syncMessagesFromWa(storeWaId, contactId, limit = 50) {
+    const client = getActiveClient(storeWaId);
+    if (!client) throw new Error('Client WhatsApp tidak aktif.');
+    const targetChatId = assertWaChatId(contactId);
+
+    try {
+        const messages = await wajsBridge.getMessages(client, targetChatId, limit, storeWaId);
+        if (!messages || messages.length === 0) return { success: true, count: 0 };
+
+        let addedCount = 0;
+        for (const msg of messages) {
+            // Mapping format message dari wajs_bridge.js ke format addToChatHistory
+            const msgData = {
+                wa_message_id: msg.id?._serialized || msg.id,
+                from: msg.fromMe ? storeWaId : msg.author || msg.from,
+                to: msg.to,
+                body: msg.body || '',
+                isMe: msg.fromMe,
+                timestamp: msg.timestamp ? new Date(msg.timestamp * 1000) : new Date(),
+                sender_name: msg.fromMe ? 'Owner/CS (dari HP)' : '',
+                quoted_message_id: msg.quotedMsgId || null,
+                quoted_body: msg.quotedBody || null,
+                quoted_from_me: msg.quotedFromMe || false,
+                quoted_sender_name: msg.quotedSenderName || null,
+                type: msg.type || 'chat',
+                hasMedia: msg.hasMedia
+            };
+
+            if (msgData.hasMedia && !msgData.body) {
+                msgData.body = '(Media/Attachment)';
+            }
+
+            try {
+                await dashboard.addToChatHistory(storeWaId, msgData);
+                addedCount++;
+            } catch (err) {
+                logger.warn(`[${storeWaId}] Gagal sinkronisasi pesan ${msgData.wa_message_id}: ${err.message}`);
+            }
+        }
+
+        logger.success(`[${storeWaId}] Berhasil sinkronisasi ${addedCount} pesan dari WhatsApp untuk kontak ${targetChatId}`);
+        return { success: true, count: addedCount, messages };
+    } catch (error) {
+        logger.error(`[${storeWaId}] Gagal sinkronisasi pesan: ${error.message}`);
+        throw error;
+    }
+}
+
+/**
+ * Global Sync: Menarik SEMUA chat dari WA Web dan masing-masing mengambil 10 pesan terakhir.
+ * Dijalankan secara asynchronous (background) dan memancarkan socket event untuk progress.
+ */
+async function syncAllChatsFromWa(storeWaId) {
+    const client = getActiveClient(storeWaId);
+    if (!client) throw new Error('Client WhatsApp tidak aktif.');
+
+    // Jalankan di background agar tidak memblokir HTTP request
+    (async () => {
+        try {
+            const { socketService } = require('./services/socket.service');
+            socketService.emitSyncProgress(storeWaId, { status: 'fetching_chats', message: 'Mengambil daftar kontak dari WhatsApp...' });
+            
+            // Ambil semua chat (limit tidak di-set agar terambil semua)
+            // Di wajs_bridge, parameter getChats tidak dibatasi secara kaku jika pakai WPP.chat.getChats
+            const allChats = await wajsBridge.getChats(client, storeWaId);
+            if (!allChats || allChats.length === 0) {
+                socketService.emitSyncProgress(storeWaId, { status: 'completed', message: 'Tidak ada chat yang ditemukan di WhatsApp.' });
+                return;
+            }
+
+            const totalChats = allChats.length;
+            socketService.emitSyncProgress(storeWaId, { status: 'syncing_messages', total: totalChats, current: 0, message: `Menarik pesan dari ${totalChats} kontak...` });
+
+            let processed = 0;
+            let totalAdded = 0;
+
+            for (const chat of allChats) {
+                try {
+                    const chatId = chat.id?._serialized || chat.id;
+                    if (!chatId || chatId === 'status@broadcast') continue; // Skip status
+
+                    // Tarik 10 pesan terakhir untuk setiap kontak agar CRM punya history
+                    const messages = await wajsBridge.getMessages(client, chatId, 10, storeWaId);
+                    
+                    if (messages && messages.length > 0) {
+                        for (const msg of messages) {
+                            const msgData = {
+                                wa_message_id: msg.id?._serialized || msg.id,
+                                from: msg.fromMe ? storeWaId : msg.author || msg.from,
+                                to: msg.to,
+                                body: msg.body || '',
+                                isMe: msg.fromMe,
+                                timestamp: msg.timestamp ? new Date(msg.timestamp * 1000) : new Date(),
+                                sender_name: msg.fromMe ? 'Owner/CS (dari HP)' : chat.name || '',
+                                quoted_message_id: msg.quotedMsgId || null,
+                                quoted_body: msg.quotedBody || null,
+                                quoted_from_me: msg.quotedFromMe || false,
+                                quoted_sender_name: msg.quotedSenderName || null,
+                                type: msg.type || 'chat',
+                                hasMedia: msg.hasMedia
+                            };
+
+                            if (msgData.hasMedia && !msgData.body) {
+                                msgData.body = '(Media/Attachment)';
+                            }
+
+                            try {
+                                await dashboard.addToChatHistory(storeWaId, msgData);
+                                totalAdded++;
+                            } catch (e) {
+                                // Ignore upsert dupes
+                            }
+                        }
+                    }
+                } catch (e) {
+                    logger.warn(`[${storeWaId}] Gagal tarik pesan untuk ${chat.id?._serialized}: ${e.message}`);
+                }
+
+                processed++;
+                if (processed % 5 === 0 || processed === totalChats) {
+                    socketService.emitSyncProgress(storeWaId, { 
+                        status: 'syncing_messages', 
+                        total: totalChats, 
+                        current: processed, 
+                        message: `Sinkronisasi: ${processed}/${totalChats} kontak...` 
+                    });
+                }
+                
+                // Jeda 500ms per chat untuk mencegah rate limit WA dan beban CPU tinggi
+                await new Promise(r => setTimeout(r, 500));
+            }
+
+            socketService.emitSyncProgress(storeWaId, { 
+                status: 'completed', 
+                message: `Sinkronisasi Global selesai! Tersimpan ${totalAdded} pesan dari ${processed} kontak.` 
+            });
+            logger.success(`[${storeWaId}] Global Sync selesai. Total: ${totalAdded} pesan, ${processed} kontak.`);
+        } catch (err) {
+            logger.error(`[${storeWaId}] Error Global Sync: ${err.message}`);
+            const { socketService } = require('./services/socket.service');
+            socketService.emitSyncProgress(storeWaId, { status: 'error', message: `Gagal sinkronisasi: ${err.message}` });
+        }
+    })();
+
+    return { success: true, message: 'Proses sinkronisasi global dimulai di background.' };
+}
+
+/**
  * Logout Client, Putuskan Koneksi WA, dan Hapus Sesi Fisik
  * @param {string} storeWaId 
  */
@@ -1355,6 +1506,8 @@ module.exports = {
     addOrRemoveLabels,
     sendReaction,
     forwardMessages,
+    syncMessagesFromWa,
+    syncAllChatsFromWa,
     logoutClient,
     restartClientRuntime,
     cleanupFailedClient,

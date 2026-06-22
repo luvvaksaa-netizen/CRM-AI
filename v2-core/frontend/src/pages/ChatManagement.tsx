@@ -9,6 +9,8 @@ import toast from 'react-hot-toast';
 import api from '../services/api';
 import { socketService } from '../services/socket';
 import { format, isToday, isYesterday } from 'date-fns';
+import { useChatStore } from '../stores/chatStore';
+import { Virtuoso } from 'react-virtuoso';
 
 // ─── Types ───
 
@@ -132,13 +134,16 @@ const QuotedBlock = ({ msg }: { msg: ChatMessage }) => {
 // ─── Main Component ───
 
 const ChatManagement = () => {
+  const {
+    activeContact, setActiveContact,
+    messages, setMessages,
+    loadingContacts, setLoadingContacts,
+    loadingMessages, setLoadingMessages,
+    hasMoreMessages, setHasMoreMessages,
+    setTypingContact,
+  } = useChatStore();
+
   const [stores, setStores] = useState<any[]>([]);
-  const [selectedStore, setSelectedStore] = useState<string>('');
-  const [contacts, setContacts] = useState<ChatContact[]>([]);
-  const [activeContact, setActiveContact] = useState<ChatContact | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [loadingContacts, setLoadingContacts] = useState(false);
-  const [loadingMessages, setLoadingMessages] = useState(false);
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -162,7 +167,6 @@ const ChatManagement = () => {
   const [editingLabelId, setEditingLabelId] = useState<string | null>(null);
   const [editingLabelName, setEditingLabelName] = useState('');
   const [editingLabelColor, setEditingLabelColor] = useState(0);
-  // const [managingLabels, setManagingLabels] = useState(false); // migrated to loadingLabels
   const [originalLabels, setOriginalLabels] = useState<string[]>([]);
   const [contactSummary, setContactSummary] = useState<string>('');
   const [resolvedPhone, setResolvedPhone] = useState<string | null>(null);
@@ -170,28 +174,20 @@ const ChatManagement = () => {
   const [savingLabels, setSavingLabels] = useState(false);
   const [requestingPhone, setRequestingPhone] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const [hasMoreMessages, setHasMoreMessages] = useState(false);
-  const [typingContact, setTypingContact] = useState<string | null>(null);
+  const [syncingWaHistory, setSyncingWaHistory] = useState(false);
+  const [globalSyncProgress, setGlobalSyncProgress] = useState<{status: string, message: string, current?: number, total?: number} | null>(null);
+  const [firstItemIndex, setFirstItemIndex] = useState(10000);
   const [showReactionPicker, setShowReactionPicker] = useState<string | null>(null);
   const [showForwardPicker, setShowForwardPicker] = useState(false);
   const [forwardMsgId, setForwardMsgId] = useState<string | null>(null);
   const [forwardTarget, setForwardTarget] = useState<string>('');
-  // Ref untuk debounce timer dan selalu panggil fetchContacts terbaru
+  
   const fetchContactsDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetchContactsRef = useRef<(silent?: boolean) => void>(() => {});
 
-
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const activeContactRef = useRef<ChatContact | null>(null);
-  activeContactRef.current = activeContact;
-
   const skipAutoScrollRef = useRef(false);
-
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
 
   const getDisplayName = (c: ChatContact | ChatMessage, fallbackId?: string) => {
     if ('contact_display_name' in c) {
@@ -201,60 +197,60 @@ const ChatManagement = () => {
   };
 
   const fetchContacts = useCallback(async (silent = false) => {
-    if (!selectedStore) return;
+    if (!useChatStore.getState().selectedStore) return;
     if (!silent) setLoadingContacts(true);
     try {
-      const res = await api.get(`/chat/${selectedStore}/contacts`);
-      setContacts(res.data);
+      const res = await api.get(`/chat/${useChatStore.getState().selectedStore}/contacts`);
+      useChatStore.getState().setContacts(res.data);
     } catch {
-      // Hanya tampilkan toast pada initial load (bukan background refresh)
       if (!silent) toast.error('Gagal mengambil daftar kontak');
-      // Jangan clear contacts — biarkan data lama tetap tampil
     } finally {
       if (!silent) setLoadingContacts(false);
     }
-  }, [selectedStore]);
+  }, [setLoadingContacts]);
 
-
-  // Selalu update ref agar debounce tidak memakai stale closure
   fetchContactsRef.current = fetchContacts;
 
-  // debouncedFetchContacts: tidak bergantung pada fetchContacts secara langsung,
-  // tapi selalu memanggil versi terbaru lewat ref — aman saat store switch.
-  // Memanggil dengan silent=true agar tidak tampilkan spinner.
   const debouncedFetchContacts = useCallback(() => {
     if (fetchContactsDebounceRef.current) clearTimeout(fetchContactsDebounceRef.current);
     fetchContactsDebounceRef.current = setTimeout(() => {
-      fetchContactsRef.current(true); // silent=true: update tanpa spinner
+      fetchContactsRef.current(true);
     }, 1500);
-  }, []); // Tidak ada dep — aman dari stale closure
-
+  }, []);
 
   const fetchLabelCounts = useCallback(async () => {
-
-    if (!selectedStore) return;
+    const store = useChatStore.getState().selectedStore;
+    if (!store) return;
     try {
-      const res = await api.get('/smart-labels/counts', { params: { store_wa_id: selectedStore } });
+      const res = await api.get('/smart-labels/counts', { params: { store_wa_id: store } });
       setLabelCounts(res.data.labelCounts || {});
     } catch {
       setLabelCounts({});
     }
-  }, [selectedStore]);
+  }, []);
 
   const fetchMessages = useCallback(async (contactId: string, before?: string) => {
-    if (!selectedStore) return;
+    const store = useChatStore.getState().selectedStore;
+    if (!store) return;
     if (!before) {
       setLoadingMessages(true);
     }
     try {
-      const res = await api.get(`/chat/${selectedStore}`, {
+      const res = await api.get(`/chat/${store}`, {
         params: { contactId, limit: 50, paginated: 'true', ...(before ? { before } : {}) },
       });
       const { messages: newMessages, pagination } = res.data;
       if (before) {
-        setMessages(prev => [...newMessages, ...prev]);
+        const currentMessages = useChatStore.getState().messages;
+        const seen = new Set(currentMessages.map(m => m.id));
+        const trulyNew = newMessages.filter((m: any) => !seen.has(m.id));
+        if (trulyNew.length > 0) {
+          setFirstItemIndex(prev => prev - trulyNew.length);
+          useChatStore.getState().setMessages([...trulyNew, ...currentMessages]);
+        }
       } else {
-        setMessages(newMessages);
+        setFirstItemIndex(10000);
+        useChatStore.getState().setMessages(newMessages);
       }
       setHasMoreMessages(pagination?.hasMore ?? false);
     } catch {
@@ -262,42 +258,24 @@ const ChatManagement = () => {
     } finally {
       if (!before) setLoadingMessages(false);
     }
-  }, [selectedStore]);
+  }, [setLoadingMessages, setHasMoreMessages]);
 
   const loadOlderMessages = useCallback(async () => {
-    if (!activeContact || !selectedStore || loadingOlder || !hasMoreMessages) return;
+    if (!activeContact || !useChatStore.getState().selectedStore || loadingOlder || !hasMoreMessages) return;
     const container = messagesContainerRef.current;
     if (!container) return;
-    const prevHeight = container.scrollHeight;
     setLoadingOlder(true);
-    // Prevent auto-scroll-to-bottom from fighting our scroll preservation
     skipAutoScrollRef.current = true;
     try {
-      // Pakai oldest message timestamp (messages[0] karena array di-reverse)
       const oldestTimestamp = messages.length > 0 ? messages[0].timestamp : undefined;
       await fetchMessages(activeContact.contact_id, oldestTimestamp);
-      // Preserve scroll position after prepending older messages
-      requestAnimationFrame(() => {
-        if (container) {
-          container.scrollTop = container.scrollHeight - prevHeight;
-        }
-      });
     } finally {
       setLoadingOlder(false);
     }
-  }, [activeContact, selectedStore, loadingOlder, hasMoreMessages, messages, fetchMessages]);
-
-  const handleMessagesScroll = useCallback(() => {
-    const container = messagesContainerRef.current;
-    if (!container || loadingOlder || !hasMoreMessages) return;
-    // Trigger load older when scrolled near top (within 100px)
-    if (container.scrollTop <= 100) {
-      loadOlderMessages();
-    }
-  }, [loadingOlder, hasMoreMessages, loadOlderMessages]);
+  }, [activeContact, loadingOlder, hasMoreMessages, messages, fetchMessages]);
 
   const fetchMediaAssets = useCallback(async () => {
-    const store = stores.find(s => s.wa_id === selectedStore);
+    const store = stores.find(s => s.wa_id === useChatStore.getState().selectedStore);
     if (!store?.agent_id) {
       setMediaAssets([]);
       return;
@@ -311,56 +289,45 @@ const ChatManagement = () => {
     } finally {
       setLoadingMedia(false);
     }
-  }, [selectedStore, stores]);
+  }, [stores]);
 
-  // Load stores + check chatTarget from sessionStorage (deep-link dari Summaries/Closing)
   useEffect(() => {
     api.get('/stores').then(res => {
       setStores(res.data);
-      // Check for deep-link target from Summaries/Closing
       const chatTargetRaw = sessionStorage.getItem('chatTarget');
       if (chatTargetRaw) {
         try {
           const target = JSON.parse(chatTargetRaw);
           sessionStorage.removeItem('chatTarget');
           if (target.storeWaId && res.data.some((s: any) => s.wa_id === target.storeWaId)) {
-            // Simpan target di state variable — akan diproses oleh useEffect contacts
-            setSelectedStore(target.storeWaId);
-            // Simpan contactId di sessionStorage lagi dengan key berbeda untuk diproses
+            useChatStore.getState().setSelectedStore(target.storeWaId);
             sessionStorage.setItem('chatTargetContact', target.contactId);
-            return; // Don't auto-select first store
+            return;
           }
         } catch {}
       }
-      if (res.data.length > 0) setSelectedStore(res.data[0].wa_id);
+      if (res.data.length > 0) useChatStore.getState().setSelectedStore(res.data[0].wa_id);
     }).catch(() => toast.error('Gagal mengambil data toko'));
   }, []);
 
-  // Load contacts + labels + socket
   useEffect(() => {
+    const selectedStore = useChatStore.getState().selectedStore;
     if (!selectedStore) return;
-    // Reset state saat ganti store: hapus kontak aktif & pesan, tapi kontak list
-    // dibiarkan sebentar (bukan di-clear) agar tidak ada flash "Tidak ada kontak".
-    // Kontak baru akan menggantikan saat fetchContacts() selesai.
     setActiveContact(null);
     setMessages([]);
     fetchContacts();
     fetchLabelCounts();
 
-    // Auto-select contact dari deep-link (Summaries/Closing)
     const deepLinkContactId = sessionStorage.getItem('chatTargetContact');
     if (deepLinkContactId) {
       sessionStorage.removeItem('chatTargetContact');
-      // We'll select after contacts are loaded via the fetchContacts callback pattern
-      // Set a local check in the next tick
       setTimeout(() => {
-        setContacts(prev => {
+        useChatStore.getState().setContacts(prev => {
           const found = prev.find((c: any) => c.contact_id === deepLinkContactId);
           if (found) {
             setActiveContact(found);
             setShowMobileChat(true);
             setResolvedPhone(null);
-            // Auto-sync label
             api.post(`/smart-labels/${selectedStore}/${encodeURIComponent(found.contact_id)}/sync`).catch(() => {});
           }
           return prev;
@@ -368,39 +335,31 @@ const ChatManagement = () => {
       }, 500);
     }
 
-    const socket = socketService.connect(); // Always returns valid connected socket
+    const socket = socketService.connect();
     socket?.emit('joinStore', selectedStore);
 
     const onNewMessage = (data: any) => {
       if (data.storeId !== selectedStore) return;
-      debouncedFetchContacts(); // Debounced: cegah concurrent calls
-      const current = activeContactRef.current;
-      if (current && data.msg?.contact_id === current.contact_id) {
-        setMessages(prev => {
-          const exists = prev.some(m => m.id === data.msg.id || m.wa_message_id === data.msg.wa_message_id);
-          return exists ? prev : [...prev, data.msg];
-        });
+      debouncedFetchContacts();
+      const currentContact = useChatStore.getState().activeContact;
+      if (currentContact && data.msg?.contact_id === currentContact.contact_id) {
+        useChatStore.getState().addMessage(data.msg);
         if (!data.msg.is_from_me) {
-          api.post(`/chat/${selectedStore}/${current.contact_id}/read`).catch(() => {});
+          api.post(`/chat/${selectedStore}/${currentContact.contact_id}/read`).catch(() => {});
         }
       }
     };
 
     const onChatRead = (data: any) => {
       if (data.storeId === selectedStore) {
-        setContacts(prev => prev.map(c =>
-          c.contact_id === data.contactId ? { ...c, unread_count: 0 } : c
-        ));
+        useChatStore.getState().updateContactUnread(data.contactId, 0);
       }
     };
 
     const onLabelsUpdated = (data: any) => {
       if (data.storeId !== selectedStore) return;
-      setContacts(prev => prev.map(c =>
-        c.contact_id === data.contactId ? { ...c, labels: data.labels } : c
-      ));
-      if (activeContactRef.current?.contact_id === data.contactId) {
-        setActiveContact(prev => prev ? { ...prev, labels: data.labels } : null);
+      useChatStore.getState().updateContactLabels(data.contactId, data.labels);
+      if (useChatStore.getState().activeContact?.contact_id === data.contactId) {
         setEditingLabels(data.labels);
       }
       debouncedFetchContacts();
@@ -410,9 +369,9 @@ const ChatManagement = () => {
     const onChatCleared = (data: any) => {
       if (data.storeId !== selectedStore) return;
       debouncedFetchContacts();
-      if (activeContactRef.current?.contact_id === data.contactId) {
-        setMessages([]);
-        setActiveContact(null);
+      if (useChatStore.getState().activeContact?.contact_id === data.contactId) {
+        useChatStore.getState().setMessages([]);
+        useChatStore.getState().setActiveContact(null);
         setShowMobileChat(false);
       }
     };
@@ -433,22 +392,37 @@ const ChatManagement = () => {
       if (data.storeId !== selectedStore) return;
       if (data.isTyping) {
         setTypingContact(data.contactId);
-        // Auto-clear setelah 5 detik jika tidak ada update
-        setTimeout(() => setTypingContact(prev => prev === data.contactId ? null : prev), 5000);
+        setTimeout(() => {
+           if (useChatStore.getState().typingContact === data.contactId) {
+              setTypingContact(null);
+           }
+        }, 5000);
       } else {
-        setTypingContact(prev => prev === data.contactId ? null : prev);
+        if (useChatStore.getState().typingContact === data.contactId) {
+           setTypingContact(null);
+        }
       }
     };
 
     const onMessageRevoked = (data: any) => {
       if (data.storeId !== selectedStore) return;
-      setMessages(prev => prev.map(m =>
+      useChatStore.getState().setMessages(prev => prev.map(m =>
         m.wa_message_id === data.waMessageId ? { ...m, body: '⛔ Pesan ini telah dihapus', is_revoked: true } : m
       ));
     };
 
     socket?.on('typingStatus', onTypingStatus);
     socket?.on('messageRevoked', onMessageRevoked);
+
+    const onSyncProgress = (data: any) => {
+      if (data.storeId !== selectedStore) return;
+      setGlobalSyncProgress(data);
+      if (data.status === 'completed' || data.status === 'error') {
+        setTimeout(() => setGlobalSyncProgress(null), 5000);
+        fetchContacts();
+      }
+    };
+    socket?.on('sync_progress', onSyncProgress);
 
     return () => {
       socket?.off('newMessage', onNewMessage);
@@ -458,11 +432,10 @@ const ChatManagement = () => {
       socket?.off('contactIdentityUpdated', onIdentityUpdated);
       socket?.off('typingStatus', onTypingStatus);
       socket?.off('messageRevoked', onMessageRevoked);
+      socket?.off('sync_progress', onSyncProgress);
       socket?.emit('leaveStore', selectedStore);
     };
-  }, [selectedStore, fetchContacts, fetchLabelCounts]);
-
-
+  }, [fetchContacts, fetchLabelCounts, setTypingContact, setActiveContact, setMessages]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -474,7 +447,6 @@ const ChatManagement = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Click-outside untuk reaction picker
   useEffect(() => {
     if (!showReactionPicker) return;
     const handler = (e: MouseEvent) => {
@@ -487,38 +459,28 @@ const ChatManagement = () => {
     return () => document.removeEventListener('mousedown', handler);
   }, [showReactionPicker]);
 
-  // Load messages when contact changes
   useEffect(() => {
+    const selectedStore = useChatStore.getState().selectedStore;
     if (!selectedStore || !activeContact) return;
     setReplyTo(null);
     fetchMessages(activeContact.contact_id);
 
     if (activeContact.unread_count > 0) {
       api.post(`/chat/${selectedStore}/${activeContact.contact_id}/read`).then(() => {
-        setContacts(prev => prev.map(c =>
-          c.contact_id === activeContact.contact_id ? { ...c, unread_count: 0 } : c
-        ));
+        useChatStore.getState().updateContactUnread(activeContact.contact_id, 0);
       }).catch(() => {});
     }
-  }, [activeContact?.contact_id, selectedStore, fetchMessages]);
-
-  useEffect(() => {
-    // Skip auto-scroll when prepending older messages (infinite scroll ke atas)
-    if (skipAutoScrollRef.current) {
-      skipAutoScrollRef.current = false;
-      return;
-    }
-    scrollToBottom();
-  }, [messages]);
+  }, [activeContact?.contact_id, fetchMessages]);
 
   const updateContactPauseState = (contactId: string, paused: boolean, pausedUntil: string | null = null) => {
-    const updater = (c: ChatContact) =>
-      c.contact_id === contactId ? { ...c, is_bot_paused: paused, paused_until: pausedUntil } : c;
-    setContacts(prev => prev.map(updater));
+    useChatStore.getState().setContacts(prev => prev.map(c =>
+      c.contact_id === contactId ? { ...c, is_bot_paused: paused, paused_until: pausedUntil } : c
+    ));
     setActiveContact(prev => prev?.contact_id === contactId ? { ...prev, is_bot_paused: paused, paused_until: pausedUntil } : prev);
   };
 
   const handleToggleBot = async () => {
+    const selectedStore = useChatStore.getState().selectedStore;
     if (!activeContact || !selectedStore) return;
     setTogglingBot(true);
     try {
@@ -540,12 +502,12 @@ const ChatManagement = () => {
   };
 
   const handleSend = async () => {
+    const selectedStore = useChatStore.getState().selectedStore;
     if (!inputText.trim() || !activeContact || !selectedStore) return;
     const text = inputText.trim();
     setInputText('');
     setSending(true);
 
-    // Optimistic: tampilkan pesan langsung
     const tempId = `temp-${Date.now()}`;
     const optimisticMsg: ChatMessage = {
       id: tempId,
@@ -561,7 +523,7 @@ const ChatManagement = () => {
         quoted_sender_name: replyTo.sender_name,
       } : {}),
     };
-    setMessages(prev => [...prev, optimisticMsg]);
+    useChatStore.getState().addMessage(optimisticMsg);
     const prevReplyTo = replyTo;
     setReplyTo(null);
 
@@ -577,14 +539,12 @@ const ChatManagement = () => {
         payload.quotedSenderName = prevReplyTo.sender_name;
       }
       await api.post(`/chat/${selectedStore}/send`, payload);
-      // Replace optimistic msg with real data
       setMessages(prev => prev.filter(m => m.id !== tempId));
       updateContactPauseState(activeContact.contact_id, true, new Date(Date.now() + 30 * 60000).toISOString());
       await fetchMessages(activeContact.contact_id);
       await fetchContacts();
       toast.success('Pesan terkirim & AI dipause 30 menit');
     } catch (err: any) {
-      // Rollback: tandai optimistic msg sebagai failed
       setMessages(prev => prev.map(m =>
         m.id === tempId ? { ...m, body: `❌ Gagal: ${m.body}`, sender_name: 'Gagal' } : m
       ));
@@ -595,6 +555,7 @@ const ChatManagement = () => {
   };
 
   const handleSendMedia = async (asset: MediaAsset) => {
+    const selectedStore = useChatStore.getState().selectedStore;
     if (!activeContact || !selectedStore) return;
     setSending(true);
     try {
@@ -615,28 +576,27 @@ const ChatManagement = () => {
   };
 
   const handleSelectContact = (contact: ChatContact) => {
+    const selectedStore = useChatStore.getState().selectedStore;
     setActiveContact(contact);
     setShowMobileChat(true);
     setResolvedPhone(null);
     setShowContactMenu(false);
-    // Auto-sync label dari WA (non-blocking, async, silent on error)
     api.post(`/smart-labels/${selectedStore}/${encodeURIComponent(contact.contact_id)}/sync`)
       .then(res => {
         const labels = res.data?.labels;
         if (labels) {
-          setContacts(prev => prev.map(c =>
+          useChatStore.getState().setContacts(prev => prev.map(c =>
             c.contact_id === contact.contact_id ? { ...c, labels } : c
           ));
           setActiveContact(prev => prev?.contact_id === contact.contact_id ? { ...prev, labels } : prev);
           fetchLabelCounts();
         }
       })
-      .catch(() => {
-        // Silent — WA mungkin offline (503) atau error lain
-      });
+      .catch(() => {});
   };
 
   const handleRequestPhone = async () => {
+    const selectedStore = useChatStore.getState().selectedStore;
     if (!activeContact || !selectedStore) return;
     setRequestingPhone(true);
     try {
@@ -655,6 +615,7 @@ const ChatManagement = () => {
   };
 
   const openLabelModal = async () => {
+    const selectedStore = useChatStore.getState().selectedStore;
     if (!activeContact || !selectedStore) return;
     setShowContactMenu(false);
     setShowLabelModal(true);
@@ -684,6 +645,7 @@ const ChatManagement = () => {
   };
 
   const handleSaveLabels = async () => {
+    const selectedStore = useChatStore.getState().selectedStore;
     if (!activeContact || !selectedStore) return;
     const add = editingLabels.filter(l => !originalLabels.includes(l));
     const remove = originalLabels.filter(l => !editingLabels.includes(l));
@@ -698,7 +660,7 @@ const ChatManagement = () => {
         { add, remove },
       );
       const labels = res.data.labels || editingLabels;
-      setContacts(prev => prev.map(c =>
+      useChatStore.getState().setContacts(prev => prev.map(c =>
         c.contact_id === activeContact.contact_id ? { ...c, labels } : c
       ));
       setActiveContact(prev => prev ? { ...prev, labels } : null);
@@ -714,6 +676,7 @@ const ChatManagement = () => {
   };
 
   const handleSyncLabelsFromWa = async () => {
+    const selectedStore = useChatStore.getState().selectedStore;
     if (!activeContact || !selectedStore) return;
     setLoadingLabels(true);
     try {
@@ -723,7 +686,7 @@ const ChatManagement = () => {
       const labels = res.data.labels || [];
       setEditingLabels([...labels]);
       setOriginalLabels([...labels]);
-      setContacts(prev => prev.map(c =>
+      useChatStore.getState().setContacts(prev => prev.map(c =>
         c.contact_id === activeContact.contact_id ? { ...c, labels } : c
       ));
       setActiveContact(prev => prev ? { ...prev, labels } : null);
@@ -736,10 +699,52 @@ const ChatManagement = () => {
     }
   };
 
+  const handleSyncWaHistory = async () => {
+    const selectedStore = useChatStore.getState().selectedStore;
+    if (!activeContact || !selectedStore) return;
+    setSyncingWaHistory(true);
+    try {
+      const res = await api.post(`/chat/${selectedStore}/${encodeURIComponent(activeContact.contact_id)}/sync-wa`);
+      toast.success(res.data.count > 0 ? `Berhasil sinkron ${res.data.count} pesan dari WA` : 'Tidak ada pesan baru di WA');
+      await fetchMessages(activeContact.contact_id);
+      setShowContactMenu(false);
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Gagal sinkron riwayat dari WA');
+    } finally {
+      setSyncingWaHistory(false);
+    }
+  };
 
-  // ─── Label Manager Handlers (for inline label manager in ChatManagement) ───
+  const handleGlobalSync = async () => {
+    const selectedStore = useChatStore.getState().selectedStore;
+    if (!selectedStore) return;
+    if (!window.confirm('Tarik SEMUA kontak dan chat aktif dari WhatsApp? Ini bisa memakan waktu beberapa saat.')) return;
+    setGlobalSyncProgress({ status: 'starting', message: 'Memulai sinkronisasi global...' });
+    try {
+      await api.post(`/chat/${selectedStore}/sync-all-wa`);
+      toast.success('Sinkronisasi global dimulai');
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Gagal memulai sinkronisasi global');
+      setGlobalSyncProgress(null);
+    }
+  };
+
+  const handleSweepUnanswered = async () => {
+    const selectedStore = useChatStore.getState().selectedStore;
+    if (!selectedStore) return;
+    if (!window.confirm('Bot AI akan menyapu bersih dan membalas otomatis SEMUA chat pelanggan (maks 2 hari terakhir) yang belum Anda balas. Apakah Anda yakin?')) return;
+    setGlobalSyncProgress({ status: 'starting', message: 'Memulai Sapu Bersih AI...' });
+    try {
+      await api.post(`/chat/${selectedStore}/sweep-unanswered`);
+      toast.success('Sapu Bersih AI dimulai di background!');
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || 'Gagal memulai Sapu Bersih AI');
+      setGlobalSyncProgress(null);
+    }
+  };
 
   const handleCreateLabel = async () => {
+    const selectedStore = useChatStore.getState().selectedStore;
     if (!selectedStore || !newLabelName.trim()) return;
     setLoadingLabels(true);
     try {
@@ -747,7 +752,6 @@ const ChatManagement = () => {
       toast.success('Label dibuat di WhatsApp');
       setNewLabelName('');
       setNewLabelColor(0);
-      // Refresh WA labels list
       const waRes = await api.get('/smart-label/' + selectedStore + '/wa-list');
       setWaLabelsList(waRes.data.labels || []);
     } catch (e: any) {
@@ -758,13 +762,13 @@ const ChatManagement = () => {
   };
 
   const handleEditLabel = async () => {
+    const selectedStore = useChatStore.getState().selectedStore;
     if (!selectedStore || !editingLabelId || !editingLabelName.trim()) return;
     setLoadingLabels(true);
     try {
       await api.put('/smart-label/' + selectedStore + '/' + editingLabelId, { name: editingLabelName.trim(), color: editingLabelColor });
       toast.success('Label diperbarui');
       setEditingLabelId(null);
-      // Refresh
       const waRes = await api.get('/smart-label/' + selectedStore + '/wa-list');
       setWaLabelsList(waRes.data.labels || []);
     } catch (e: any) {
@@ -775,13 +779,13 @@ const ChatManagement = () => {
   };
 
   const handleDeleteLabel = async (labelId: string, labelName: string) => {
+    const selectedStore = useChatStore.getState().selectedStore;
     if (!selectedStore) return;
     if (!window.confirm('Hapus label ' + labelName + ' dari WhatsApp?')) return;
     setLoadingLabels(true);
     try {
       await api.delete('/smart-label/' + selectedStore + '/' + labelId);
       toast.success('Label dihapus');
-      // Refresh
       const waRes = await api.get('/smart-label/' + selectedStore + '/wa-list');
       setWaLabelsList(waRes.data.labels || []);
     } catch (e: any) {
@@ -792,13 +796,14 @@ const ChatManagement = () => {
   };
 
   const handleViewSummary = async () => {
+    const selectedStore = useChatStore.getState().selectedStore;
     if (!activeContact || !selectedStore) return;
     setShowContactMenu(false);
     try {
       const res = await api.get(`/smart-labels/${selectedStore}/${encodeURIComponent(activeContact.contact_id)}`);
       setContactSummary(res.data.summary || 'Belum ada rekapan AI untuk kontak ini.');
       setShowSummaryModal(true);
-    } catch {
+    } catch (err) {
       toast.error('Gagal memuat rekap');
     }
   };
@@ -811,6 +816,7 @@ const ChatManagement = () => {
   };
 
   const handleSendReaction = async (waMessageId: string, emoji: string) => {
+    const selectedStore = useChatStore.getState().selectedStore;
     if (!selectedStore) return;
     setShowReactionPicker(null);
     try {
@@ -822,6 +828,7 @@ const ChatManagement = () => {
   };
 
   const handleForwardMessage = async () => {
+    const selectedStore = useChatStore.getState().selectedStore;
     if (!selectedStore || !forwardTarget || !forwardMsgId) return;
     try {
       await api.post(`/chat/${selectedStore}/messages/forward`, {
@@ -838,6 +845,7 @@ const ChatManagement = () => {
   };
 
   const handleClearChat = async () => {
+    const selectedStore = useChatStore.getState().selectedStore;
     if (!activeContact || !selectedStore) return;
     if (!confirm(`Hapus semua riwayat chat dengan ${getDisplayName(activeContact)}?`)) return;
     setShowContactMenu(false);
@@ -855,7 +863,7 @@ const ChatManagement = () => {
 
   const availableLabels = Object.keys(labelCounts).sort();
 
-  const filteredContacts = contacts.filter(c => {
+  const filteredContacts = useChatStore.getState().contacts.filter(c => {
     const name = getDisplayName(c);
     if (!name.toLowerCase().includes(searchQuery.toLowerCase())) return false;
     if (chatFilter === 'unread' && c.unread_count <= 0) return false;
@@ -863,7 +871,7 @@ const ChatManagement = () => {
     return true;
   });
 
-  const unreadTotal = contacts.filter(c => c.unread_count > 0).length;
+  const unreadTotal = useChatStore.getState().contacts.filter(c => c.unread_count > 0).length;
 
   const renderMessage = (msg: ChatMessage) => {
     const canReply = !!msg.wa_message_id;
@@ -990,13 +998,19 @@ const ChatManagement = () => {
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-bold text-white dark:text-slate-900">Chats</h2>
               <div className="flex items-center gap-2">
+                <button onClick={handleGlobalSync} disabled={!!globalSyncProgress} className="p-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-colors" title="Tarik Semua Chat WA">
+                  <RotateCw className={`w-4 h-4 ${globalSyncProgress ? 'animate-spin' : ''}`} />
+                </button>
+                <button onClick={handleSweepUnanswered} disabled={!!globalSyncProgress} className="p-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white transition-colors" title="Sapu Bersih AI (Balas Chat Tertunda)">
+                  <Bot className="w-4 h-4" />
+                </button>
                 <button onClick={() => fetchContacts()} disabled={loadingContacts} className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 transition-colors" title="Refresh">
                   <RefreshCw className={`w-4 h-4 ${loadingContacts ? 'animate-spin' : ''}`} />
                 </button>
                 <select
-                  value={selectedStore}
+                  value={useChatStore.getState().selectedStore}
                   onChange={(e) => {
-                    setSelectedStore(e.target.value);
+                    useChatStore.getState().setSelectedStore(e.target.value);
                     setActiveContact(null);
                     setMessages([]);
                     setShowMobileChat(false);
@@ -1028,6 +1042,23 @@ const ChatManagement = () => {
                 </button>
               ))}
             </div>
+
+            {/* Global Sync Progress */}
+            {globalSyncProgress && (
+              <div className="bg-emerald-900/40 border border-emerald-500/30 rounded-lg p-2 flex flex-col gap-1.5">
+                <div className="flex justify-between items-center text-xs text-emerald-300">
+                  <span className="font-medium truncate pr-2">{globalSyncProgress.message}</span>
+                  {globalSyncProgress.current !== undefined && globalSyncProgress.total !== undefined && (
+                    <span>{Math.round((globalSyncProgress.current / globalSyncProgress.total) * 100)}%</span>
+                  )}
+                </div>
+                {globalSyncProgress.current !== undefined && globalSyncProgress.total !== undefined && (
+                  <div className="w-full bg-slate-800 rounded-full h-1">
+                    <div className="bg-emerald-400 h-1 rounded-full transition-all duration-300" style={{ width: `${(globalSyncProgress.current / globalSyncProgress.total) * 100}%` }}></div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Label picker */}
             {chatFilter === 'label' && (
@@ -1141,9 +1172,6 @@ const ChatManagement = () => {
                       {(activeContact.labels || []).length > 0 && (
                         <span className="text-slate-500 ml-1">• {(activeContact.labels || []).join(', ')}</span>
                       )}
-                    {typingContact === activeContact.contact_id && (
-                      <span className="text-emerald-400 text-xs animate-pulse ml-2">sedang mengetik...</span>
-                    )}
                     </p>
                   </div>
                 </div>
@@ -1187,6 +1215,10 @@ const ChatManagement = () => {
                           <button onClick={handleSyncLabelsFromWa} className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-slate-200 hover:bg-slate-800 transition-colors">
                             <RotateCw className="w-4 h-4 text-blue-400" /> Sinkron Label dari WA
                           </button>
+                          <button onClick={handleSyncWaHistory} disabled={syncingWaHistory} className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-slate-200 hover:bg-slate-800 transition-colors disabled:opacity-50">
+                            {syncingWaHistory ? <div className="w-4 h-4 border-2 border-green-400 border-t-transparent rounded-full animate-spin" /> : <RotateCw className="w-4 h-4 text-green-400" />}
+                            Tarik Riwayat WA
+                          </button>
                           <button onClick={handleViewSummary} className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-slate-200 hover:bg-slate-800 transition-colors">
                             <FileText className="w-4 h-4 text-purple-400" /> Lihat Rekap AI
                           </button>
@@ -1204,26 +1236,40 @@ const ChatManagement = () => {
                 </div>
               </div>
 
-              {/* Messages */}
-              <div
-                ref={messagesContainerRef}
-                onScroll={handleMessagesScroll}
-                className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-6 space-y-6"
-              >
-                {/* Loading indicator untuk older messages (infinite scroll ke atas) */}
-                {loadingOlder && (
-                  <div className="flex justify-center py-3">
-                    <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-                  </div>
-                )}
+              {/* Messages Area (Virtuoso) */}
+              <div className="flex-1 bg-transparent px-2 md:px-6 py-2">
                 {loadingMessages ? (
                   <div className="flex justify-center h-full items-center">
                     <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
                   </div>
                 ) : (
-                  messages.map(renderMessage)
+                  <Virtuoso
+                    className="h-full custom-scrollbar"
+                    data={messages}
+                    firstItemIndex={firstItemIndex}
+                    initialTopMostItemIndex={messages.length > 0 ? messages.length - 1 + firstItemIndex : 0}
+                    startReached={() => {
+                      if (hasMoreMessages && !loadingOlder) {
+                        loadOlderMessages();
+                      }
+                    }}
+                    components={{
+                      Header: () => loadingOlder ? (
+                        <div className="flex justify-center py-3">
+                          <div className="w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                        </div>
+                      ) : <div className="h-4" />,
+                      Footer: () => <div className="h-4" />
+                    }}
+                    itemContent={(_, msg) => (
+                       <div className="py-1">
+                          {renderMessage(msg)}
+                       </div>
+                    )}
+                    followOutput="smooth"
+                    alignToBottom
+                  />
                 )}
-                <div ref={messagesEndRef} />
               </div>
 
               {/* Reply banner */}

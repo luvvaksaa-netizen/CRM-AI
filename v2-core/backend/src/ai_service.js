@@ -20,7 +20,10 @@ const { getSendableMedia, getKnowledgeMedia } = require('./services/media.servic
 const { MediaAsset } = require('./models/index');
 const { logRequest } = require('./services/costTracker');
 
-const openai = new OpenAI({ apiKey: config.OPENAI_API_KEY });
+const openai = new OpenAI({ 
+    apiKey: process.env.DEEPSEEK_API_KEY || config.OPENAI_API_KEY,
+    baseURL: 'https://api.deepseek.com/v1'
+});
 const { buildLearningPromptSection } = require('./services/learning_service');
 const LEGACY_XENDIT_ENABLED = process.env.ENABLE_LEGACY_XENDIT === 'true';
 
@@ -287,9 +290,9 @@ function prepareOutboundBubbles(text) {
         .map(part => part.trim())
         .filter(Boolean);
 
-    // HARD CAP: Maksimal 2 bubble per respons untuk mencegah spam.
-    // CS manusia hanya balas 1-2 bubble per giliran, bot harus sama.
-    const MAX_BUBBLES = 2;
+    // HARD CAP: Diperlonggar ke 6 bubble per respons agar bot 
+    // bisa mengirim pesan pendek-pendek (sesuai Master Prompt).
+    const MAX_BUBBLES = 6;
     if (rawBubbles.length <= MAX_BUBBLES) {
         return rawBubbles;
     }
@@ -439,9 +442,10 @@ async function _runInspectorValidation(content, kind) {
                         'Field yang WAJIB ada dan terisi (bukan placeholder, bukan kosong, bukan "[...]"):',
                         schemaText,
                         '',
-                        'ATURAN KEPUTUSAN:',
-                        '- valid: true  → Semua field wajib terisi dengan data nyata, tanpa placeholder.',
-                        '- valid: false → Ada 1 atau lebih field yang kosong, berisi placeholder [...], atau data tidak masuk akal.',
+                        'ATURAN KEPUTUSAN (SANGAT KETAT):',
+                        '- valid: true  → SEMUA field wajib terisi dengan data nyata hasil diskusi dengan pelanggan, tanpa ada satupun placeholder.',
+                        '- valid: false → Ada 1 atau lebih field yang kosong, berisi placeholder seperti "[...]", "belum diisi", "TBA", atau data tidak masuk akal.',
+                        '- valid: false → Metode pembayaran HARUS jelas antara Transfer atau COD. Jika UNKNOWN atau belum dipilih, maka TIDAK VALID.',
                         '',
                         'Kembalikan HANYA JSON: { "valid": true/false, "missing": "Daftar field yang kurang, pisahkan koma" }',
                         'Jika valid=true, missing boleh dikosongkan.',
@@ -604,7 +608,7 @@ async function _processAIResponse(userMessage, history = [], store = null, agent
             `7. PANDUAN KOMUNIKASI PEMBAYARAN (SOPAN, TIDAK MEMAKSA): DEFAULT arahkan ke Transfer dengan ramah. Jelaskan benefit transfer: pengerjaan & pengiriman diprioritaskan. Jika customer bertanya atau memilih COD, jawab BISA dan layani — JANGAN menolak COD. JANGAN memaksa transfer. Kasih value, bukan ultimatum. JANGAN menyebut COD duluan di opening.`,
             `8. DILARANG KERAS MEMBUAT JANJI PALSU / MENGARANG BENEFIT (ANTI-HALUSINASI). Kamu DILARANG: membuat janji gratis ongkir, diskon fiktif, bonus tambahan, hadiah gratis, garansi palsu, cashback, free sample, atau benefit apapun yang TIDAK TERTULIS di product knowledge. HANYA benefit yang benar-benar ada boleh disebutkan: subsidi bundling Rp 20.000 (KHUSUS BTS), diskon transfer Rp 3.000, prioritas pengerjaan & pengiriman untuk transfer.`,
             `9. DILARANG mengarang data customer (nama, alamat, nomor, ongkir, dll).`,
-            `10. DILARANG membuat lebih dari 2 bubble per respons — rekap adalah pengecualian satu-satunya.`,
+            `10. PENTING: Dilarang keras membalas dalam satu paragraf panjang! Pecah jawabanmu menjadi kalimat-kalimat pendek. Gunakan ENTER GANDA (\\n\\n) untuk memisahkan setiap kalimat agar terkirim sebagai chat bubble yang terpisah.`,
             `11. Label HANYA boleh ditambahkan via tool tambahkan_label_chat dengan label yang tersedia.`,
             `12. matikan_bot_kontak HANYA untuk kasus di luar kemampuan bot (komplain berat, produk tak dikenal, dll).`,
             `    JANGAN matikan bot setelah Closing — obrolan selesai secara natural.`,
@@ -1207,6 +1211,74 @@ CATATAN: Gunakan data dari rekap pesanan. Isi semua field seakurat mungkin.`,
                                 tool_call_id: toolCall.id, role: 'tool',
                                 name: 'buat_order_scalev',
                                 content: `Sistem pembayaran sementara tidak tersedia. Minta customer transfer manual ke rekening toko (ambil dari product knowledge). Sampaikan dengan ramah.`
+                            });
+                            needsSecondCall = true;
+                        }
+                    }
+
+                    // ── TOOL BARU: Buat Resi Mengantar ──
+                    if (toolCall.function.name === 'buat_resi_mengantar') {
+                        try {
+                            const args = JSON.parse(toolCall.function.arguments || '{}');
+                            const orderParams = {
+                                customerName: String(args.customer_name || '').trim(),
+                                customerPhone: String(args.customer_phone || '').trim(),
+                                customerAddress: String(args.customer_address || '').trim(),
+                                destinationKeyword: String(args.destination_keyword || '').trim(),
+                                parcelContent: String(args.parcel_content || '').trim(),
+                                weight: Number(args.weight) || 1,
+                                quantity: Number(args.quantity) || 1,
+                                goodsValue: Number(args.goods_value) || 0,
+                                courier: args.courier || 'JT'
+                            };
+
+                            const resiResult = await mengantarService.createOrder(orderParams);
+
+                            if (resiResult?.success && resiResult?.cnote_no) {
+                                messages.push({
+                                    tool_call_id: toolCall.id, role: 'tool',
+                                    name: 'buat_resi_mengantar',
+                                    content: `Nomor resi ${resiResult.cnote_no} berhasil dibuat via kurir ${resiResult.courier}. Sistem sudah otomatis mengirimkan notifikasi resi ke customer. Sampaikan terima kasih secara ramah.`
+                                });
+                                
+                                // Kirim notifikasi resi langsung ke customer via WhatsApp
+                                try {
+                                    const explicitContactId = args.contact_id || null;
+                                    const contactIdForResi = explicitContactId || customerPhone || null;
+                                    const explicitStoreWaId = args.store_wa_id || null;
+                                    const storeWaIdForResi = explicitStoreWaId || store?.wa_id || store?.id?.toString() || null;
+                                    
+                                    if (storeWaIdForResi && contactIdForResi) {
+                                        const waSvc = require('./whatsapp_service');
+                                        const client = waSvc.getActiveClient ? waSvc.getActiveClient(storeWaIdForResi) : null;
+                                        if (client) {
+                                            const { assertWaChatId } = require('./utils/wa_id');
+                                            const targetChatId = assertWaChatId(contactIdForResi);
+                                            const resiMsg = mengantarService.formatResiMessage(resiResult);
+                                            await client.sendMessage(targetChatId, resiMsg);
+                                            logger.info(`[AI] ✅ Notifikasi resi terkirim ke ${contactIdForResi}`);
+                                        }
+                                    }
+                                } catch (waErr) {
+                                    logger.error(`[AI] Gagal kirim notif resi ke WA: ${waErr.message}`);
+                                }
+
+                            } else {
+                                const errorMsg = resiResult?.error || 'Unknown error';
+                                logger.warn(`[AI] Gagal buat resi: ${errorMsg}`);
+                                messages.push({
+                                    tool_call_id: toolCall.id, role: 'tool',
+                                    name: 'buat_resi_mengantar',
+                                    content: `Pembuatan resi gagal: ${errorMsg}. Sampaikan ke customer bahwa ada kendala teknis dari server pengiriman dan resi akan dikirim menyusul.`
+                                });
+                            }
+                            needsSecondCall = true;
+                        } catch (resiToolErr) {
+                            logger.error(`[AI] buat_resi_mengantar error: ${resiToolErr.message}`);
+                            messages.push({
+                                tool_call_id: toolCall.id, role: 'tool',
+                                name: 'buat_resi_mengantar',
+                                content: `Sistem pengiriman sedang sibuk. Sampaikan secara ramah bahwa resi akan dikirim manual nanti.`
                             });
                             needsSecondCall = true;
                         }

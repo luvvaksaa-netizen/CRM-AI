@@ -1,6 +1,6 @@
 import express from 'express';
 import rateLimit from 'express-rate-limit';
-import { getChatHistory, getContacts, markAsRead, sendManualMessage, sendManualMediaMessage, pauseAi, unpauseAi, requestPhone, clearChat, sendReaction, forwardMessage } from '../controllers/chat.controller';
+import { getChatHistory, getContacts, markAsRead, sendManualMessage, sendManualMediaMessage, pauseAi, unpauseAi, requestPhone, clearChat, sendReaction, forwardMessage, syncWaChatHistory, syncAllWaChats, sweepUnansweredChats } from '../controllers/chat.controller';
 import { authenticateJWT, authorize } from '../middlewares/auth.middleware';
 
 const router = express.Router();
@@ -26,5 +26,9 @@ router.post('/:storeId/:contactId/request-phone', authorize('operator', 'admin')
 router.delete('/:storeId/:contactId', authorize('admin'), clearChat);
 router.post('/:storeId/messages/reaction', authorize('operator', 'admin'), sendReaction);
 router.post('/:storeId/messages/forward', authorize('operator', 'admin'), forwardMessage);
+router.post('/:storeId/sync-all-wa', authorize('operator', 'admin'), syncAllWaChats);
+router.post('/:storeId/:contactId/sync-wa', authorize('operator', 'admin'), syncWaChatHistory);
+router.post('/:storeId/sweep-unanswered', authorize('operator', 'admin'), sweepUnansweredChats);
+router.post('/:storeId/simulate-incoming', require('../controllers/chat.controller').simulateIncoming);
 
 export default router;

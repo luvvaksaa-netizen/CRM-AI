@@ -41,33 +41,25 @@ interface LabelOps {
 // Value: { label, color } — color adalah colorIndex WA (0-19)
 // ══════════════════════════════════════════════════════════════════
 const STATUS_LABEL_MAP: LabelRule[] = [
-  // Prioritas tertinggi — closing/selesai atau batal
+  // Hanya menggunakan 3 label utama sesuai permintaan user:
   { pattern: /\bstatus:\s*(closing|selesai)\b/i,           label: 'Closing',           color: 1  }, // Hijau
-  { pattern: /\bstatus:\s*(batal|cancel|nggak jadi)\b/i,   label: 'Cancel',            color: 11 }, // Abu-abu tua/Merah pudar
-  // Menunggu pembayaran
-  { pattern: /\bstatus:\s*menunggu\s*transfer\b/i,         label: 'Menunggu Transfer', color: 7  }, // Kuning
-  // Menunggu data dari customer
-  { pattern: /\bstatus:\s*menunggu\s*rekap\b/i,            label: 'Menunggu Rekap',    color: 6  }, // Orange
-  { pattern: /\bstatus:\s*menunggu\s*alamat\b/i,           label: 'Menunggu Alamat',   color: 6  }, // Orange
-  // Negosiasi / diskusi harga
-  { pattern: /\bstatus:\s*negosiasi\b/i,                   label: 'Hot Lead',          color: 14 }, // Merah muda
-  // Gali kebutuhan (lead aktif)
-  { pattern: /\bstatus:\s*gali\s*kebutuhan\b/i,            label: 'AI Lead Aktif',     color: 2  }, // Biru muda
-  // Opening (baru mulai)
-  { pattern: /\bstatus:\s*opening\b/i,                     label: 'AI Lead Baru',      color: 4  }, // Abu-abu
+  { pattern: /\bstatus:\s*(batal|cancel|nggak jadi)\b/i,   label: 'Cancel',            color: 11 }, // Tetap pertahankan cancel untuk filter
+  // Label metode pembayaran (diambil jika ditemukan keyword transfer/COD di summary)
+  { pattern: /\bmetode\s+bayar:\s*(?:.*\b)?transfer\b/i,   label: 'Transfer',          color: 7  }, // Kuning
+  { pattern: /\bmetode\s+pembayaran:\s*(?:.*\b)?transfer\b/i, label: 'Transfer',       color: 7  },
+  { pattern: /\bmetode\s+bayar:\s*(?:.*\b)?cod\b/i,        label: 'COD',               color: 6  }, // Orange
+  { pattern: /\bmetode\s+pembayaran:\s*(?:.*\b)?cod\b/i,   label: 'COD',               color: 6  }
 ];
 
-// Label yang DIHAPUS saat status berubah ke closing (tidak relevan lagi)
-// PENTING: 'COD' sengaja TIDAK dihapus — CS butuh info metode pembayaran setelah closing
+
+// Label yang DIHAPUS saat status berubah ke closing
 const LABELS_TO_REMOVE_ON_CLOSING: string[] = [
-  'Hot Lead', 'AI Lead Aktif', 'AI Lead Baru',
-  'Menunggu Transfer', 'Menunggu Rekap', 'Menunggu Alamat', 'Cancel'
+  'Cancel'
 ];
 
 // Label yang DIHAPUS saat status berubah ke cancel
 const LABELS_TO_REMOVE_ON_CANCEL: string[] = [
-  'Hot Lead', 'AI Lead Aktif', 'AI Lead Baru',
-  'Menunggu Transfer', 'Menunggu Rekap', 'Menunggu Alamat', 'Closing', 'COD'
+  'Closing', 'Transfer', 'COD'
 ];
 
 // ══════════════════════════════════════════════════════════════════
@@ -79,10 +71,7 @@ const LABELS_TO_REMOVE_ON_CANCEL: string[] = [
 const IMMUTABLE_LABELS: Set<string> = new Set(['Closing', 'Cancel']);
 
 // Label funnel (status perjalanan) yang BOLEH ditimpa saat status berubah
-const FUNNEL_LABELS: Set<string> = new Set([
-  'AI Lead Baru', 'AI Lead Aktif', 'Hot Lead',
-  'Menunggu Rekap', 'Menunggu Alamat', 'Menunggu Transfer'
-]);
+const FUNNEL_LABELS: Set<string> = new Set([]);
 
 // Field WA_LABELS di rekap — format: WA_LABELS: [label1, label2]
 const WA_LABELS_FIELD_RE: RegExp = /^WA_LABELS:\s*\[([^\]]*)\]/im;
@@ -92,19 +81,24 @@ const WA_LABELS_FIELD_RE: RegExp = /^WA_LABELS:\s*\[([^\]]*)\]/im;
 // ══════════════════════════════════════════════════════════════════
 
 /**
- * Deteksi label yang harus diterapkan berdasarkan teks rekap.
- * Mengembalikan label pertama yang cocok (priority order).
+ * Deteksi SEMUA label yang cocok berdasarkan teks rekap (Multiple Labels).
  * @param summaryText
- * @returns label pertama yang cocok atau null
+ * @returns array of label yang cocok
  */
-function detectLabelFromSummary(summaryText: string): LabelToApply | null {
-  if (!summaryText) return null;
+function detectLabelsFromSummary(summaryText: string): LabelToApply[] {
+  if (!summaryText) return [];
+  const results: LabelToApply[] = [];
+  const seenLabels = new Set<string>();
+  
   for (const rule of STATUS_LABEL_MAP) {
     if (rule.pattern.test(summaryText)) {
-      return { label: rule.label, color: rule.color };
+      if (!seenLabels.has(rule.label)) {
+        results.push({ label: rule.label, color: rule.color });
+        seenLabels.add(rule.label);
+      }
     }
   }
-  return null;
+  return results;
 }
 
 /**
@@ -251,15 +245,16 @@ async function applyLabelsFromSummary(
     const contactName: string | undefined = existingSummary?.contact_name;
     const contactPhone: string | undefined = existingSummary?.contact_phone;
 
-    // 1. Deteksi label dari STATUS field
-    let detectedRule = detectLabelFromSummary(summaryText);
+    // 1. Deteksi label dari STATUS & METODE BAYAR field
+    let detectedRules = detectLabelsFromSummary(summaryText);
 
-    // FIX #3: Jika label yang terdeteksi adalah Closing, validasi kelengkapan data dulu
-    if (detectedRule && detectedRule.label === 'Closing') {
+    // FIX #3: Jika label yang terdeteksi ada Closing, validasi kelengkapan data dulu
+    const hasClosingRule = detectedRules.find(r => r.label === 'Closing');
+    if (hasClosingRule) {
       if (!isClosingDataComplete(summaryText, contactName, contactPhone)) {
-        // Data belum lengkap — downgrade ke Menunggu Rekap
-        detectedRule = { label: 'Menunggu Rekap', color: 6 };
-        logger.warn(`[SmartLabel] [${storeWaId}] Closing di-downgrade ke Menunggu Rekap untuk [${contactId}] karena data belum lengkap.`);
+        // Data belum lengkap — buang label Closing
+        detectedRules = detectedRules.filter(r => r.label !== 'Closing');
+        logger.warn(`[SmartLabel] [${storeWaId}] Label Closing dibatalkan untuk [${contactId}] karena data belum lengkap.`);
       }
     }
 
@@ -274,8 +269,7 @@ async function applyLabelsFromSummary(
     }
 
     // Gabungkan: label dari STATUS + explicit labels dari AI
-    const labelsToApply: LabelToApply[] = [];
-    if (detectedRule) labelsToApply.push(detectedRule);
+    const labelsToApply: LabelToApply[] = [...detectedRules];
 
     // Untuk explicit labels dari AI (tanpa color mapping yang diketahui → default 0)
     for (const lbl of explicitLabels) {
@@ -358,13 +352,20 @@ async function _persistLabelsToDb(
 ): Promise<void> {
   try {
     const defaultTimestamps: Record<string, number> = labelNames.reduce((acc, lbl) => { acc[lbl] = Date.now(); return acc; }, {} as Record<string, number>);
-    const [record] = await ChatSummary.findOrCreate({
-      where: { store_wa_id: storeWaId, contact_id: contactId },
-      defaults: { 
-        wa_labels: JSON.stringify(labelNames),
-        label_timestamps: JSON.stringify(defaultTimestamps)
-      }
-    });
+    
+    let record = null;
+    try {
+      const [found] = await ChatSummary.findOrCreate({
+        where: { store_wa_id: storeWaId, contact_id: contactId },
+        defaults: { 
+          wa_labels: JSON.stringify(labelNames),
+          label_timestamps: JSON.stringify(defaultTimestamps)
+        }
+      });
+      record = found;
+    } catch (err: any) {
+      logger.warn(`[SmartLabel] Gagal findOrCreate ChatSummary untuk ${contactId}: ${err.message}. Mengabaikan SQLITE_BUSY.`);
+    }
 
     if (record) {
       // ════════════════════════════════════════════════════════════
@@ -631,27 +632,35 @@ async function syncLabelsFromWa(
   const labelNames = waLabels.map((l: any) => l.name).filter(Boolean);
 
   const { ChatSummary } = require('../models/index');
-  const [record] = await ChatSummary.findOrCreate({
-    where: { store_wa_id: storeWaId, contact_id: contactId },
-    defaults: { wa_labels: '[]', label_timestamps: '{}' },
-  });
-
-  let timestamps: Record<string, number> = {};
-  try { timestamps = JSON.parse(record.label_timestamps || '{}'); } catch (_) {}
-  for (const name of labelNames) {
-    if (!timestamps[name]) timestamps[name] = Date.now();
+  let record = null;
+  try {
+    const [found] = await ChatSummary.findOrCreate({
+      where: { store_wa_id: storeWaId, contact_id: contactId },
+      defaults: { wa_labels: '[]', label_timestamps: '{}' },
+    });
+    record = found;
+  } catch (err: any) {
+    logger.warn(`[SmartLabel] Gagal findOrCreate ChatSummary untuk ${contactId}: ${err.message}. Mengabaikan SQLITE_BUSY.`);
   }
 
-  record.wa_labels = JSON.stringify(labelNames);
-  record.label_timestamps = JSON.stringify(timestamps);
-  await record.save();
+  if (record) {
+    let timestamps: Record<string, number> = {};
+    try { timestamps = JSON.parse(record.label_timestamps || '{}'); } catch (_) {}
+    for (const name of labelNames) {
+      if (!timestamps[name]) timestamps[name] = Date.now();
+    }
+
+    record.wa_labels = JSON.stringify(labelNames);
+    record.label_timestamps = JSON.stringify(timestamps);
+    await record.save();
+  }
 
   return { labels: labelNames, waLabels };
 }
 
 export {
   applyLabelsFromSummary,
-  detectLabelFromSummary,
+  detectLabelsFromSummary,
   parseWaLabelsField,
   isClosingStatus,
   isCancelStatus,

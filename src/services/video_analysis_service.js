@@ -33,7 +33,6 @@ const openai = new OpenAI({
   timeout: TRANSCRIPTION_TIMEOUT_MS,
   maxRetries: 0
 });
-const groqManager = require('../utils/groq_manager');
 
 // Format video yang didukung Whisper untuk transkripsi
 const WHISPER_SUPPORTED = ['.mp4', '.mov', '.avi', '.mkv', '.m4a', '.mp3', '.wav', '.webm', '.3gp'];
@@ -117,25 +116,12 @@ async function transcribeFileWithRetry(filePath) {
 
       const payload = {
         file: fs.createReadStream(filePath),
-        model: config.GROQ_MODEL_AUDIO,
+        model: 'whisper-1',
         language: 'id',
         response_format: 'text'
       };
 
-      let transcription;
-      try {
-          transcription = await groqManager.executeWithRotation(async (client) => {
-              return await client.audio.transcriptions.create(payload);
-          });
-      } catch (err) {
-          if (err.message === "GROQ_ALL_KEYS_EXHAUSTED" || err.message === "GROQ_UNAVAILABLE") {
-              logger.warn("[Whisper] Groq tidak tersedia, fallback ke OpenAI...");
-              payload.model = 'whisper-1';
-              transcription = await openai.audio.transcriptions.create(payload, { timeout: TRANSCRIPTION_TIMEOUT_MS });
-          } else {
-              throw err;
-          }
-      }
+      let transcription = await openai.audio.transcriptions.create(payload, { timeout: TRANSCRIPTION_TIMEOUT_MS });
 
       return typeof transcription === 'string'
         ? transcription.trim()

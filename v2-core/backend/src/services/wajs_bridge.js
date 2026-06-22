@@ -464,7 +464,7 @@ async function getChats(client, storeWaId = 'default') {
       throw new Error('WPP.chat.list/getChats tidak tersedia.');
     }
     const chats = window.WPP.chat.list
-      ? await window.WPP.chat.list({ count: 50, onlyUsers: true, ignoreGroupMetadata: true })
+      ? await window.WPP.chat.list({ count: 9999, onlyUsers: true, ignoreGroupMetadata: true })
       : await window.WPP.chat.getChats();
 
     const safeGet = (fn, fallback = null) => {

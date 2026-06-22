@@ -79,7 +79,7 @@ const Dashboard = () => {
   // Show per-store table
   const [showPerStore, setShowPerStore] = useState(false);
 
-  // OpenAI Billing state
+  // AI Billing state
   const [billingConfig, setBillingConfig] = useState<any>(null);
   const [billingLoading, setBillingLoading] = useState(false);
   const [billingFetching, setBillingFetching] = useState(false);
@@ -390,7 +390,7 @@ const Dashboard = () => {
         </motion.div>
       </div>
 
-      {/* OpenAI Billing Widget */}
+      {/* AI Billing Widget */}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -400,7 +400,7 @@ const Dashboard = () => {
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-bold text-white dark:text-slate-900 flex items-center gap-2">
             <DollarSign className="w-5 h-5 text-emerald-400" />
-            OpenAI Usage
+            AI Usage (DeepSeek & OpenAI)
           </h3>
           <div className="flex items-center gap-2">
             <span className="text-xs text-slate-500">
@@ -484,8 +484,8 @@ const Dashboard = () => {
         ) : (
           <div className="flex flex-col items-center justify-center py-6 text-slate-500">
             <AlertTriangle className="w-8 h-8 mb-2 text-amber-400" />
-            <p className="text-sm">OpenAI API Key belum dikonfigurasi</p>
-            <p className="text-xs mt-1">Set OPENAI_API_KEY di .env agar tracking biaya berjalan</p>
+            <p className="text-sm">API Key belum dikonfigurasi</p>
+            <p className="text-xs mt-1">Set DEEPSEEK_API_KEY atau OPENAI_API_KEY di .env agar tracking biaya berjalan</p>
           </div>
         )}
       </motion.div>

@@ -1,0 +1,14 @@
+{
+  "watch": ["src"],
+  "ext": "ts",
+  "ignore": [
+    "src/**/*.spec.ts",
+    "src/**/*.test.ts",
+    "../.wwebjs_auth/**/*",
+    "../data/**/*",
+    "../logs/**/*",
+    "*.sqlite",
+    "*.sqlite-journal"
+  ],
+  "exec": "ts-node src/app.ts"
+}

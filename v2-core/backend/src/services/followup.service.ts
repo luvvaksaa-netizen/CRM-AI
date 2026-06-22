@@ -213,10 +213,18 @@ async function executeFollowUp(followUp: any): Promise<void> {
   // 6. Generate pesan lewat AI
   const aiService = require('../ai_service');
   const productKnowledge = store.BotAgent?.product_knowledge || '';
+  
+  // Cart Abandonment Recovery Logic
+  let finalInstruction = template.ai_instruction;
+  const summaryLower = (followUp.last_chat_context || '').toLowerCase();
+  if (summaryLower.includes('menunggu transfer') || summaryLower.includes('belum bayar') || summaryLower.includes('pending payment') || summaryLower.includes('qris')) {
+      finalInstruction = "Pelanggan sudah dikirimkan tagihan/QRIS tapi belum bayar. Sapa dengan ramah, tanyakan apakah ada kendala dalam proses transfer atau barangkali lupa mengirimkan bukti transfer. Tekankan untuk segera menyelesaikan pembayaran.";
+  }
+
   const personalizedCopy = await aiService.generateOrganicFollowUp(
     customerName,
     followUp.last_chat_context,
-    template.ai_instruction,
+    finalInstruction,
     productKnowledge
   );
 

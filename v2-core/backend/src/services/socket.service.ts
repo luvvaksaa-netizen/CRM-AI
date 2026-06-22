@@ -148,6 +148,10 @@ class SocketService {
   emitSysLog(log: { type: string; msg: string; time: string }): void {
     this.io?.emit('sysLog', log);
   }
+
+  emitSyncProgress(storeId: string, payload: any): void {
+    this.io?.emit('sync_progress', { storeId, ...payload });
+  }
 }
 
 export const socketService = new SocketService();

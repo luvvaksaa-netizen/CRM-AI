@@ -7,7 +7,7 @@ const { getAIResponse } = require('../src/ai_service');
 const logger = require('../src/utils/logger');
 
 async function testAI() {
-    logger.info('Mengetes koneksi ke Gemini AI...');
+    logger.info('Mengetes koneksi ke DeepSeek/OpenAI AI...');
     try {
         const response = await getAIResponse('Halo, apakah kamu bisa membantu saya?');
         logger.success('Respons dari AI diterima:');

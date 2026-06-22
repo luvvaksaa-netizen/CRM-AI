@@ -339,3 +339,74 @@ export const forwardMessage = async (req: Request, res: Response, next: NextFunc
     next(e);
   }
 };
+
+export const syncWaChatHistory = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { storeId, contactId } = req.params;
+    const { limit = 50 } = req.body;
+    const wserv = require('../whatsapp_service');
+    const result = await wserv.syncMessagesFromWa(storeId, contactId, limit);
+    res.json(result);
+  } catch (e: any) {
+    res.status(500).json({ success: false, message: e.message || 'Gagal sinkronisasi chat' });
+  }
+};
+
+export const syncAllWaChats = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { storeId } = req.params;
+    const wserv = require('../whatsapp_service');
+    const result = await wserv.syncAllChatsFromWa(storeId);
+    res.json(result);
+  } catch (e: any) {
+    res.status(500).json({ success: false, message: e.message || 'Gagal sinkronisasi semua chat' });
+  }
+};
+
+export const sweepUnansweredChats = async (req: Request, res: Response) => {
+  try {
+    const { storeId } = req.params;
+    if (!storeId) {
+      return res.status(400).json({ success: false, message: 'Store ID diperlukan' });
+    }
+    const message_handler = require('../events/message_handler');
+    // Jalankan di background agar tidak memblokir HTTP request
+    message_handler.sweepUnansweredChats(storeId).catch((err: any) => {
+      console.error('Error sweepUnansweredChats bg:', err);
+    });
+    res.json({ success: true, message: 'Proses Sapu Bersih dimulai di background' });
+  } catch (e: any) {
+    res.status(500).json({ success: false, message: e.message || 'Gagal memulai sapu bersih' });
+  }
+};
+
+export const simulateIncoming = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { storeId } = req.params;
+    const { contactId, body } = req.body;
+    const message_handler = require('../events/message_handler');
+    const mockMessage = {
+      id: { _serialized: 'msg_' + Date.now(), id: 'msg_' + Date.now() },
+      from: contactId,
+      to: storeId,
+      body: body,
+      type: 'chat',
+      isStatus: false,
+      timestamp: Math.floor(Date.now() / 1000),
+      hasMedia: false,
+      author: null,
+      getContact: async () => ({
+        id: { _serialized: contactId },
+        name: 'Test E2E Buyer',
+        number: contactId.split('@')[0],
+        isMyContact: false,
+        isBusiness: false,
+        isEnterprise: false
+      })
+    };
+    await message_handler.handleMessage(mockMessage, storeId, true);
+    res.json({ success: true, message: 'Simulated incoming message injected successfully' });
+  } catch (err) {
+    next(err);
+  }
+};

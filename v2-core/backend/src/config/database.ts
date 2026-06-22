@@ -36,13 +36,9 @@ export const initDB = async () => {
     console.log(`[Database] Terhubung ke legacy database di ${dbPath} (WAL mode aktif)`);
 
     // Explicit periodic WAL checkpoint to prevent file bloat (SQLITE_BUSY mitigation)
-    setInterval(async () => {
-      try {
-        await sequelize.query('PRAGMA wal_checkpoint(TRUNCATE);');
-      } catch (e: any) {
-        console.error('[Database] Periodic WAL Checkpoint failed:', e.message);
-      }
-    }, 5 * 60 * 1000); // 5 minutes
+    // Dihapus karena wal_checkpoint(TRUNCATE) melakukan exclusive lock yang memblokir
+    // koneksi dan malah menyebabkan SQLITE_BUSY secara berkala. SQLite wal_autocheckpoint 
+    // sudah cukup untuk mencegah file bloat secara aman.
 
     
     // JANGAN sync({ force: true }) — akan menghapus semua data produksi!

@@ -29,10 +29,10 @@ try {
   rateLimit = null;
 }
 
-// General API rate limiter: 100 requests per 15 menit per IP
+// General API rate limiter: 3000 requests per 15 menit per IP (Ditingkatkan untuk real-time chat)
 const apiLimiter = rateLimit ? rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 3000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Terlalu banyak request. Coba lagi dalam 15 menit.' }
@@ -47,7 +47,8 @@ const authLimiter = rateLimit ? rateLimit({
   message: { error: 'Terlalu banyak percobaan login. Coba lagi dalam 15 menit.' }
 }) : (req: any, res: any, next: any) => next();
 
-// Helmet with production-ready CSP
+// Apply global middlewares
+app.use(cors({ origin: allowedOrigins }));
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" }, // allow frontend to load upload images from backend
   contentSecurityPolicy: {
@@ -64,7 +65,6 @@ app.use(helmet({
 // Apply rate limiters
 app.use('/api/', apiLimiter);
 app.use('/api/auth/login', authLimiter);
-app.use(cors({ origin: allowedOrigins }));
 app.use(express.json({ limit: '10mb' })); // limit JSON body size
 
 // Security headers

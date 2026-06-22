@@ -31,7 +31,10 @@ api.interceptors.response.use(
         error.config._retryCount = retryCount + 1;
         // Coba dapatkan token dari localStorage sebagai fallback
         const localToken = localStorage.getItem('crm_token');
-        if (localToken) {
+        const currentToken = error.config?.headers?.Authorization?.toString().replace('Bearer ', '') || '';
+        
+        // Hanya retry jika token di localStorage BEDA dengan token yang baru saja gagal (mencegah infinite loop axios)
+        if (localToken && localToken !== currentToken) {
           error.config.headers.Authorization = `Bearer ${localToken}`;
           return api(error.config);
         }
