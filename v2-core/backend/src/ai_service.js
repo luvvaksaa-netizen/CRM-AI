@@ -380,7 +380,7 @@ async function _runInspectorValidation(content, kind) {
     const RECAP_PATTERN = /rekap\s+pesanan|nama\s+cetak\s*:|total\s+pesanan\s*:|metode\s+pembayaran\s*:/i;
     if (!RECAP_PATTERN.test(content)) return { valid: true };
 
-    const modelName = config.MODEL_NAME || 'gpt-4o-mini';
+    const modelName = config.MODEL_NAME;
 
     // Schema validasi per produk — bisa diperluas tanpa ubah kode
     const PRODUCT_SCHEMAS = {
@@ -490,7 +490,7 @@ async function _processAIResponse(userMessage, history = [], store = null, agent
         const rawSysPrompt = agent?.system_prompt || store?.system_prompt || 'Anda adalah admin CS yang ramah.';
         const sysPrompt = rawSysPrompt.replace(/\{BOT_NAME\}/gi, botName);
         const knowledge = agent?.product_knowledge || store?.product_knowledge || 'Kami melayani pembuatan barang berkualitas.';
-        const modelName = config.MODEL_NAME || 'gpt-4o-mini';
+        const modelName = config.MODEL_NAME;
         const agentId   = agent?.id || null;
         const configuredLabels = parseAutoLabels(agent?.auto_labels);
 
@@ -1736,7 +1736,7 @@ async function generateChatSummary(history = []) {
         ).join('\n');
 
         const response = await openai.chat.completions.create({
-            model: config.MODEL_NAME || "gpt-4o-mini",
+            model: config.MODEL_NAME,
             messages: [
                 { role: "system", content: `Tugasmu membuat REKAP DATA CUSTOMER dalam format KEY-VALUE yang terstruktur.
 Ekstrak SEMUA informasi yang sudah disebutkan customer dari riwayat chat.
@@ -1799,7 +1799,7 @@ ATURAN UPSELLING_TERKIRIM:
         // Track cost for summary
         if (response && response.usage) {
             logRequest({
-                model: config.MODEL_NAME || "gpt-4o-mini",
+                model: config.MODEL_NAME,
                 promptTokens: response.usage.prompt_tokens,
                 completionTokens: response.usage.completion_tokens,
                 endpoint: 'chat',
