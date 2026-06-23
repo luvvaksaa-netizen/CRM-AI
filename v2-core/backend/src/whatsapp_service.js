@@ -955,11 +955,15 @@ async function syncMessagesFromWa(storeWaId, contactId, limit = 50) {
             // Mapping format message dari wajs_bridge.js ke format addToChatHistory
             const msgData = {
                 wa_message_id: msg.id?._serialized || msg.id,
-                from: msg.fromMe ? storeWaId : msg.author || msg.from,
+                from: targetChatId, // Selalu gunakan targetChatId agar masuk ke riwayat obrolan pelanggan yang benar
                 to: msg.to,
                 body: msg.body || '',
                 isMe: msg.fromMe,
-                timestamp: msg.timestamp ? new Date(msg.timestamp * 1000) : new Date(),
+                timestamp: (() => {
+                    if (!msg.timestamp) return new Date();
+                    // Jika angkanya terlalu besar, berarti sudah ms, jika tidak berarti s (detik)
+                    return msg.timestamp > 1e11 ? new Date(msg.timestamp) : new Date(msg.timestamp * 1000);
+                })(),
                 sender_name: msg.fromMe ? 'Owner/CS (dari HP)' : '',
                 quoted_message_id: msg.quotedMsgId || null,
                 quoted_body: msg.quotedBody || null,
@@ -1029,11 +1033,14 @@ async function syncAllChatsFromWa(storeWaId) {
                         for (const msg of messages) {
                             const msgData = {
                                 wa_message_id: msg.id?._serialized || msg.id,
-                                from: msg.fromMe ? storeWaId : msg.author || msg.from,
+                                from: chat.id._serialized, // Selalu gunakan ID pelanggan
                                 to: msg.to,
                                 body: msg.body || '',
                                 isMe: msg.fromMe,
-                                timestamp: msg.timestamp ? new Date(msg.timestamp * 1000) : new Date(),
+                                timestamp: (() => {
+                                    if (!msg.timestamp) return new Date();
+                                    return msg.timestamp > 1e11 ? new Date(msg.timestamp) : new Date(msg.timestamp * 1000);
+                                })(),
                                 sender_name: msg.fromMe ? 'Owner/CS (dari HP)' : chat.name || '',
                                 quoted_message_id: msg.quotedMsgId || null,
                                 quoted_body: msg.quotedBody || null,
