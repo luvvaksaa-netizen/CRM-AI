@@ -54,7 +54,7 @@ class SocketService {
     }
 
     this.socket = io(WS_URL, {
-      transports: ['polling', 'websocket'],
+      transports: ['polling'], // WebSocket dinonaktifkan — Cloudflare Tunnel blok upgrade
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,

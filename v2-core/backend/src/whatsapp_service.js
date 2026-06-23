@@ -570,6 +570,50 @@ function setupEventListeners(client, storeWaId, io) {
         }, 1500); // Tutup setTimeout
     });
 
+    // ─── Read Receipts (message_ack) ──────────────────────────────
+    // Tangkap status centang WhatsApp: 0=pending, 1=server, 2=delivered, 3=read
+    client.on('message_ack', async (msg, ack) => {
+        try {
+            const msgId = msg?.id?._serialized || msg?.id?.id;
+            if (!msgId) return;
+            // Update is_read di database
+            const { ChatMessage } = require('./models/index');
+            if (ack >= 2) {
+                await ChatMessage.update(
+                    { is_read: ack >= 3 },
+                    { where: { wa_message_id: msgId } }
+                );
+                // Emit chatRead ke frontend agar centang update real-time
+                const contactId = msg?.to || msg?.from || '';
+                if (io && contactId) {
+                    io.emit('chatRead', { storeId: storeWaId, contactId, ack });
+                }
+            }
+        } catch (e) {
+            // Non-critical — jangan spam log
+        }
+    });
+
+    // ─── Customer Typing Indicator (change_state) ─────────────────
+    client.on('change_state', async (state) => {
+        try {
+            // state: { id: contactId, type: 'chat', isGroup: false, timestamp, ... }
+            // WhatsApp sends change_state for: composing, paused, recording, etc.
+            const contactId = state?.id?._serialized || state?.id;
+            if (!contactId || state?.isGroup) return;
+            const isTyping = state?.isComposing === true;
+            if (io) {
+                io.emit('typingStatus', {
+                    storeId: storeWaId,
+                    contactId,
+                    isTyping
+                });
+            }
+        } catch (e) {
+            // Non-critical
+        }
+    });
+
     // P0 FIX: disconnected handler dengan auto-reconnect + retry logic
     // Max 3x reconnect attempt, delay 30 detik antar attempt.
     // Kalau semua gagal, baru cleanup + notifikasi kritis ke admin.
