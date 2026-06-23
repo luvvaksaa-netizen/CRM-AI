@@ -575,7 +575,7 @@ async function getMessages(client, chatId, limit = 20, storeWaId = 'default') {
       body: safeGet(() => msg.body, '') || '',
       isStatus: Boolean(safeGet(() => msg.isStatusV3, false)),
       fromMe: Boolean(safeGet(() => msg.id?.fromMe, false) || safeGet(() => msg.fromMe, false)),
-      timestamp: safeGet(() => msg.t, 0) || 0,
+      timestamp: safeGet(() => msg.timestamp, null) || safeGet(() => msg.t, null) || Math.floor(Date.now() / 1000),
       hasMedia: Boolean(safeGet(() => msg.hasMedia, false) || safeGet(() => msg.isMedia, false) || safeGet(() => msg.mediaData, null)),
       type: safeGet(() => msg.type, 'chat') || 'chat',
       author: getWaId(safeGet(() => msg.author, null)) || undefined,

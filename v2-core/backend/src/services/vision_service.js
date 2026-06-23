@@ -72,6 +72,17 @@ Fokus pada variasi, warna, dan fitur yang terlihat. Gunakan Bahasa Indonesia yan
     temperature: 0.5
   });
 
+  if (response && response.usage) {
+    const { logRequest } = require('./costTracker');
+    logRequest({
+      model: 'gpt-4o',
+      promptTokens: response.usage.prompt_tokens,
+      completionTokens: response.usage.completion_tokens,
+      endpoint: 'chat',
+      functionName: 'analyzeImage'
+    }).catch(() => {});
+  }
+
   return response.choices[0].message.content?.trim() || '';
 }
 

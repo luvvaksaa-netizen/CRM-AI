@@ -12,12 +12,12 @@ export const sequelize = new Sequelize({
     // busyTimeout: tunggu hingga 30 detik saat DB busy (dalam milidetik)
     busyTimeout: 30000
   },
-  // Pool 3: WAL mode mendukung concurrent reads + 1 writer.
-  // max:1 menyebabkan reads antri di belakang writes (SQLITE_BUSY).
+  // Pool 1: SQLite + Sequelize best practice untuk mencegah SQLITE_BUSY.
+  // SQLite hanya bisa melakukan 1 concurrent write. Memaksa max > 1 menyebabkan lock contention.
   pool: {
-    max: 3,
+    max: 1,
     min: 0,
-    acquire: 35000,
+    acquire: 60000,
     idle: 10000
   }
 });

@@ -424,27 +424,45 @@ const Dashboard = () => {
         ) : billingConfig?.has_api_key ? (
           <>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-              <div className="bg-slate-950/40 dark:bg-slate-50 rounded-xl p-3">
-                <p className="text-xs text-slate-400 dark:text-slate-500">Total Biaya (7hr)</p>
-                <p className="text-xl font-bold text-blue-400">
-                  ${billingActualCosts ? billingActualCosts.total_cost.toFixed(6) : '0.000000'}
+              {/* Saldo DeepSeek Realtime */}
+              <div className={`bg-slate-950/40 dark:bg-slate-50 rounded-xl p-3 border ${billingActualCosts?.deepseek_balance !== null && billingActualCosts?.deepseek_balance <= 2.00 ? 'border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.2)]' : 'border-transparent'}`}>
+                <p className="text-xs text-slate-400 dark:text-slate-500 flex items-center justify-between">
+                  Saldo DeepSeek
+                  {billingActualCosts?.deepseek_balance !== null && billingActualCosts?.deepseek_balance <= 2.00 && (
+                    <span className="text-[10px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded-full flex items-center gap-1 animate-pulse">
+                      <AlertTriangle className="w-3 h-3" /> LOW
+                    </span>
+                  )}
                 </p>
-                <p className="text-[10px] text-emerald-400 mt-0.5">
-                  ≈ Rp {(billingActualCosts?.total_cost_idr || 0).toLocaleString('id-ID')}
+                <p className={`text-xl font-bold ${billingActualCosts?.deepseek_balance !== null && billingActualCosts?.deepseek_balance <= 2.00 ? 'text-red-400' : 'text-emerald-400'}`}>
+                  ${billingActualCosts?.deepseek_balance !== null && billingActualCosts?.deepseek_balance !== undefined ? billingActualCosts.deepseek_balance.toFixed(2) : '0.00'}
+                </p>
+                <p className="text-[10px] text-slate-500 mt-0.5">
+                  Pemakaian: ${billingActualCosts ? billingActualCosts.total_cost_deepseek?.toFixed(6) : '0.000000'}
                 </p>
               </div>
+              
+              {/* OpenAI Usage (Estimasi) */}
+              <div className="bg-slate-950/40 dark:bg-slate-50 rounded-xl p-3">
+                <p className="text-xs text-slate-400 dark:text-slate-500">OpenAI Usage (7hr)</p>
+                <p className="text-xl font-bold text-blue-400">
+                  ${billingActualCosts ? billingActualCosts.total_cost_openai?.toFixed(6) : '0.000000'}
+                </p>
+                <p className="text-[10px] text-slate-500 mt-0.5">
+                  Total Keseluruhan: ${billingActualCosts ? billingActualCosts.total_cost?.toFixed(6) : '0.00'}
+                </p>
+              </div>
+
               <div className="bg-slate-950/40 dark:bg-slate-50 rounded-xl p-3">
                 <p className="text-xs text-slate-400 dark:text-slate-500">Total Request</p>
                 <p className="text-xl font-bold text-white dark:text-slate-900">
                   {billingActualCosts?.total_requests || 0}
                 </p>
-              </div>
-              <div className="bg-slate-950/40 dark:bg-slate-50 rounded-xl p-3">
-                <p className="text-xs text-slate-400 dark:text-slate-500">Threshold Harian</p>
-                <p className={`text-xl font-bold ${billingConfig?.daily_threshold ? 'text-amber-400' : 'text-slate-500'}`}>
-                  ${(billingConfig?.daily_threshold || 0).toFixed(2)}
+                <p className="text-[10px] text-emerald-400 mt-0.5">
+                  ≈ Rp {(billingActualCosts?.total_cost_idr || 0).toLocaleString('id-ID')}
                 </p>
               </div>
+
               <div className="bg-slate-950/40 dark:bg-slate-50 rounded-xl p-3">
                 <p className="text-xs text-slate-400 dark:text-slate-500">Telegram Alert</p>
                 <p className={`text-xl font-bold flex items-center gap-1 ${billingConfig?.telegram_enabled ? 'text-blue-400' : 'text-slate-500'}`}>

@@ -23,7 +23,7 @@ const MODEL_PRICING = {
   'gpt-4-turbo':         { input: 10.00,  output: 30.00 },
   'gpt-4':               { input: 30.00,  output: 60.00 },
   'gpt-3.5-turbo':       { input: 0.50,   output: 1.50 },
-  'whisper-1':           { input: 0,      output: 0 },
+  'whisper-1':           { input: 100.0,  output: 0 }, // $0.006 per min = $0.0001 per sec (1M sec = $100)
 };
 
 const DEFAULT_PRICING = { input: 2.50, output: 10.00 }; // Default: gpt-4o
@@ -127,6 +127,8 @@ async function getCostSummary(days = 30) {
   const summary = {
     total_requests: rows.length,
     total_cost: 0,
+    total_cost_openai: 0,
+    total_cost_deepseek: 0,
     total_prompt_tokens: 0,
     total_completion_tokens: 0,
     total_tokens: 0,
@@ -144,8 +146,14 @@ async function getCostSummary(days = 30) {
     const dateKey = new Date(r.created_at).toISOString().split('T')[0];
     const model = r.model || 'unknown';
     const func = r.function_name || 'unknown';
+    const cost = parseFloat(r.total_cost || 0);
 
-    summary.total_cost += parseFloat(r.total_cost || 0);
+    summary.total_cost += cost;
+    if (model.includes('deepseek')) {
+      summary.total_cost_deepseek += cost;
+    } else {
+      summary.total_cost_openai += cost;
+    }
     summary.total_prompt_tokens += r.prompt_tokens || 0;
     summary.total_completion_tokens += r.completion_tokens || 0;
     summary.total_tokens += r.total_tokens || 0;
@@ -174,6 +182,8 @@ async function getCostSummary(days = 30) {
 
   // Round costs
   summary.total_cost = parseFloat(summary.total_cost.toFixed(6));
+  summary.total_cost_openai = parseFloat(summary.total_cost_openai.toFixed(6));
+  summary.total_cost_deepseek = parseFloat(summary.total_cost_deepseek.toFixed(6));
   for (const key of Object.keys(summary.by_model)) {
     summary.by_model[key].cost = parseFloat(summary.by_model[key].cost.toFixed(6));
   }

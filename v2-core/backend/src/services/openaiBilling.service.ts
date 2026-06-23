@@ -56,6 +56,38 @@ export async function fetchBillingUsage(): Promise<{ total_usage: number; total_
   return null;
 }
 
+// ─── Fetch DeepSeek Balance ───
+export async function fetchDeepSeekBalance(): Promise<number | null> {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  if (!apiKey) return null;
+
+  try {
+    const res = await axios.get('https://api.deepseek.com/user/balance', {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Accept': 'application/json'
+      },
+      timeout: 10000
+    });
+    
+    // DeepSeek returns: { is_available: true, balance_infos: [{ currency: "CNY", total_balance: "10.00" }] }
+    // Asumsikan kita ambil balance USD atau yang pertama jika tidak ada keterangan spesifik
+    if (res.data && res.data.is_available) {
+      // Karena kita butuh angka saja, coba ambil yang pertama atau total
+      const infos = res.data.balance_infos || [];
+      if (infos.length > 0) {
+        // DeepSeek bisa USD atau CNY. Biasanya USD untuk internasional.
+        const balanceInfo = infos.find((i: any) => i.currency === 'USD') || infos[0];
+        return parseFloat(balanceInfo.total_balance || '0');
+      }
+    }
+    return null;
+  } catch (err: any) {
+    logger.warn(`[DeepSeek Billing] Gagal fetch balance: ${err.message}`);
+    return null;
+  }
+}
+
 // ─── Get recent usage history ───
 export async function getUsageHistory(days: number = 30) {
   const records = await OpenAIUsageLog.findAll({
@@ -158,12 +190,22 @@ export async function startScheduler() {
       // Send daily report at 08:00 WIB ± 5 min tolerance
       if (hour === 8 && minutes >= 0 && minutes <= 5) {
         const latest = await getLatestBilling();
+        const dsBalance = await fetchDeepSeekBalance();
         await sendDailyBillingReport(
           latest.total_usage,
-          latest.total_balance,
+          dsBalance !== null ? dsBalance : latest.total_balance,
           latest.date || getUsageDate()
         );
       }
+
+      // Check Low Balance Alert (Setiap jam pada menit 0)
+      if (minutes === 0) {
+         const dsBalance = await fetchDeepSeekBalance();
+         if (dsBalance !== null && dsBalance <= 2.00) {
+            await sendThresholdAlert(`⚠️ SALDO DEEPSEEK MENIPIS! Sisa saldo saat ini: $${dsBalance.toFixed(2)}. Segera top-up agar AI tidak mati.`);
+         }
+      }
+
     } catch (e: any) {
       logger.error('[OpenAI Billing] Daily report error:', e.message);
     }

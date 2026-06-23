@@ -84,8 +84,14 @@ export const testTelegram = async (_req: Request, res: Response, next: NextFunct
 export const getActualCosts = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { getCostSummary } = require('../services/costTracker');
+    const { fetchDeepSeekBalance } = require('../services/openaiBilling.service');
     const days = parseInt(req.query.days as string) || 30;
     const summary = await getCostSummary(days);
+    
+    // Inject real-time deepseek balance
+    const dsBalance = await fetchDeepSeekBalance();
+    summary.deepseek_balance = dsBalance;
+    
     res.json(summary);
   } catch (e) {
     next(e);
