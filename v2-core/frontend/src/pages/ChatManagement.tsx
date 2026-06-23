@@ -506,7 +506,7 @@ const ChatManagement = () => {
       if (entries[0].isIntersecting && hasMoreContacts && !loadingMoreContacts && !loadingContacts) {
         fetchContacts(contactsPage + 1, searchQuery);
       }
-    }, { threshold: 0.5 });
+    }, { rootMargin: '100px', threshold: 0 });
     
     const currentRef = loadMoreContactsRef.current;
     if (currentRef) observer.observe(currentRef);
