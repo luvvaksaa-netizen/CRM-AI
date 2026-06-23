@@ -11,6 +11,7 @@
  */
 
 const logger = require('../utils/logger');
+const { debouncerDB } = require('../services/debouncer.service');
 const { getAIResponse, calculateTypingDelay, prepareOutboundBubbles, RESPONSE_TYPE } = require('../ai_service');
 const { Store, ChatMessage } = require('../models/index');
 const { analyzeImage } = require('../services/vision_service');
@@ -370,7 +371,32 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
             contactIdentity: identity,
             ...quotedContext
         });
-        _scheduleAutoLabels(message, storeWaId, contactId, identity);
+        // ═══════════════════════════════════════════════════════
+        // FIREWALL 3: GLOBAL BOT OFF CHECK (Early DB Check)
+        // Cek is_bot_active SEBELUM menjadwalkan auto-label dan debouncer.
+        // Mencegah pelabelan otomatis saat bot dimatikan.
+        // ═══════════════════════════════════════════════════════
+        let isBotActive = true;
+        try {
+            const storeCheck = await Store.findOne({ where: { wa_id: storeWaId }, attributes: ['is_bot_active'] });
+            if (!storeCheck || storeCheck.is_bot_active === false) {
+                isBotActive = false;
+                const logDisplay = `[${identity.displayName || ''}${identity.phone ? ' | +' + identity.phone : ''}] (${contactId})`;
+                logger.info(`[${storeWaId}] Bot NON-AKTIF (FIREWALL 3). Pesan dari ${logDisplay} dicatat, AI tidak membalas dan tidak melabeli.`);
+                if (customerMediaContext) {
+                    safeSendReactionToMessage(message, '\uD83D\uDC4D', storeWaId);
+                }
+            }
+        } catch (fwErr) {
+            logger.warn(`[${storeWaId}] FIREWALL 3 DB check gagal: ${fwErr.message}. Mengasumsikan bot aktif.`);
+        }
+
+        if (isBotActive) {
+            _scheduleAutoLabels(message, storeWaId, contactId, identity);
+        } else {
+            _cleanupTempFile(tempPath, storeWaId);
+            return;
+        }
 
         // Cancel pending follow-ups ketika customer merespons (SELALU, terlepas bot ON/OFF)
         try {
@@ -402,26 +428,6 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
             return;
         }
 
-        // ═══════════════════════════════════════════════════════
-        // FIREWALL 3: GLOBAL BOT OFF CHECK (Early DB Check)
-        // Cek is_bot_active SEBELUM masuk debouncer agar tidak buang CPU.
-        // Double-checked lagi di _processAIReplyUnlocked (defense-in-depth).
-        // ═══════════════════════════════════════════════════════
-        try {
-            const storeCheck = await Store.findOne({ where: { wa_id: storeWaId }, attributes: ['is_bot_active'] });
-            if (!storeCheck || storeCheck.is_bot_active === false) {
-                logger.info(`[${storeWaId}] Bot NON-AKTIF (FIREWALL 3). Pesan dari ${logDisplay} dicatat, AI tidak membalas.`);
-                // FIREWALL 3: Kirim reaction hanya saat bot aktif (tidak leaking presence ke customer)
-                if (customerMediaContext) {
-                    safeSendReactionToMessage(message, '\uD83D\uDC4D', storeWaId);
-                }
-                _cleanupTempFile(tempPath, storeWaId);
-                return;
-            }
-        } catch (fwErr) {
-            // Jika DB check gagal, lanjut ke layer berikutnya (defense-in-depth tetap aman)
-            logger.warn(`[${storeWaId}] FIREWALL 3 DB check gagal: ${fwErr.message}. Lanjut ke layer berikutnya.`);
-        }
 
         // Reaction 👍 hanya dikirim jika bot AKTIF (tidak membingungkan customer di mode CS manual)
         if (customerMediaContext) {
@@ -637,8 +643,8 @@ async function _processAIReplyUnlocked(storeWaId, contactId, batch) {
 
     // 6. PROSES AI (dengan pesan yang sudah digabung)
     const interactionCount = history.filter(h => !h.is_from_me).length + 1;
-    // Ambil nomor HP customer dari summary record atau identity untuk diinjeksi ke AI prompt
-    const customerPhone = summaryRecord?.contact_phone || '';
+    // Ambil nomor HP customer dari summary record atau identity (fallback dari contactId) untuk diinjeksi ke AI prompt
+    const customerPhone = summaryRecord?.contact_phone || (contactId ? contactId.replace('@c.us', '').replace('@lid', '') : '');
     const aiResult = await getAIResponse(finalBodyForAI, history, store, agent, combinedMedia, summary, interactionCount, customerPhone);
     
     // SAFETY NET: Pastikan selalu ada konten untuk membalas, mencegah error WWebJS "Message cannot be empty"
@@ -1235,6 +1241,27 @@ async function sweepUnansweredChats(storeWaId) {
         return { success: false, error: err.message };
     }
 }
+
+async function restorePendingBatches() {
+    try {
+        const batches = await debouncerDB.loadAllBatches();
+        for (const batch of batches) {
+            logger.info(`[Debouncer] Restoring pending batch for ${batch.contactId}`);
+            _processAIReply(batch.storeWaId, batch.contactId, {
+                messages: batch.messages,
+                mediaContexts: batch.mediaContexts,
+                tempPaths: batch.tempPaths,
+                senderName: batch.senderName,
+                lastMessage: null // Lost across restart
+            }).catch(e => logger.error('Restore error:', e.message));
+            debouncerDB.deleteBatch(batch.storeWaId, batch.contactId);
+        }
+    } catch (e) {
+        logger.error('[Debouncer] Failed to restore:', e.message);
+    }
+}
+setTimeout(restorePendingBatches, 5000); // run shortly after startup
+
 
 module.exports = { 
     handleMessage,

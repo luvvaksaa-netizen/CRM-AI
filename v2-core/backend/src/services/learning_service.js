@@ -139,7 +139,9 @@ async function extractPatternsWithAI(chatText, productType) {
     const prompt = `Kamu adalah AI analyst untuk sistem CRM penjualan ${productContext}.
 
 Analisis percakapan WhatsApp closing berikut antara CS toko (Label Nama CS Dea / Admin Dea) dan customer.
-Tugas kamu: ekstrak POLA SUKSES yang membuat customer akhirnya deal/order.
+Tugas kamu: 
+1. Ekstrak POLA SUKSES yang membuat customer akhirnya deal/order.
+2. Ekstrak REKOMENDASI EVOLUSI PROMPT untuk memperbaiki sikap bot AI di masa depan.
 
 KRITERIA POLA YANG BAIK:
 ✅ Kalimat CS yang natural, hangat, dan tidak kaku
@@ -170,7 +172,10 @@ FORMAT OUTPUT JSON:
   "data_lengkap": <true/false — apakah semua data customer lengkap sebelum rekap>,
   "ada_komplain": <true/false>,
   "metode_bayar": "COD" atau "Transfer" atau null,
-  "catatan_perbaikan": "Apa yang bisa diperbaiki dari percakapan ini untuk performa lebih baik"
+  "rekomendasi_prompt_ai": {
+    "tambah_aturan": "1 aturan spesifik yang HARUS DITAMBAHKAN ke prompt bot AI agar bisa meniru kesuksesan CS manusia ini",
+    "buang_kebiasaan": "1 kebiasaan bot yang HARUS DIBUANG agar tidak terlihat kaku/mengganggu (berdasarkan observasi percakapan ini)"
+  }
 }
 
 PERCAKAPAN:
@@ -619,32 +624,82 @@ async function togglePattern(patternId, isActive) {
  */
 async function buildLearningPromptSection(agentId, productType = 'generic') {
     const patterns = await getTopPatterns(agentId, productType, MAX_PATTERNS_INJECT);
+    const refinements = await getRecentPromptRefinements(agentId, 3);
 
-    if (patterns.length === 0) {
-        return ''; // Tidak ada pattern — jangan inject section kosong
+    if (patterns.length === 0 && refinements.length === 0) {
+        return ''; // Tidak ada pattern & refinement — jangan inject section kosong
     }
 
-    const patternText = patterns.map((p, i) => {
-        const freq = p.frequency || 1;
-        const conf = Math.round((p.confidence || 0.5) * 100);
-        return [
-            `${i + 1}. [Teknik: ${p.teknik}] (Terbukti ${freq}x, Kepercayaan: ${conf}%)`,
-            `   Contoh: "${p.contoh_kalimat}"`,
-            p.konteks ? `   Kapan dipakai: ${p.konteks}` : null,
-            p.dampak ? `   Efeknya: ${p.dampak}` : null
-        ].filter(Boolean).join('\n');
-    }).join('\n\n');
-
-    return `
+    let patternText = '';
+    if (patterns.length > 0) {
+        patternText = `
 ═══════════════════════════════════════════
 TEKNIK TERBUKTI DARI PERCAKAPAN SUKSES:
 (Dipelajari otomatis dari closing nyata CS Mbak Dea — wajib diadopsi!)
 ═══════════════════════════════════════════
-${patternText}
+` + patterns.map((p, i) => {
+            const freq = p.frequency || 1;
+            const conf = Math.round((p.confidence || 0.5) * 100);
+            return [
+                `${i + 1}. [Teknik: ${p.teknik}] (Terbukti ${freq}x, Kepercayaan: ${conf}%)`,
+                `   Contoh: "${p.contoh_kalimat}"`,
+                p.konteks ? `   Kapan dipakai: ${p.konteks}` : null,
+                p.dampak ? `   Efeknya: ${p.dampak}` : null
+            ].filter(Boolean).join('\n');
+        }).join('\n\n') + `\n\n⚡ INSTRUKSI: Gunakan teknik-teknik di atas sebagai referensi cara menjawab. Adaptasi secara natural ke konteks percakapan saat ini. Jangan copy-paste verbatim.`;
+    }
 
-⚡ INSTRUKSI: Gunakan teknik-teknik di atas sebagai referensi cara menjawab.
-Adaptasi secara natural ke konteks percakapan saat ini. Jangan copy-paste verbatim.
-`.trim();
+    let refinementText = '';
+    if (refinements.length > 0) {
+        refinementText = `
+═══════════════════════════════════════════
+EVALUASI & PERBAIKAN SIKAP BOT (Dari Observasi CS Manusia):
+═══════════════════════════════════════════
+` + refinements.map((r, i) => {
+            return `* REKOMENDASI ${i + 1}:\n  (+) TAMBAHKAN ATURAN: "${r.tambah_aturan}"\n  (-) BUANG KEBIASAAN: "${r.buang_kebiasaan}"`;
+        }).join('\n\n') + `\n\n⚡ INSTRUKSI: Patuhi evaluasi di atas. Jadikan evaluasi ini sebagai koreksi mutlak terhadap caramu berinteraksi!`;
+    }
+
+    return [patternText, refinementText].filter(Boolean).join('\n\n').trim();
+}
+
+/**
+ * Mengambil rekomendasi evolusi prompt terbaru dari hasil analisis AI.
+ * @param {number|null} agentId 
+ * @param {number} limit 
+ * @returns {Promise<Array>} Array of { tambah_aturan, buang_kebiasaan }
+ */
+async function getRecentPromptRefinements(agentId, limit = 3) {
+    const { ClosingAnalytic } = require('../models/index');
+    const { Op } = require('sequelize');
+
+    try {
+        const whereClause = {
+            conversation_score: { [Op.gte]: 7 } // Hanya ambil dari closing yang berkualitas baik
+        };
+        if (agentId) whereClause.agent_id = agentId;
+
+        const analytics = await ClosingAnalytic.findAll({
+            where: whereClause,
+            order: [['analyzed_at', 'DESC']],
+            limit: limit * 3 // Fetch lebih banyak untuk difilter di memory
+        });
+
+        const refinements = [];
+        for (const a of analytics) {
+            if (refinements.length >= limit) break;
+            try {
+                const analysis = typeof a.analysis_json === 'string' ? JSON.parse(a.analysis_json) : (a.analysis_json || {});
+                if (analysis.rekomendasi_prompt_ai && analysis.rekomendasi_prompt_ai.tambah_aturan) {
+                    refinements.push(analysis.rekomendasi_prompt_ai);
+                }
+            } catch (e) { /* ignore parse error */ }
+        }
+        return refinements;
+    } catch (err) {
+        logger.warn(`[Learning] Gagal ambil prompt refinements: ${err.message}`);
+        return [];
+    }
 }
 
 module.exports = {

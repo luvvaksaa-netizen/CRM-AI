@@ -46,7 +46,7 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: '3002',
-        DATA_DIR: 'C:\\Users\\Lenovo\\Documents\\CRM-AI\\data',
+        DATA_DIR: 'D:\\CRM-AI\\data',
         ADMIN_USER: 'admin',
         ADMIN_PASS: 'KirimFotoSecure99!',
         JWT_SECRET: 'v2core-crm-jwt-secret-lenovo-desktop-2024-xK9mP',

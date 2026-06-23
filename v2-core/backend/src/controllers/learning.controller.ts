@@ -160,4 +160,51 @@ export const deletePattern = async (req: Request, res: Response, next: NextFunct
   }
 };
 
-;
+export const getPromptEvolutions = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { agent_id, date } = req.query;
+    const where: any = {
+      conversation_score: { [Op.gte]: 7 }
+    };
+    if (agent_id) where.agent_id = agent_id;
+    if (date) {
+      const startDate = new Date(date as string);
+      startDate.setHours(0, 0, 0, 0);
+      const endDate = new Date(date as string);
+      endDate.setHours(23, 59, 59, 999);
+      where.analyzed_at = { [Op.between]: [startDate, endDate] };
+    }
+
+    const analytics = await ClosingAnalytic.findAll({
+      where,
+      order: [['analyzed_at', 'DESC']],
+      include: [{ model: BotAgent, as: 'BotAgent', attributes: ['name'] }]
+    });
+
+    const evolutions = [];
+    for (const a of analytics) {
+      try {
+        const analysis = typeof (a as any).analysis_json === 'string' 
+          ? JSON.parse((a as any).analysis_json) 
+          : ((a as any).analysis_json || {});
+        
+        if (analysis.rekomendasi_prompt_ai) {
+          evolutions.push({
+            id: (a as any).id,
+            agent_id: (a as any).agent_id,
+            agent_name: (a as any).BotAgent?.name || 'Unknown Agent',
+            analyzed_at: (a as any).analyzed_at,
+            tambah_aturan: analysis.rekomendasi_prompt_ai.tambah_aturan,
+            buang_kebiasaan: analysis.rekomendasi_prompt_ai.buang_kebiasaan,
+            score: (a as any).conversation_score,
+            source_file: (a as any).source_file
+          });
+        }
+      } catch (e) { /* ignore parse error */ }
+    }
+
+    res.json({ data: evolutions, total: evolutions.length });
+  } catch (e) {
+    next(e);
+  }
+};

@@ -361,17 +361,24 @@ async function _triggerSummaryUpdate(storeWaId, contactId, senderName) {
             logger.info(`[BotActivation] Rekap ${display} diperbarui (CS manual context).`);
 
             // ── SMART LABEL ENGINE (Non-blocking) ──────────────────────────────
-            // Terapkan label WA Business + simpan ke DB dari rekap manual CS
+            // Terapkan label WA Business + simpan ke DB dari rekap manual CS (HANYA JIKA BOT AKTIF)
             try {
-                const { applyLabelsFromSummary } = require('./smart-label.service');
-                let waClient = null;
-                try {
-                    const { getActiveClient } = require('../whatsapp_service');
-                    waClient = getActiveClient(storeWaId);
-                } catch (_) {}
-                applyLabelsFromSummary(storeWaId, contactId, summaryText, waClient).catch(e =>
-                    logger.warn(`[BotActivation] Smart label manual update error: ${e.message}`)
-                );
+                const { Store } = require('../models/index');
+                const storeCheck = await Store.findOne({ where: { wa_id: storeWaId }, attributes: ['is_bot_active'] });
+                
+                if (storeCheck && storeCheck.is_bot_active !== false) {
+                    const { applyLabelsFromSummary } = require('./smart-label.service');
+                    let waClient = null;
+                    try {
+                        const { getActiveClient } = require('../whatsapp_service');
+                        waClient = getActiveClient(storeWaId);
+                    } catch (_) {}
+                    applyLabelsFromSummary(storeWaId, contactId, summaryText, waClient).catch(e =>
+                        logger.warn(`[BotActivation] Smart label manual update error: ${e.message}`)
+                    );
+                } else {
+                    logger.info(`[BotActivation] Bot NON-AKTIF untuk [${storeWaId}]. Skip pelabelan otomatis.`);
+                }
             } catch (labelErr) {
                 logger.warn(`[BotActivation] Smart label setup manual error: ${labelErr.message}`);
             }

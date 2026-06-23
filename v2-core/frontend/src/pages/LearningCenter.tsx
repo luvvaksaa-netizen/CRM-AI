@@ -65,8 +65,19 @@ interface LearningAnalytic {
   analyzed_at: string;
 }
 
+interface PromptEvolution {
+  id: number;
+  agent_id: number;
+  agent_name: string;
+  analyzed_at: string;
+  tambah_aturan: string;
+  buang_kebiasaan: string;
+  score: number;
+  source_file: string;
+}
+
 const LearningCenter = () => {
-  const [tab, setTab] = useState<'overview' | 'patterns' | 'analytics'>('overview');
+  const [tab, setTab] = useState<'overview' | 'patterns' | 'analytics' | 'evolutions'>('overview');
   const [overview, setOverview] = useState<LearningOverview | null>(null);
   const [patterns, setPatterns] = useState<Pattern[]>([]);
   const [loading, setLoading] = useState(true);
@@ -76,6 +87,8 @@ const LearningCenter = () => {
   const [analytics, setAnalytics] = useState<LearningAnalytic[]>([]);
   const [anaPage, setAnaPage] = useState(1);
   const [anaTotalPages, setAnaTotalPages] = useState(1);
+  const [evolutions, setEvolutions] = useState<PromptEvolution[]>([]);
+  const [evoDate, setEvoDate] = useState('');
   const [filterAgentId, setFilterAgentId] = useState('');
   const [filterProductType, setFilterProductType] = useState('');
   const [agents, setAgents] = useState<Array<{id: number; name: string}>>([]);
@@ -88,7 +101,8 @@ const LearningCenter = () => {
     if (tab === 'overview') fetchOverview();
     else if (tab === 'patterns') fetchPatterns();
     else if (tab === 'analytics') { fetchAgents(); fetchAnalytics(); }
-  }, [tab, page]);
+    else if (tab === 'evolutions') { fetchAgents(); fetchEvolutions(); }
+  }, [tab, page, anaPage, evoDate]);
 
   useEffect(() => {
     if (tab === 'patterns') fetchPatterns();
@@ -141,6 +155,18 @@ const LearningCenter = () => {
       const res = await api.get('/agents');
       setAgents(res.data);
     } catch {}
+  };
+
+  const fetchEvolutions = async () => {
+    setLoading(true);
+    try {
+      const params: any = {};
+      if (filterAgentId) params.agent_id = filterAgentId;
+      if (evoDate) params.date = evoDate;
+      const res = await api.get('/learning/evolutions', { params });
+      setEvolutions(res.data.data || []);
+    } catch { toast.error('Gagal mengambil data evolusi'); }
+    finally { setLoading(false); }
   };
 
   const handleSeed = async () => {
@@ -207,6 +233,7 @@ const LearningCenter = () => {
           { key: 'overview', label: 'Overview', icon: Sparkles },
           { key: 'patterns', label: 'Semua Pola', icon: Layers },
           { key: 'analytics', label: 'Analytics', icon: BarChart3 },
+          { key: 'evolutions', label: 'Evolusi Prompt', icon: TrendingUp },
         ].map(t => (
           <button
             key={t.key}
@@ -263,6 +290,26 @@ const LearningCenter = () => {
               <option key={a.id} value={a.id}>{a.name}</option>
             ))}
           </select>
+        )}
+        {tab === 'evolutions' && (
+          <>
+            <select
+              value={filterAgentId}
+              onChange={(e) => { setFilterAgentId(e.target.value); }}
+              className="bg-slate-900/60 dark:bg-white border border-slate-800/50 dark:border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-300 dark:text-slate-600"
+            >
+              <option value="">Semua Agent</option>
+              {agents.map(a => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+            <input 
+              type="date"
+              value={evoDate}
+              onChange={(e) => setEvoDate(e.target.value)}
+              className="bg-slate-900/60 dark:bg-white border border-slate-800/50 dark:border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-300 dark:text-slate-600"
+            />
+          </>
         )}
       </div>
 
@@ -520,6 +567,57 @@ const LearningCenter = () => {
                   <BarChart3 className="w-12 h-12 mx-auto mb-3 text-slate-500 dark:text-slate-400 opacity-30" />
                   <p className="text-slate-400 dark:text-slate-500">Belum ada data analytics</p>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Data akan muncul setelah AI menganalisis percakapan closing.</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Evolutions Tab */}
+          {tab === 'evolutions' && (
+            <div className="bg-slate-900/40 dark:bg-white border border-slate-800/50 dark:border-slate-200 rounded-2xl p-6 backdrop-blur-xl">
+              <div className="mb-6">
+                <h3 className="text-lg font-bold text-white dark:text-slate-900 flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-emerald-400" />
+                  Evolusi Pembelajaran Bot (Dari CS Manusia)
+                </h3>
+                <p className="text-sm text-slate-400 dark:text-slate-500 mt-1">
+                  Rekomendasi perbaikan sikap bot yang diekstrak AI saat mengamati keberhasilan CS menutup penjualan.
+                </p>
+              </div>
+
+              {evolutions.length > 0 ? (
+                <div className="space-y-4">
+                  {evolutions.map(evo => (
+                    <div key={evo.id} className="bg-slate-950/50 dark:bg-slate-50 border border-slate-800 dark:border-slate-200 rounded-xl p-5">
+                      <div className="flex items-start justify-between gap-4 mb-4">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium text-white dark:text-slate-900">{evo.agent_name}</span>
+                            <span className="text-xs text-slate-500 dark:text-slate-400">•</span>
+                            <span className="text-xs text-slate-500 dark:text-slate-400">{format(new Date(evo.analyzed_at), 'dd MMM yyyy, HH:mm')}</span>
+                          </div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">Score Percakapan: <strong className="text-emerald-400">{evo.score}</strong>/10</div>
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-3">
+                        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3">
+                          <h4 className="text-xs font-bold text-emerald-400 uppercase mb-1">(+) Aturan Baru Ditambahkan</h4>
+                          <p className="text-sm text-slate-300 dark:text-slate-700">{evo.tambah_aturan}</p>
+                        </div>
+                        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
+                          <h4 className="text-xs font-bold text-red-400 uppercase mb-1">(-) Kebiasaan Buruk Dibuang</h4>
+                          <p className="text-sm text-slate-300 dark:text-slate-700">{evo.buang_kebiasaan}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-12">
+                  <Brain className="w-12 h-12 mx-auto mb-3 text-slate-500 dark:text-slate-400 opacity-30" />
+                  <p className="text-slate-400 dark:text-slate-500">Belum ada rekomendasi evolusi</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Data akan muncul setelah ada closing berkualitas tinggi dari CS manual.</p>
                 </div>
               )}
             </div>
