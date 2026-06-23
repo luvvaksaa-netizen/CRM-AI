@@ -56,9 +56,10 @@ app.use(helmet({
     directives: {
       defaultSrc: ["'self'"],
       imgSrc: ["'self'", "data:", "blob:"],
-      scriptSrc: ["'self'"],
+      scriptSrc: ["'self'", "https://static.cloudflareinsights.com"],
+      scriptSrcAttr: ["'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
-      connectSrc: ["'self'", ...allowedOrigins],
+      connectSrc: ["'self'", "https://static.cloudflareinsights.com", ...allowedOrigins],
     },
   },
 }));

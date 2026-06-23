@@ -178,6 +178,8 @@ ClosingAnalytic.belongsTo(Store, {
   targetKey: 'wa_id',
   constraints: false
 });
+BotAgent.hasMany(ClosingAnalytic, { foreignKey: 'agent_id' });
+ClosingAnalytic.belongsTo(BotAgent, { foreignKey: 'agent_id' });
 // ─── OpenAI Usage Log ─────────────────────────────────
 export class OpenAIUsageLog extends Model {}
 OpenAIUsageLog.init({
