@@ -8,7 +8,20 @@ require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const STORE_WA_ID = 'cs-hani-2741'; // ID dari WhatsApp CS Hani
 const PORT = process.env.PORT || 3002;
 const JWT_SECRET = process.env.JWT_SECRET || 'crm-ai-super-secret-key';
-const DB_PATH = path.join(process.env.DATA_DIR || path.join(__dirname, '../../data'), 'database.sqlite');
+const DB_PATH_OPTIONS = [
+    process.env.DATA_DIR ? path.join(process.env.DATA_DIR, 'database.sqlite') : null,
+    path.join(process.cwd(), 'data', 'database.sqlite'),
+    'C:\\Users\\Lenovo\\Documents\\CRM-AI\\data\\database.sqlite',
+    'D:\\CRM-AI\\data\\database.sqlite',
+    path.join(__dirname, '../../data', 'database.sqlite')
+].filter(Boolean);
+
+let DB_PATH = DB_PATH_OPTIONS.find(p => fs.existsSync(p));
+if (!DB_PATH) {
+    console.error('❌ Database tidak ditemukan di lokasi manapun!');
+    console.error('Pencarian dilakukan di:', DB_PATH_OPTIONS);
+    process.exit(1);
+}
 
 async function main() {
     console.log(`\n🚀 Memulai Sinkronisasi Mendalam (Deep Sync) untuk [${STORE_WA_ID}]...`);
