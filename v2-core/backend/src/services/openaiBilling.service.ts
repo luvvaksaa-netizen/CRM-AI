@@ -1,7 +1,7 @@
 import logger from '../utils/logger';
 import axios from 'axios';
 import { OpenAIUsageLog, AppConfig } from '../models';
-import { sendDailyBillingReport, sendThresholdAlert } from './telegramNotifier.service';
+import { sendDailyBillingReport, sendThresholdAlert, sendTelegramMessage } from './telegramNotifier.service';
 
 // ─── Types ───
 interface BillingUsageResponse {
@@ -202,7 +202,7 @@ export async function startScheduler() {
       if (minutes === 0) {
          const dsBalance = await fetchDeepSeekBalance();
          if (dsBalance !== null && dsBalance <= 2.00) {
-            await sendThresholdAlert(`⚠️ SALDO DEEPSEEK MENIPIS! Sisa saldo saat ini: $${dsBalance.toFixed(2)}. Segera top-up agar AI tidak mati.`);
+            await sendTelegramMessage(`⚠️ SALDO DEEPSEEK MENIPIS! Sisa saldo saat ini: $${dsBalance.toFixed(2)}. Segera top-up agar AI tidak mati.`);
          }
       }
 
