@@ -982,7 +982,7 @@ async function syncMessagesFromWa(storeWaId, contactId, limit = 50) {
         }
 
         logger.success(`[${storeWaId}] Berhasil sinkronisasi ${addedCount} pesan dari WhatsApp untuk kontak ${targetChatId}`);
-        return { success: true, count: addedCount, messages };
+        return { success: true, count: addedCount };
     } catch (error) {
         logger.error(`[${storeWaId}] Gagal sinkronisasi pesan: ${error.message}`);
         throw error;
