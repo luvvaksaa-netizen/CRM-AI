@@ -182,8 +182,12 @@ const ChatManagement = () => {
   const [forwardMsgId, setForwardMsgId] = useState<string | null>(null);
   const [forwardTarget, setForwardTarget] = useState<string>('');
   
+  const [contactsPage, setContactsPage] = useState(1);
+  const [hasMoreContacts, setHasMoreContacts] = useState(true);
+  const [loadingMoreContacts, setLoadingMoreContacts] = useState(false);
+
   const fetchContactsDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const fetchContactsRef = useRef<(silent?: boolean) => void>(() => {});
+  const fetchContactsRef = useRef<(pageToLoad?: number, searchQueryParam?: string, silent?: boolean) => void>(() => {});
 
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -196,26 +200,44 @@ const ChatManagement = () => {
     return c.sender_name || fallbackId || 'Unknown';
   };
 
-  const fetchContacts = useCallback(async (silent = false) => {
-    if (!useChatStore.getState().selectedStore) return;
-    if (!silent) setLoadingContacts(true);
+  const fetchContacts = useCallback(async (pageToLoad = 1, searchQueryParam = '', silent = false) => {
+    const store = useChatStore.getState().selectedStore;
+    if (!store) return;
+    if (!silent && pageToLoad === 1) setLoadingContacts(true);
+    if (pageToLoad > 1) setLoadingMoreContacts(true);
+    
     try {
-      const res = await api.get(`/chat/${useChatStore.getState().selectedStore}/contacts`);
-      useChatStore.getState().setContacts(res.data);
+      const res = await api.get(`/chat/${store}/contacts`, {
+        params: { page: pageToLoad, limit: 50, search: searchQueryParam }
+      });
+      const newContacts = res.data;
+      
+      if (pageToLoad === 1) {
+        useChatStore.getState().setContacts(newContacts);
+      } else {
+        const current = useChatStore.getState().contacts;
+        const existingIds = new Set(current.map(c => c.contact_id));
+        const uniqueNew = newContacts.filter((c: any) => !existingIds.has(c.contact_id));
+        useChatStore.getState().setContacts([...current, ...uniqueNew]);
+      }
+      
+      setHasMoreContacts(newContacts.length === 50);
+      setContactsPage(pageToLoad);
     } catch {
-      if (!silent) toast.error('Gagal mengambil daftar kontak');
+      if (!silent && pageToLoad === 1) toast.error('Gagal mengambil daftar kontak');
     } finally {
-      if (!silent) setLoadingContacts(false);
+      if (!silent && pageToLoad === 1) setLoadingContacts(false);
+      if (pageToLoad > 1) setLoadingMoreContacts(false);
     }
   }, [setLoadingContacts]);
 
   fetchContactsRef.current = fetchContacts;
 
-  const debouncedFetchContacts = useCallback(() => {
+  const debouncedFetchContacts = useCallback((searchQueryParam = '') => {
     if (fetchContactsDebounceRef.current) clearTimeout(fetchContactsDebounceRef.current);
     fetchContactsDebounceRef.current = setTimeout(() => {
-      fetchContactsRef.current(true);
-    }, 1500);
+      fetchContactsRef.current(1, searchQueryParam, true);
+    }, 500);
   }, []);
 
   const fetchLabelCounts = useCallback(async () => {
@@ -472,6 +494,27 @@ const ChatManagement = () => {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [showReactionPicker]);
+
+  useEffect(() => {
+    debouncedFetchContacts(searchQuery);
+  }, [searchQuery, debouncedFetchContacts]);
+
+  const loadMoreContactsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting && hasMoreContacts && !loadingMoreContacts && !loadingContacts) {
+        fetchContacts(contactsPage + 1, searchQuery);
+      }
+    }, { threshold: 0.5 });
+    
+    const currentRef = loadMoreContactsRef.current;
+    if (currentRef) observer.observe(currentRef);
+    
+    return () => {
+      if (currentRef) observer.unobserve(currentRef);
+    };
+  }, [hasMoreContacts, loadingMoreContacts, loadingContacts, contactsPage, searchQuery, fetchContacts]);
 
   useEffect(() => {
     const selectedStore = useChatStore.getState().selectedStore;
@@ -1156,6 +1199,12 @@ const ChatManagement = () => {
                 </motion.div>
               );
             })}
+            
+            {hasMoreContacts && (
+              <div ref={loadMoreContactsRef} className="h-10 flex items-center justify-center">
+                {loadingMoreContacts && <div className="w-5 h-5 border-2 border-slate-500 border-t-transparent rounded-full animate-spin" />}
+              </div>
+            )}
           </div>
         </div>
 

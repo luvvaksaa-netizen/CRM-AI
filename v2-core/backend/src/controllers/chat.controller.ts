@@ -56,7 +56,12 @@ export const getChatHistory = async (req: Request, res: Response, next: NextFunc
 export const getContacts = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { storeId } = req.params;
+    const { page = '1', limit = '50', search = '' } = req.query;
     const tableName = ChatMessage.getTableName();
+    
+    const limitNum = parseInt(limit as string, 10) || 50;
+    const offsetNum = (Math.max(parseInt(page as string, 10) || 1, 1) - 1) * limitNum;
+    const searchFilter = search ? `AND (m.contact_display_name LIKE :search OR m.contact_id LIKE :search OR m.contact_phone LIKE :search OR m.sender_name LIKE :search)` : '';
 
     // Query optimal: satu JOIN untuk latest message + satu JOIN untuk unread count
     // Menggantikan correlated subquery (N+1) dengan single-pass aggregation
@@ -84,9 +89,18 @@ export const getContacts = async (req: Request, res: Response, next: NextFunctio
         GROUP BY contact_id
       ) u ON m.contact_id = u.contact_id
       WHERE m.store_wa_id = :storeId
+      ${searchFilter}
       ORDER BY m.timestamp DESC
-      LIMIT 100
-    `, { replacements: { storeId }, type: QueryTypes.SELECT });
+      LIMIT :limit OFFSET :offset
+    `, { 
+      replacements: { 
+        storeId,
+        limit: limitNum,
+        offset: offsetNum,
+        ...(search ? { search: `%${search}%` } : {})
+      }, 
+      type: QueryTypes.SELECT 
+    });
 
     // Jalankan 2 query pelengkap secara paralel untuk efisiensi
     const [summaries, pausedContacts] = await Promise.all([
