@@ -45,7 +45,7 @@ async function main() {
         // Ambil kontak yang ada pesannya 7 hari terakhir untuk di-sync
         db.all(
             `SELECT DISTINCT contact_id, contact_display_name 
-             FROM chat_messages 
+             FROM ChatMessages 
              WHERE store_wa_id = ? 
              ORDER BY timestamp DESC LIMIT 200`,
             [STORE_WA_ID],
