@@ -7,7 +7,17 @@ require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
 const STORE_WA_ID = 'cs-hani-2741'; // ID dari WhatsApp CS Hani
 const PORT = process.env.PORT || 3002;
-const JWT_SECRET = process.env.JWT_SECRET || 'crm-ai-super-secret-key';
+let JWT_SECRET = process.env.JWT_SECRET || 'crm-ai-super-secret-key';
+try {
+    const ecoPath = path.join(__dirname, '../ecosystem.config.js');
+    if (fs.existsSync(ecoPath)) {
+        const eco = require(ecoPath);
+        if (eco.apps && eco.apps[0] && eco.apps[0].env && eco.apps[0].env.JWT_SECRET) {
+            JWT_SECRET = eco.apps[0].env.JWT_SECRET;
+            console.log('🔑 Menggunakan JWT_SECRET dari ecosystem.config.js');
+        }
+    }
+} catch (e) {}
 const DB_PATH_OPTIONS = [
     process.env.DATA_DIR ? path.join(process.env.DATA_DIR, 'database.sqlite') : null,
     path.join(process.cwd(), 'data', 'database.sqlite'),
