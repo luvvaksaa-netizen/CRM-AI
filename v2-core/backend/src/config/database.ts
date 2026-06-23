@@ -2,50 +2,56 @@ import { Sequelize } from 'sequelize';
 import { getDbPath } from './paths';
 import path from 'path';
 
-const dbPath = getDbPath();
+const USE_PG = !!process.env.DATABASE_URL;
 
-export const sequelize = new Sequelize({
-  dialect: 'sqlite',
-  storage: dbPath,
-  logging: false,
-  dialectOptions: {
-    // busyTimeout: tunggu hingga 30 detik saat DB busy (dalam milidetik)
-    busyTimeout: 30000
-  },
-  // Pool 1: SQLite + Sequelize best practice untuk mencegah SQLITE_BUSY.
-  // SQLite hanya bisa melakukan 1 concurrent write. Memaksa max > 1 menyebabkan lock contention.
-  pool: {
-    max: 1,
-    min: 0,
-    acquire: 60000,
-    idle: 10000
-  }
-});
+export const sequelize = USE_PG
+  ? new Sequelize(process.env.DATABASE_URL!, {
+      dialect: 'postgres',
+      logging: false,
+      pool: {
+        max: 10,
+        min: 2,
+        acquire: 30000,
+        idle: 10000,
+      },
+      dialectOptions: {
+        ssl: process.env.DATABASE_SSL === 'true' ? { require: true, rejectUnauthorized: false } : false,
+      },
+    })
+  : new Sequelize({
+      dialect: 'sqlite',
+      storage: getDbPath(),
+      logging: false,
+      dialectOptions: {
+        busyTimeout: 30000,
+      },
+      pool: {
+        max: 1,
+        min: 0,
+        acquire: 60000,
+        idle: 10000,
+      },
+    });
 
 export const initDB = async () => {
   try {
     await sequelize.authenticate();
-    
-    // Set WAL mode agar reads tidak block writes dan sebaliknya
-    await sequelize.query('PRAGMA journal_mode=WAL;');
-    await sequelize.query('PRAGMA busy_timeout=30000;');
-    await sequelize.query('PRAGMA synchronous=NORMAL;');
-    await sequelize.query('PRAGMA cache_size=-16000;'); // 16MB cache
-    await sequelize.query('PRAGMA wal_autocheckpoint=100;'); // Checkpoint tiap 100 page
-    
-    console.log(`[Database] Terhubung ke legacy database di ${dbPath} (WAL mode aktif)`);
 
-    // Explicit periodic WAL checkpoint to prevent file bloat (SQLITE_BUSY mitigation)
-    // Dihapus karena wal_checkpoint(TRUNCATE) melakukan exclusive lock yang memblokir
-    // koneksi dan malah menyebabkan SQLITE_BUSY secara berkala. SQLite wal_autocheckpoint 
-    // sudah cukup untuk mencegah file bloat secara aman.
+    if (!USE_PG) {
+      // SQLite-specific PRAGMA — only for SQLite
+      await sequelize.query('PRAGMA journal_mode=WAL;');
+      await sequelize.query('PRAGMA busy_timeout=30000;');
+      await sequelize.query('PRAGMA synchronous=NORMAL;');
+      await sequelize.query('PRAGMA cache_size=-16000;');
+      await sequelize.query('PRAGMA wal_autocheckpoint=100;');
+    }
 
-    
+    const dbLabel = USE_PG ? `PostgreSQL (${new URL(process.env.DATABASE_URL!).hostname})` : `SQLite (${getDbPath()})`;
+    console.log(`[Database] Terhubung ke ${dbLabel}`);
+
     // JANGAN sync({ force: true }) — akan menghapus semua data produksi!
-    // sync() tanpa force hanya membuat tabel baru jika belum ada, aman.
     await sequelize.sync();
   } catch (error) {
     console.error('[Database] Koneksi gagal:', error);
   }
 };
-

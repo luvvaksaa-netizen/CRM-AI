@@ -355,16 +355,22 @@ async function _persistLabelsToDb(
     
     let record = null;
     try {
-      const [found] = await ChatSummary.findOrCreate({
-        where: { store_wa_id: storeWaId, contact_id: contactId },
-        defaults: { 
-          wa_labels: JSON.stringify(labelNames),
-          label_timestamps: JSON.stringify(defaultTimestamps)
-        }
-      });
-      record = found;
+      const { dbRetry } = require('../utils/dbRetry');
+      record = await dbRetry(
+        async () => {
+          const [found] = await ChatSummary.findOrCreate({
+            where: { store_wa_id: storeWaId, contact_id: contactId },
+            defaults: { 
+              wa_labels: JSON.stringify(labelNames),
+              label_timestamps: JSON.stringify(defaultTimestamps)
+            }
+          });
+          return found;
+        },
+        { context: 'SmartLabel._persistLabelsToDb' }
+      );
     } catch (err: any) {
-      logger.warn(`[SmartLabel] Gagal findOrCreate ChatSummary untuk ${contactId}: ${err.message}. Mengabaikan SQLITE_BUSY.`);
+      logger.warn(`[SmartLabel] Gagal findOrCreate ChatSummary untuk ${contactId}: ${err.message}. Mengabaikan setelah retry.`);
     }
 
     if (record) {
@@ -634,13 +640,19 @@ async function syncLabelsFromWa(
   const { ChatSummary } = require('../models/index');
   let record = null;
   try {
-    const [found] = await ChatSummary.findOrCreate({
-      where: { store_wa_id: storeWaId, contact_id: contactId },
-      defaults: { wa_labels: '[]', label_timestamps: '{}' },
-    });
-    record = found;
+    const { dbRetry } = require('../utils/dbRetry');
+    record = await dbRetry(
+      async () => {
+        const [found] = await ChatSummary.findOrCreate({
+          where: { store_wa_id: storeWaId, contact_id: contactId },
+          defaults: { wa_labels: '[]', label_timestamps: '{}' },
+        });
+        return found;
+      },
+      { context: 'SmartLabel.syncLabelsFromWa' }
+    );
   } catch (err: any) {
-    logger.warn(`[SmartLabel] Gagal findOrCreate ChatSummary untuk ${contactId}: ${err.message}. Mengabaikan SQLITE_BUSY.`);
+    logger.warn(`[SmartLabel] Gagal findOrCreate ChatSummary untuk ${contactId}: ${err.message}. Mengabaikan setelah retry.`);
   }
 
   if (record) {
