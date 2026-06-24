@@ -8,6 +8,7 @@ import {
   testTelegram,
   getActualCosts,
   getExchangeRate,
+  getUsageLogsList,
 } from '../controllers/openai-billing.controller';
 import { authorize } from '../middlewares/auth.middleware';
 
@@ -21,5 +22,6 @@ router.put('/config', authorize('admin'), updateConfig);
 router.post('/test-telegram', authorize('admin'), testTelegram);
 router.get('/actual-costs', getActualCosts);
 router.get('/exchange-rate', getExchangeRate);
+router.get('/usage-logs', getUsageLogsList); // Riwayat per-request detail (paginated)
 
 export default router;

@@ -27,7 +27,22 @@ import {
   Send,
   Bot,
   Package,
+  ExternalLink,
+  ChevronLeft,
+  ChevronRight,
+  Filter,
+  TrendingUp,
 } from 'lucide-react';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+} from 'recharts';
 import toast from 'react-hot-toast';
 import api from '../services/api';
 import { socketService } from '../services/socket';
@@ -59,6 +74,46 @@ interface ProfileForm {
   newUsername: string;
   newPassword: string;
   confirmPassword: string;
+}
+
+/** Satu baris log request AI dari endpoint /api/openai/billing/usage-logs */
+interface UsageLogItem {
+  id: number;
+  model: string;
+  function_name: string;
+  endpoint: string;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  cost_idr: number;
+  store_wa_id: string | null;
+  contact_id: string | null;
+  contact_phone: string | null;
+  created_at: string;
+}
+
+/** Respons paginasi dari endpoint usage-logs */
+interface UsageLogsResponse {
+  logs: UsageLogItem[];
+  total: number;
+  page: number;
+  totalPages: number;
+  limit: number;
+}
+
+/** Data biaya ringkasan (actual-costs endpoint) */
+interface CostSummary {
+  total_requests: number;
+  total_cost: number;
+  total_cost_openai: number;
+  total_cost_deepseek: number;
+  total_cost_idr: number;
+  total_tokens: number;
+  deepseek_balance: number | null;
+  by_model: Record<string, { requests: number; cost: number; cost_idr: number; tokens: number }>;
+  by_function: Record<string, { requests: number; cost: number; cost_idr: number; tokens: number }>;
+  daily: Array<{ date: string; requests: number; cost: number; cost_idr: number; tokens: number }>;
 }
 
 // ─── Helpers ───
@@ -173,6 +228,17 @@ const Settings = () => {
     openai_billing_telegram_enabled: 'false',
   });
   const [billingTestingTelegram, setBillingTestingTelegram] = useState(false);
+
+  // AI Billing Detail state
+  const [costSummary, setCostSummary] = useState<CostSummary | null>(null);
+  const [costSummaryLoading, setCostSummaryLoading] = useState(false);
+  const [usageLogs, setUsageLogs] = useState<UsageLogsResponse | null>(null);
+  const [usageLogsLoading, setUsageLogsLoading] = useState(false);
+  const [usageLogsDays, setUsageLogsDays] = useState(30);
+  const [usageLogsPage, setUsageLogsPage] = useState(1);
+  const [usageLogsModel, setUsageLogsModel] = useState('');
+
+  // Per-store agent list (pakai di stores tab juga)
   const [agentList, setAgentList] = useState<Array<{id: number; name: string}>>([]);
 
   // Mengantar state
@@ -273,6 +339,38 @@ const Settings = () => {
     }
   }, []);
 
+  /** Ambil ringkasan biaya AI (summary cards + grafik harian + per model) */
+  const fetchCostSummary = useCallback(async (days = 30) => {
+    setCostSummaryLoading(true);
+    try {
+      const res = await api.get(`/openai/billing/actual-costs?days=${days}`);
+      setCostSummary(res.data);
+    } catch {
+      // Non-fatal — tampilkan error kecil saja
+    } finally {
+      setCostSummaryLoading(false);
+    }
+  }, []);
+
+  /** Ambil log per-request (paginated) */
+  const fetchUsageLogs = useCallback(async (days: number, page: number, model: string) => {
+    setUsageLogsLoading(true);
+    try {
+      const params = new URLSearchParams({
+        days: String(days),
+        page: String(page),
+        limit: '50',
+      });
+      if (model) params.set('model', model);
+      const res = await api.get(`/openai/billing/usage-logs?${params.toString()}`);
+      setUsageLogs(res.data);
+    } catch {
+      // Non-fatal
+    } finally {
+      setUsageLogsLoading(false);
+    }
+  }, []);
+
   const fetchAgentList = useCallback(async () => {
     try {
       const res = await api.get('/agents');
@@ -313,9 +411,29 @@ const Settings = () => {
     if (activeTab === 'backup') fetchBackups();
     if (activeTab === 'wa') fetchWAStatus();
     if (activeTab === 'stores') { fetchStores(); fetchAgentList(); }
-    if (activeTab === 'billing') fetchBillingConfig();
+    if (activeTab === 'billing') {
+      fetchBillingConfig();
+      fetchCostSummary(usageLogsDays);
+      fetchUsageLogs(usageLogsDays, 1, usageLogsModel);
+    }
     if (activeTab === 'mengantar') fetchMengantarConfig();
-  }, [activeTab, fetchHealth, fetchBackups, fetchWAStatus, fetchStores, fetchAgentList, fetchBillingConfig, fetchMengantarConfig]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  /** Handler filter hari/model berubah: reset page ke 1 dan re-fetch */
+  const handleUsageFilterChange = (newDays: number, newModel: string) => {
+    setUsageLogsDays(newDays);
+    setUsageLogsModel(newModel);
+    setUsageLogsPage(1);
+    fetchCostSummary(newDays);
+    fetchUsageLogs(newDays, 1, newModel);
+  };
+
+  /** Handler pindah halaman log */
+  const handleUsageLogsPageChange = (newPage: number) => {
+    setUsageLogsPage(newPage);
+    fetchUsageLogs(usageLogsDays, newPage, usageLogsModel);
+  };
 
   // Real-time socket: live system stats & logs
   useEffect(() => {
@@ -1036,51 +1154,371 @@ const Settings = () => {
           {/* ─── Tab: AI Billing ─── */}
           {activeTab === 'billing' && (
             <div className="space-y-6">
-              {/* API Key Status */}
+
+              {/* ── 1. API Key Status Cards ─────────────────────────── */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="flex items-center justify-between bg-slate-800/50 dark:bg-slate-100 p-3 rounded-xl border border-slate-700/50 dark:border-slate-300">
-                    <div className="flex items-center gap-3">
-                      <Bot className="w-5 h-5 text-blue-400" />
-                      <div>
-                        <p className="font-bold text-white dark:text-slate-900 text-sm">DeepSeek API Key</p>
-                        <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
-                          {billingConfig?.has_api_key
-                            ? '✅ Terdeteksi (Chat & Teks)'
-                            : '❌ Belum dikonfigurasi'}
+                {/* DeepSeek */}
+                <div className="flex items-center justify-between bg-slate-800/50 dark:bg-slate-100 p-4 rounded-xl border border-slate-700/50 dark:border-slate-300">
+                  <div className="flex items-center gap-3">
+                    <Bot className="w-5 h-5 text-blue-400 shrink-0" />
+                    <div>
+                      <p className="font-bold text-white dark:text-slate-900 text-sm">DeepSeek API Key</p>
+                      <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                        {billingConfig?.has_api_key ? '✅ Terdeteksi (Chat & Teks)' : '❌ Belum dikonfigurasi'}
+                      </p>
+                      {costSummary?.deepseek_balance !== null && costSummary?.deepseek_balance !== undefined && (
+                        <p className="text-xs font-bold text-emerald-400 mt-0.5">
+                          Saldo: ${costSummary.deepseek_balance.toFixed(2)}
+                          {costSummary.deepseek_balance <= 2 && (
+                            <span className="ml-1 text-red-400 animate-pulse">⚠ LOW</span>
+                          )}
                         </p>
-                      </div>
+                      )}
                     </div>
-                    {billingConfig?.has_api_key ? (
-                      <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                    ) : (
-                      <XCircle className="w-5 h-5 text-red-400" />
-                    )}
                   </div>
-                  
-                  <div className="flex items-center justify-between bg-slate-800/50 dark:bg-slate-100 p-3 rounded-xl border border-slate-700/50 dark:border-slate-300">
-                    <div className="flex items-center gap-3">
-                      <Bot className="w-5 h-5 text-purple-400" />
-                      <div>
-                        <p className="font-bold text-white dark:text-slate-900 text-sm">OpenAI API Key</p>
-                        <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
-                          {billingConfig?.has_api_key
-                            ? '✅ Terdeteksi (Vision & Audio)'
-                            : '❌ Belum dikonfigurasi'}
-                        </p>
-                      </div>
-                    </div>
-                    {billingConfig?.has_api_key ? (
-                      <CheckCircle2 className="w-5 h-5 text-emerald-400" />
-                    ) : (
-                      <XCircle className="w-5 h-5 text-red-400" />
-                    )}
+                  <div className="flex flex-col items-end gap-1">
+                    {billingConfig?.has_api_key
+                      ? <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                      : <XCircle className="w-5 h-5 text-red-400" />}
+                    <a href="https://platform.deepseek.com/top-up" target="_blank" rel="noopener noreferrer"
+                       className="text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-0.5 transition-colors">
+                      Top Up <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
                   </div>
                 </div>
 
+                {/* OpenAI — fix bug: pakai has_api_key sebagai fallback jika has_org_api_key tidak ada */}
+                <div className="flex items-center justify-between bg-slate-800/50 dark:bg-slate-100 p-4 rounded-xl border border-slate-700/50 dark:border-slate-300">
+                  <div className="flex items-center gap-3">
+                    <Bot className="w-5 h-5 text-purple-400 shrink-0" />
+                    <div>
+                      <p className="font-bold text-white dark:text-slate-900 text-sm">OpenAI API Key</p>
+                      <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                        {(billingConfig?.has_org_api_key || billingConfig?.has_api_key)
+                          ? '✅ Terdeteksi (Vision & Audio)' : '❌ Belum dikonfigurasi'}
+                      </p>
+                      <p className="text-[10px] text-slate-500 mt-0.5">
+                        Saldo tidak bisa diambil otomatis (API deprecated)
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-1">
+                    {(billingConfig?.has_org_api_key || billingConfig?.has_api_key)
+                      ? <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                      : <XCircle className="w-5 h-5 text-red-400" />}
+                    <a href="https://platform.openai.com/settings/organization/billing" target="_blank" rel="noopener noreferrer"
+                       className="text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-0.5 transition-colors">
+                      Cek Saldo <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                  </div>
+                </div>
+              </div>
+
+              {/* ── 2. Summary Cards + Filter ────────────────────────── */}
+              <Card className="p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+                  <h2 className="text-lg font-bold text-white dark:text-slate-900 flex items-center gap-2">
+                    <TrendingUp className="w-5 h-5 text-emerald-400" />
+                    Ringkasan Penggunaan AI
+                  </h2>
+                  {/* Filter hari */}
+                  <div className="flex items-center gap-2">
+                    <Filter className="w-4 h-4 text-slate-400" />
+                    {([7, 30, 90] as const).map(d => (
+                      <button key={d}
+                        onClick={() => handleUsageFilterChange(d, usageLogsModel)}
+                        className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
+                          usageLogsDays === d
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-slate-800 dark:bg-slate-100 text-slate-400 dark:text-slate-500 hover:bg-slate-700'
+                        }`}>
+                        {d} hari
+                      </button>
+                    ))}
+                    <button
+                      onClick={() => { fetchCostSummary(usageLogsDays); fetchUsageLogs(usageLogsDays, usageLogsPage, usageLogsModel); }}
+                      className="p-1.5 text-slate-400 hover:text-white transition-colors"
+                      title="Refresh">
+                      <RefreshCw className={`w-4 h-4 ${costSummaryLoading ? 'animate-spin' : ''}`} />
+                    </button>
+                  </div>
+                </div>
+
+                {costSummaryLoading ? (
+                  <div className="flex justify-center py-8"><RefreshCw className="w-6 h-6 text-blue-500 animate-spin" /></div>
+                ) : (
+                  <>
+                    {/* Summary number cards */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                      <div className="bg-slate-950/50 dark:bg-slate-50 rounded-xl p-3">
+                        <p className="text-xs text-slate-400 dark:text-slate-500">Total Request</p>
+                        <p className="text-2xl font-bold text-white dark:text-slate-900">{costSummary?.total_requests ?? 0}</p>
+                        <p className="text-[11px] text-slate-500">{usageLogsDays} hari terakhir</p>
+                      </div>
+                      <div className="bg-slate-950/50 dark:bg-slate-50 rounded-xl p-3">
+                        <p className="text-xs text-slate-400 dark:text-slate-500">Total Biaya</p>
+                        <p className="text-2xl font-bold text-emerald-400">${(costSummary?.total_cost ?? 0).toFixed(4)}</p>
+                        <p className="text-[11px] text-slate-500">≈ Rp {(costSummary?.total_cost_idr ?? 0).toLocaleString('id-ID')}</p>
+                      </div>
+                      <div className="bg-slate-950/50 dark:bg-slate-50 rounded-xl p-3">
+                        <p className="text-xs text-slate-400 dark:text-slate-500">DeepSeek</p>
+                        <p className="text-2xl font-bold text-blue-400">${(costSummary?.total_cost_deepseek ?? 0).toFixed(4)}</p>
+                        <p className="text-[11px] text-slate-500">Pengeluaran model</p>
+                      </div>
+                      <div className="bg-slate-950/50 dark:bg-slate-50 rounded-xl p-3">
+                        <p className="text-xs text-slate-400 dark:text-slate-500">OpenAI</p>
+                        <p className="text-2xl font-bold text-purple-400">${(costSummary?.total_cost_openai ?? 0).toFixed(4)}</p>
+                        <p className="text-[11px] text-slate-500">Vision & Audio</p>
+                      </div>
+                    </div>
+
+                    {/* Grafik harian */}
+                    {(costSummary?.daily ?? []).length > 0 && (
+                      <div className="mb-6">
+                        <p className="text-sm font-semibold text-slate-300 dark:text-slate-600 mb-3">📈 Pengeluaran Harian (USD)</p>
+                        <ResponsiveContainer width="100%" height={180}>
+                          <LineChart data={costSummary!.daily} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#334155" vertical={false} />
+                            <XAxis dataKey="date" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false}
+                                   tickFormatter={v => v.slice(5)} />
+                            <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} width={55}
+                                   tickFormatter={v => `$${v.toFixed(4)}`} />
+                            <Tooltip
+                              contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8 }}
+                              labelStyle={{ color: '#94a3b8' }}
+                              formatter={(val: any) => [`$${Number(val).toFixed(6)}`, 'Biaya']}
+                            />
+                            <Legend iconType="circle" wrapperStyle={{ fontSize: '12px' }} />
+                            <Line type="monotone" name="Biaya ($)" dataKey="cost" stroke="#10b981" strokeWidth={2}
+                                  dot={false} activeDot={{ r: 5 }} />
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    )}
+
+                    {/* Breakdown per model */}
+                    {costSummary?.by_model && Object.keys(costSummary.by_model).length > 0 && (
+                      <div className="mb-4">
+                        <p className="text-sm font-semibold text-slate-300 dark:text-slate-600 mb-2">🤖 Breakdown per Model</p>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="text-left text-xs text-slate-400 dark:text-slate-500 border-b border-slate-800/50 dark:border-slate-200">
+                                <th className="py-2 pr-3 font-medium">Model</th>
+                                <th className="py-2 px-2 font-medium text-right">Request</th>
+                                <th className="py-2 px-2 font-medium text-right">Token</th>
+                                <th className="py-2 px-2 font-medium text-right">Biaya (USD)</th>
+                                <th className="py-2 pl-2 font-medium text-right">Biaya (IDR)</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {Object.entries(costSummary.by_model)
+                                .sort(([, a], [, b]) => b.cost - a.cost)
+                                .map(([model, data]) => (
+                                  <tr key={model} className="border-b border-slate-800/20 dark:border-slate-100 hover:bg-slate-800/20 transition-colors">
+                                    <td className="py-2 pr-3">
+                                      <span className={`inline-flex items-center gap-1 text-xs font-mono font-medium ${
+                                        model.includes('deepseek') ? 'text-blue-400' : 'text-purple-400'
+                                      }`}>
+                                        {model.includes('deepseek') ? '🔵' : '🟣'} {model}
+                                      </span>
+                                    </td>
+                                    <td className="py-2 px-2 text-right text-slate-300 dark:text-slate-600">{data.requests.toLocaleString()}</td>
+                                    <td className="py-2 px-2 text-right text-slate-400">{data.tokens.toLocaleString()}</td>
+                                    <td className="py-2 px-2 text-right font-semibold text-emerald-400">${data.cost.toFixed(6)}</td>
+                                    <td className="py-2 pl-2 text-right text-slate-300 dark:text-slate-600">
+                                      Rp {(data.cost_idr ?? 0).toLocaleString('id-ID')}
+                                    </td>
+                                  </tr>
+                                ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Breakdown per fungsi */}
+                    {costSummary?.by_function && Object.keys(costSummary.by_function).length > 0 && (
+                      <details>
+                        <summary className="text-xs text-slate-400 cursor-pointer hover:text-slate-200 mb-2 select-none">
+                          ⚙️ Breakdown per Fungsi AI (klik untuk expand)
+                        </summary>
+                        <div className="mt-2 space-y-1">
+                          {Object.entries(costSummary.by_function)
+                            .sort(([, a], [, b]) => b.cost - a.cost)
+                            .map(([fn, data]) => (
+                              <div key={fn} className="flex items-center justify-between bg-slate-950/30 dark:bg-slate-50 rounded-lg px-3 py-1.5">
+                                <span className="text-xs text-slate-300 dark:text-slate-600 font-mono">{fn}</span>
+                                <span className="text-xs text-slate-400">
+                                  {data.requests} req · <span className="text-emerald-400 font-medium">${data.cost.toFixed(6)}</span>
+                                </span>
+                              </div>
+                            ))}
+                        </div>
+                      </details>
+                    )}
+
+                    {!costSummary || costSummary.total_requests === 0 && (
+                      <p className="text-xs text-slate-500 text-center py-4">
+                        Belum ada data penggunaan AI di {usageLogsDays} hari terakhir.
+                        Data akan otomatis muncul saat bot merespons chat customer.
+                      </p>
+                    )}
+                  </>
+                )}
+              </Card>
+
+              {/* ── 3. Riwayat Request Detail (Per-Request Log) ──────── */}
+              <Card className="p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                  <h2 className="text-lg font-bold text-white dark:text-slate-900 flex items-center gap-2">
+                    <DollarSign className="w-5 h-5 text-blue-400" />
+                    Riwayat Request Detail
+                    {usageLogs && (
+                      <span className="text-xs font-normal text-slate-400">({usageLogs.total} total)</span>
+                    )}
+                  </h2>
+                  {/* Filter model */}
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={usageLogsModel}
+                      onChange={e => handleUsageFilterChange(usageLogsDays, e.target.value)}
+                      className="text-xs bg-slate-800 dark:bg-slate-100 border border-slate-700 dark:border-slate-300 text-slate-300 dark:text-slate-600 rounded-lg px-2 py-1.5 focus:outline-none focus:border-blue-500">
+                      <option value="">Semua Model</option>
+                      <option value="deepseek-chat">deepseek-chat</option>
+                      <option value="deepseek-v4-pro">deepseek-v4-pro</option>
+                      <option value="gpt-4o-mini">gpt-4o-mini</option>
+                      <option value="gpt-4o">gpt-4o</option>
+                      <option value="whisper-1">whisper-1</option>
+                    </select>
+                  </div>
+                </div>
+
+                {usageLogsLoading ? (
+                  <div className="flex justify-center py-8"><RefreshCw className="w-6 h-6 text-blue-500 animate-spin" /></div>
+                ) : (usageLogs?.logs ?? []).length === 0 ? (
+                  <p className="text-sm text-center text-slate-500 py-8">
+                    Belum ada riwayat request di periode ini.
+                  </p>
+                ) : (
+                  <>
+                    {/* Tabel log */}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="text-left text-slate-400 dark:text-slate-500 border-b border-slate-800/50 dark:border-slate-200">
+                            <th className="py-2 pr-3 font-medium">Waktu</th>
+                            <th className="py-2 px-2 font-medium">Model</th>
+                            <th className="py-2 px-2 font-medium">Fungsi / Tujuan</th>
+                            <th className="py-2 px-2 font-medium">Nomor HP</th>
+                            <th className="py-2 px-2 font-medium">Store</th>
+                            <th className="py-2 px-2 font-medium text-right">Token</th>
+                            <th className="py-2 pl-2 font-medium text-right">Biaya</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(usageLogs?.logs ?? []).map(log => (
+                            <tr key={log.id} className="border-b border-slate-800/10 dark:border-slate-100 hover:bg-slate-800/10 transition-colors">
+                              <td className="py-2 pr-3 text-slate-400 whitespace-nowrap">
+                                {new Date(log.created_at).toLocaleString('id-ID', {
+                                  day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
+                                })}
+                              </td>
+                              <td className="py-2 px-2">
+                                <span className={`font-mono font-medium ${
+                                  log.model.includes('deepseek') ? 'text-blue-400' : 'text-purple-400'
+                                }`}>
+                                  {log.model.length > 15 ? log.model.slice(0, 15) + '…' : log.model}
+                                </span>
+                              </td>
+                              <td className="py-2 px-2">
+                                <span className="text-slate-300 dark:text-slate-600">
+                                  {/* Terjemahan fungsi ke bahasa yang mudah dipahami */}
+                                  {log.function_name === 'getAIResponse' ? '💬 Balas Chat' :
+                                   log.function_name === 'getAIResponse_secondCall' ? '💬 Balas Chat (2nd)' :
+                                   log.function_name === 'generateChatSummary' ? '📋 Ringkasan Chat' :
+                                   log.function_name === 'transcribeAudio' ? '🎤 Transkripsi Audio' :
+                                   log.function_name === 'generateOrganicFollowUp' ? '📩 Follow Up' :
+                                   log.function_name === 'runInspectorValidation' ? '🔍 Validasi Rekap' :
+                                   log.function_name === 'analyzeImage' ? '🖼 Analisis Gambar' :
+                                   log.function_name || '-'}
+                                </span>
+                              </td>
+                              <td className="py-2 px-2">
+                                {log.contact_phone ? (
+                                  <span className="text-emerald-400 font-mono">
+                                    {/* Tampilkan nomor HP dalam format lokal */}
+                                    {String(log.contact_phone).startsWith('62')
+                                      ? '0' + String(log.contact_phone).slice(2)
+                                      : log.contact_phone}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-600">—</span>
+                                )}
+                              </td>
+                              <td className="py-2 px-2 text-slate-400 font-mono">
+                                {log.store_wa_id
+                                  ? String(log.store_wa_id).replace('@c.us', '').slice(-8)
+                                  : '—'}
+                              </td>
+                              <td className="py-2 px-2 text-right text-slate-400">
+                                {log.total_tokens.toLocaleString()}
+                              </td>
+                              <td className="py-2 pl-2 text-right">
+                                <span className="text-emerald-400 font-semibold">${log.cost_usd.toFixed(6)}</span>
+                                <br/>
+                                <span className="text-slate-500">Rp {log.cost_idr.toLocaleString('id-ID')}</span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Pagination */}
+                    {usageLogs && usageLogs.totalPages > 1 && (
+                      <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-800/30 dark:border-slate-100">
+                        <p className="text-xs text-slate-500">
+                          Halaman {usageLogs.page} dari {usageLogs.totalPages} ({usageLogs.total} request)
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleUsageLogsPageChange(usageLogs.page - 1)}
+                            disabled={usageLogs.page <= 1 || usageLogsLoading}
+                            className="p-1.5 rounded-lg bg-slate-800 dark:bg-slate-100 text-slate-400 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                            <ChevronLeft className="w-4 h-4" />
+                          </button>
+                          {Array.from({ length: Math.min(5, usageLogs.totalPages) }, (_, i) => {
+                            const p = Math.max(1, Math.min(usageLogs.page - 2, usageLogs.totalPages - 4)) + i;
+                            return p <= usageLogs.totalPages ? (
+                              <button key={p} onClick={() => handleUsageLogsPageChange(p)}
+                                className={`w-7 h-7 rounded-lg text-xs font-medium transition-colors ${
+                                  p === usageLogs.page
+                                    ? 'bg-blue-600 text-white'
+                                    : 'bg-slate-800 dark:bg-slate-100 text-slate-400 hover:text-white'
+                                }`}>
+                                {p}
+                              </button>
+                            ) : null;
+                          })}
+                          <button
+                            onClick={() => handleUsageLogsPageChange(usageLogs.page + 1)}
+                            disabled={usageLogs.page >= usageLogs.totalPages || usageLogsLoading}
+                            className="p-1.5 rounded-lg bg-slate-800 dark:bg-slate-100 text-slate-400 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+                            <ChevronRight className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </Card>
+
+              {/* ── 4. Konfigurasi Billing ──────────────────────────── */}
               <Card className="p-5">
                 <h2 className="text-lg font-bold text-white dark:text-slate-900 flex items-center gap-2 mb-5">
                   <DollarSign className="w-5 h-5 text-emerald-400" />
-                  Konfigurasi Billing
+                  Konfigurasi Monitoring
                 </h2>
 
                 {billingLoading ? (
@@ -1097,8 +1535,7 @@ const Settings = () => {
                       </div>
                       <button
                         onClick={() => setBillingForm(f => ({ ...f, openai_billing_enabled: f.openai_billing_enabled === 'true' ? 'false' : 'true' }))}
-                        className={`relative w-12 h-6 rounded-full transition-colors ${billingForm.openai_billing_enabled === 'true' ? 'bg-emerald-500' : 'bg-slate-600'}`}
-                      >
+                        className={`relative w-12 h-6 rounded-full transition-colors ${billingForm.openai_billing_enabled === 'true' ? 'bg-emerald-500' : 'bg-slate-600'}`}>
                         <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full transition-transform ${billingForm.openai_billing_enabled === 'true' ? 'translate-x-6' : 'translate-x-0.5'}`} />
                       </button>
                     </div>
@@ -1106,35 +1543,27 @@ const Settings = () => {
                     {/* Interval */}
                     <div>
                       <label className="text-sm font-medium text-slate-300 dark:text-slate-600 block mb-1.5">Interval Fetch (menit)</label>
-                      <input
-                        type="number"
-                        min={30}
-                        max={1440}
+                      <input type="number" min={30} max={1440}
                         value={billingForm.openai_billing_interval_min}
                         onChange={e => setBillingForm(f => ({ ...f, openai_billing_interval_min: e.target.value }))}
-                        className="w-full bg-slate-950 dark:bg-slate-50 border border-slate-700 dark:border-slate-300 rounded-xl py-2.5 px-4 text-slate-200 dark:text-slate-700 focus:outline-none focus:border-blue-500"
-                      />
+                        className="w-full bg-slate-950 dark:bg-slate-50 border border-slate-700 dark:border-slate-300 rounded-xl py-2.5 px-4 text-slate-200 dark:text-slate-700 focus:outline-none focus:border-blue-500" />
                       <p className="text-xs text-slate-500 mt-1">Min: 30 menit, Default: 360 menit (6 jam)</p>
                     </div>
 
                     {/* Daily Threshold */}
                     <div>
                       <label className="text-sm font-medium text-slate-300 dark:text-slate-600 block mb-1.5">Threshold Harian ($)</label>
-                      <input
-                        type="number"
-                        min={0.01}
-                        step={0.01}
+                      <input type="number" min={0.01} step={0.01}
                         value={billingForm.openai_billing_daily_threshold}
                         onChange={e => setBillingForm(f => ({ ...f, openai_billing_daily_threshold: e.target.value }))}
-                        className="w-full bg-slate-950 dark:bg-slate-50 border border-slate-700 dark:border-slate-300 rounded-xl py-2.5 px-4 text-slate-200 dark:text-slate-700 focus:outline-none focus:border-blue-500"
-                      />
+                        className="w-full bg-slate-950 dark:bg-slate-50 border border-slate-700 dark:border-slate-300 rounded-xl py-2.5 px-4 text-slate-200 dark:text-slate-700 focus:outline-none focus:border-blue-500" />
                       <p className="text-xs text-slate-500 mt-1">Notifikasi akan dikirim jika pemakaian melebihi threshold ini</p>
                     </div>
                   </div>
                 )}
               </Card>
 
-              {/* Telegram Config */}
+              {/* ── 5. Telegram Config ──────────────────────────────── */}
               <Card className="p-5">
                 <h2 className="text-lg font-bold text-white dark:text-slate-900 flex items-center gap-2 mb-5">
                   <Send className="w-5 h-5 text-blue-400" />
@@ -1147,7 +1576,6 @@ const Settings = () => {
                   </div>
                 ) : (
                   <div className="space-y-4 max-w-xl">
-                    {/* Enable Telegram */}
                     <div className="flex items-center justify-between">
                       <div>
                         <p className="text-sm font-medium text-white dark:text-slate-900">Telegram Notifikasi Aktif</p>
@@ -1155,60 +1583,43 @@ const Settings = () => {
                       </div>
                       <button
                         onClick={() => setBillingForm(f => ({ ...f, openai_billing_telegram_enabled: f.openai_billing_telegram_enabled === 'true' ? 'false' : 'true' }))}
-                        className={`relative w-12 h-6 rounded-full transition-colors ${billingForm.openai_billing_telegram_enabled === 'true' ? 'bg-blue-500' : 'bg-slate-600'}`}
-                      >
+                        className={`relative w-12 h-6 rounded-full transition-colors ${billingForm.openai_billing_telegram_enabled === 'true' ? 'bg-blue-500' : 'bg-slate-600'}`}>
                         <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full transition-transform ${billingForm.openai_billing_telegram_enabled === 'true' ? 'translate-x-6' : 'translate-x-0.5'}`} />
                       </button>
                     </div>
 
-                    {/* Telegram Bot Token */}
                     <div>
                       <label className="text-sm font-medium text-slate-300 dark:text-slate-600 block mb-1.5">Bot Token</label>
-                      <input
-                        type="password"
+                      <input type="password"
                         value={billingForm.openai_billing_telegram_token}
                         onChange={e => setBillingForm(f => ({ ...f, openai_billing_telegram_token: e.target.value }))}
                         placeholder={billingConfig?.telegram_token ? '•••••• (tersimpan)' : 'Masukkan token dari @BotFather'}
-                        className="w-full bg-slate-950 dark:bg-slate-50 border border-slate-700 dark:border-slate-300 rounded-xl py-2.5 px-4 text-slate-200 dark:text-slate-700 focus:outline-none focus:border-blue-500 placeholder-slate-500"
-                      />
+                        className="w-full bg-slate-950 dark:bg-slate-50 border border-slate-700 dark:border-slate-300 rounded-xl py-2.5 px-4 text-slate-200 dark:text-slate-700 focus:outline-none focus:border-blue-500 placeholder-slate-500" />
                     </div>
 
-                    {/* Telegram Chat ID */}
                     <div>
                       <label className="text-sm font-medium text-slate-300 dark:text-slate-600 block mb-1.5">Chat ID</label>
-                      <input
-                        type="text"
+                      <input type="text"
                         value={billingForm.openai_billing_telegram_chat_id}
                         onChange={e => setBillingForm(f => ({ ...f, openai_billing_telegram_chat_id: e.target.value }))}
                         placeholder={billingConfig?.telegram_chat_id || 'Contoh: -1001234567890'}
-                        className="w-full bg-slate-950 dark:bg-slate-50 border border-slate-700 dark:border-slate-300 rounded-xl py-2.5 px-4 text-slate-200 dark:text-slate-700 focus:outline-none focus:border-blue-500 placeholder-slate-500"
-                      />
+                        className="w-full bg-slate-950 dark:bg-slate-50 border border-slate-700 dark:border-slate-300 rounded-xl py-2.5 px-4 text-slate-200 dark:text-slate-700 focus:outline-none focus:border-blue-500 placeholder-slate-500" />
                       <p className="text-xs text-slate-500 mt-1">Dapatkan Chat ID dari @userinfobot di Telegram</p>
                     </div>
 
-                    {/* Actions */}
                     <div className="flex flex-wrap items-center gap-3 pt-2">
-                      <button
-                        onClick={handleBillingSave}
-                        disabled={billingSaving || billingLoading}
-                        className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white dark:text-slate-900 rounded-xl text-sm font-medium transition-colors shadow-lg shadow-blue-500/20"
-                      >
+                      <button onClick={handleBillingSave} disabled={billingSaving || billingLoading}
+                        className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-sm font-medium transition-colors shadow-lg shadow-blue-500/20">
                         <Save className="w-4 h-4" />
                         {billingSaving ? 'Menyimpan...' : 'Simpan Konfigurasi'}
                       </button>
-                      <button
-                        onClick={handleBillingTestTelegram}
-                        disabled={billingTestingTelegram || billingLoading}
-                        className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white dark:text-slate-900 rounded-xl text-sm font-medium transition-colors shadow-lg shadow-emerald-500/20"
-                      >
+                      <button onClick={handleBillingTestTelegram} disabled={billingTestingTelegram || billingLoading}
+                        className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-sm font-medium transition-colors shadow-lg shadow-emerald-500/20">
                         <Send className="w-4 h-4" />
                         {billingTestingTelegram ? 'Mengirim...' : 'Test Telegram'}
                       </button>
-                      <button
-                        onClick={fetchBillingConfig}
-                        disabled={billingLoading}
-                        className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 dark:bg-slate-100 hover:bg-slate-700 disabled:opacity-50 text-slate-200 dark:text-slate-700 rounded-xl text-sm font-medium transition-colors"
-                      >
+                      <button onClick={fetchBillingConfig} disabled={billingLoading}
+                        className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 dark:bg-slate-100 hover:bg-slate-700 disabled:opacity-50 text-slate-200 dark:text-slate-700 rounded-xl text-sm font-medium transition-colors">
                         <RefreshCw className={`w-4 h-4 ${billingLoading ? 'animate-spin' : ''}`} />
                         Refresh
                       </button>
@@ -1217,23 +1628,30 @@ const Settings = () => {
                 )}
               </Card>
 
-              {/* Info Card */}
+              {/* ── 6. Info Card ────────────────────────────────────── */}
               <Card className="p-5">
                 <div className="flex items-start gap-3">
                   <AlertTriangle className="w-5 h-5 text-amber-400 mt-0.5 shrink-0" />
                   <div>
-                    <p className="text-sm font-medium text-white dark:text-slate-900 mb-1">Informasi</p>
-                    <ul className="text-xs text-slate-400 dark:text-slate-500 space-y-1 list-disc list-inside">
-                      <li>DeepSeek API Key dibaca dari <code className="text-blue-400 bg-slate-800 dark:bg-slate-100 px-1 rounded">DEEPSEEK_API_KEY</code> di file .env backend</li>
-                      <li>OpenAI API Key dibaca dari <code className="text-blue-400 bg-slate-800 dark:bg-slate-100 px-1 rounded">OPENAI_API_KEY</code> di file .env backend</li>
-                      <li>Untuk billing API, gunakan <strong>Organization Key</strong> (bukan Project Key)</li>
-                      <li>Buat Bot Telegram via <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" className="text-blue-400 underline">@BotFather</a></li>
-                      <li>Dapatkan Chat ID via <a href="https://t.me/userinfobot" target="_blank" rel="noopener noreferrer" className="text-blue-400 underline">@userinfobot</a></li>
-                      <li>Laporan harian dikirim pukul 08:00 WIB (jika interval polling aktif)</li>
+                    <p className="text-sm font-medium text-white dark:text-slate-900 mb-2">Catatan Penting</p>
+                    <ul className="text-xs text-slate-400 dark:text-slate-500 space-y-1.5 list-disc list-inside">
+                      <li>Biaya dihitung berdasarkan token yang digunakan, bukan saldo yang dipotong (estimasi)</li>
+                      <li>Saldo DeepSeek diambil realtime dari API. Saldo OpenAI harus cek manual di dashboard</li>
+                      <li>Riwayat request baru akan muncul setelah bot merespons chat customer</li>
+                      <li>
+                        <a href="https://platform.openai.com/usage" target="_blank" rel="noopener noreferrer" className="text-blue-400 underline">
+                          Dashboard penggunaan OpenAI ↗
+                        </a>
+                        {' · '}
+                        <a href="https://platform.deepseek.com/usage" target="_blank" rel="noopener noreferrer" className="text-blue-400 underline">
+                          Dashboard penggunaan DeepSeek ↗
+                        </a>
+                      </li>
                     </ul>
                   </div>
                 </div>
               </Card>
+
             </div>
           )}
 

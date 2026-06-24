@@ -985,7 +985,9 @@ CATATAN: Gunakan data dari rekap pesanan. Isi semua field seakurat mungkin.`,
                 promptTokens: response.usage.prompt_tokens,
                 completionTokens: response.usage.completion_tokens,
                 endpoint: 'chat',
-                functionName: 'getAIResponse'
+                functionName: 'getAIResponse',
+                storeWaId: store?.wa_id || null,
+                contactPhone: customerPhone || null,
             }).catch(() => {});
         }
 
@@ -1255,7 +1257,9 @@ CATATAN: Gunakan data dari rekap pesanan. Isi semua field seakurat mungkin.`,
                         promptTokens: secondResponse.usage.prompt_tokens,
                         completionTokens: secondResponse.usage.completion_tokens,
                         endpoint: 'chat',
-                        functionName: 'getAIResponse_secondCall'
+                        functionName: 'getAIResponse_secondCall',
+                        storeWaId: store?.wa_id || null,
+                        contactPhone: customerPhone || null,
                     }).catch(() => {});
                 }
 

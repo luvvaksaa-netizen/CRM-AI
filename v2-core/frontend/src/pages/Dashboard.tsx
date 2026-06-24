@@ -156,7 +156,7 @@ const Dashboard = () => {
       const configRes = await api.get('/openai/billing/config').catch(() => null);
       if (configRes) setBillingConfig(configRes.data);
       try {
-        const costsRes = await api.get('/openai/billing/actual-costs?days=7');
+        const costsRes = await api.get('/openai/billing/actual-costs?days=30');
         setBillingActualCosts(costsRes.data);
       } catch (_) {}
     } catch (e) {
@@ -170,7 +170,7 @@ const Dashboard = () => {
     setBillingFetching(true);
     try {
       const [costsRes, configRes] = await Promise.all([
-        api.get('/openai/billing/actual-costs?days=7').catch(() => null),
+        api.get('/openai/billing/actual-costs?days=30').catch(() => null),
         api.get('/openai/billing/config').catch(() => null),
       ]);
       if (costsRes) setBillingActualCosts(costsRes.data);
@@ -446,7 +446,7 @@ const Dashboard = () => {
               
               {/* OpenAI Usage (Estimasi) */}
               <div className="bg-slate-950/40 dark:bg-slate-50 rounded-xl p-3">
-                <p className="text-xs text-slate-400 dark:text-slate-500">OpenAI Usage (7hr)</p>
+                <p className="text-xs text-slate-400 dark:text-slate-500">OpenAI Pengeluaran (30hr)</p>
                 <p className="text-xl font-bold text-blue-400">
                   ${billingActualCosts ? billingActualCosts.total_cost_openai?.toFixed(6) : '0.000000'}
                 </p>

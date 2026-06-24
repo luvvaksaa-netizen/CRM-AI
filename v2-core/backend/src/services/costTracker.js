@@ -53,19 +53,22 @@ function calculateCost(model, promptTokens, completionTokens) {
 }
 
 /**
- * Catat satu request OpenAI ke database.
+ * Catat satu request AI ke database.
  * @param {object} options
- * @param {string} options.model - Nama model (contoh: 'gpt-4o-mini')
- * @param {number} options.promptTokens - Jumlah prompt tokens
+ * @param {string} options.model            - Nama model (contoh: 'gpt-4o-mini', 'deepseek-chat')
+ * @param {number} options.promptTokens     - Jumlah prompt tokens
  * @param {number} options.completionTokens - Jumlah completion tokens
- * @param {string} [options.endpoint] - Tipe endpoint ('chat', 'audio', dll)
- * @param {string} [options.functionName] - Nama fungsi pemanggil (untuk tracking)
+ * @param {string} [options.endpoint]       - Tipe endpoint ('chat', 'audio', dll)
+ * @param {string} [options.functionName]   - Nama fungsi pemanggil (untuk tracking)
+ * @param {string} [options.storeWaId]      - WA ID store yang memicu request (opsional)
+ * @param {string} [options.contactId]      - ID kontak WhatsApp (opsional, misal: 6281234@c.us)
+ * @param {string} [options.contactPhone]   - Nomor HP bersih (opsional, misal: 6281234)
  */
 // ─── Log throttle: max 1 error per 60 detik ───
 let lastCostTrackerErrorTime = 0;
 const COST_TRACKER_ERROR_COOLDOWN_MS = 60000;
 
-async function logRequest({ model, promptTokens, completionTokens, endpoint, functionName }) {
+async function logRequest({ model, promptTokens, completionTokens, endpoint, functionName, storeWaId, contactId, contactPhone }) {
   try {
     const prompt = promptTokens || 0;
     const completion = completionTokens || 0;
@@ -91,10 +94,14 @@ async function logRequest({ model, promptTokens, completionTokens, endpoint, fun
       total_cost: safeTotalCost.toFixed(8),
       endpoint: endpoint || 'chat',
       function_name: functionName || null,
+      // Context fields — opsional, null jika tidak disediakan
+      store_wa_id: storeWaId || null,
+      contact_id: contactId || null,
+      contact_phone: contactPhone || null,
       created_at: new Date(),
     });
 
-    logger.info(`[CostTracker] ${model}: ${prompt}in + ${completion}out = $${total_cost.toFixed(6)}`);
+    logger.info(`[CostTracker] ${model}: ${prompt}in + ${completion}out = $${total_cost.toFixed(6)}${storeWaId ? ` [${storeWaId}/${contactPhone || contactId}]` : ''}`);
   } catch (e) {
     // Non-blocking — error logging tidak boleh crash main flow
     const detail = e.errors ? e.errors.map(er => er.message).join(', ') : e.message;
@@ -219,8 +226,71 @@ async function getCostSummary(days = 30) {
   return summary;
 }
 
+/**
+ * Ambil log per-request secara detail (paginated).
+ * Dipakai oleh Settings > AI Billing > tab "Riwayat Request".
+ *
+ * @param {object} opts
+ * @param {number} [opts.days=30]   - Filter N hari ke belakang
+ * @param {number} [opts.page=1]   - Halaman (1-based)
+ * @param {number} [opts.limit=50] - Baris per halaman
+ * @param {string} [opts.model]    - Filter model tertentu (opsional)
+ * @returns {Promise<{logs: Array, total: number, page: number, totalPages: number}>}
+ */
+async function getUsageLogs({ days = 30, page = 1, limit = 50, model = null } = {}) {
+  const { Op } = require('sequelize');
+  const since = new Date();
+  since.setDate(since.getDate() - days);
+
+  const where = { created_at: { [Op.gte]: since } };
+  if (model) where.model = model;
+
+  const offset = (Math.max(1, page) - 1) * limit;
+
+  const { count, rows } = await OpenAICostLog.findAndCountAll({
+    where,
+    order: [['created_at', 'DESC']],
+    limit: Math.min(limit, 100), // Hard cap 100 baris per request
+    offset,
+  });
+
+  const { usdToIdr } = require('./exchangeRate.service');
+  let usdRate = 16500; // fallback
+  try { usdRate = await require('./exchangeRate.service').fetchUsdToIdrRate(); } catch (_) {}
+
+  const logs = rows.map(r => {
+    const row = r.toJSON();
+    const cost = parseFloat(row.total_cost || 0);
+    return {
+      id: row.id,
+      model: row.model,
+      function_name: row.function_name || '-',
+      endpoint: row.endpoint || 'chat',
+      prompt_tokens: row.prompt_tokens || 0,
+      completion_tokens: row.completion_tokens || 0,
+      total_tokens: row.total_tokens || 0,
+      cost_usd: parseFloat(cost.toFixed(6)),
+      cost_idr: Math.round(cost * usdRate),
+      // Context — siapa yang memicu
+      store_wa_id: row.store_wa_id || null,
+      contact_id: row.contact_id || null,
+      contact_phone: row.contact_phone || null,
+      created_at: row.created_at,
+    };
+  });
+
+  return {
+    logs,
+    total: count,
+    page: Math.max(1, page),
+    totalPages: Math.ceil(count / limit),
+    limit,
+  };
+}
+
 module.exports = {
   logRequest,
   getCostSummary,
+  getUsageLogs,
   calculateCost,
 };

@@ -104,3 +104,19 @@ export const getExchangeRate = async (_req: Request, res: Response, next: NextFu
     next(e);
   }
 };
+
+// ─── GET /api/openai/billing/usage-logs?days=30&page=1&limit=50&model=deepseek-chat ───
+export const getUsageLogsList = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { getUsageLogs } = require('../services/costTracker');
+    const days  = Math.min(parseInt(req.query.days  as string) || 30, 365);
+    const page  = Math.max(parseInt(req.query.page  as string) || 1,  1);
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+    const model = (req.query.model as string) || null;
+
+    const result = await getUsageLogs({ days, page, limit, model });
+    res.json(result);
+  } catch (e) {
+    next(e);
+  }
+};

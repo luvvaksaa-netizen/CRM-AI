@@ -262,6 +262,10 @@ OpenAICostLog.init({
   total_cost: { type: DataTypes.DECIMAL(12, 8), defaultValue: 0 },
   endpoint: { type: DataTypes.STRING, allowNull: true },
   function_name: { type: DataTypes.STRING, allowNull: true },
+  // ─── Context fields: siapa yang memicu request AI ini ───
+  store_wa_id: { type: DataTypes.STRING, allowNull: true },   // WA ID store yang aktif
+  contact_id: { type: DataTypes.STRING, allowNull: true },    // ID kontak (misal: 6281234@c.us)
+  contact_phone: { type: DataTypes.STRING, allowNull: true }, // Nomor HP bersih (misal: 6281234)
   created_at: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
 }, {
   sequelize,
