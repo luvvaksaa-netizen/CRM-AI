@@ -72,7 +72,7 @@ const Dashboard = () => {
   const [endDate, setEndDate] = useState('');
   
   // Drill-down tabs
-  const [activeDrillTab, setActiveDrillTab] = useState<'leads' | 'followups' | 'learning'>('leads');
+  const [activeDrillTab, setActiveDrillTab] = useState<'leads' | 'closing' | 'followups' | 'learning'>('leads');
   const [drillData, setDrillData] = useState<any[]>([]);
   const [drillLoading, setDrillLoading] = useState(false);
   
@@ -191,7 +191,9 @@ const Dashboard = () => {
       let endpoint = '';
       if (activeDrillTab === 'leads') {
         endpoint = '/analytics/leads';
-        params.label = 'baru_masuk'; // ← FIX: wajib ada label
+        params.label = 'baru_masuk';
+      } else if (activeDrillTab === 'closing') {
+        endpoint = '/analytics/closing';
       } else if (activeDrillTab === 'followups') {
         endpoint = '/analytics/followups';
       } else {
@@ -570,25 +572,27 @@ const Dashboard = () => {
         transition={{ delay: 0.8 }}
         className="bg-slate-900/40 dark:bg-white border border-slate-800/50 dark:border-slate-200 rounded-2xl backdrop-blur-xl overflow-hidden"
       >
-        <div className="flex border-b border-slate-800/50 dark:border-slate-200">
-          {(['leads', 'followups', 'learning'] as const).map(tab => (
+        <div className="flex border-b border-slate-800/50 dark:border-slate-200 overflow-x-auto">
+          {(['leads', 'closing', 'followups', 'learning'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setActiveDrillTab(tab)}
-              className={`px-6 py-3 text-sm font-medium transition-all border-b-2 ${
+              className={`px-5 py-3 text-sm font-medium transition-all border-b-2 shrink-0 ${
                 activeDrillTab === tab
-                  ? 'border-blue-500 text-blue-400'
+                  ? tab === 'closing' ? 'border-emerald-500 text-emerald-400' : 'border-blue-500 text-blue-400'
                   : 'border-transparent text-slate-400 dark:text-slate-500 hover:text-slate-200'
               }`}
             >
-              {tab === 'leads' ? `📋 Leads${drillData.length > 0 && activeDrillTab === 'leads' ? ` (${drillData.length})` : ''}` 
-                : tab === 'followups' ? '📨 Follow Ups' 
+              {tab === 'leads'
+                ? `📋 Leads${activeDrillTab === 'leads' && drillData.length > 0 ? ` (${drillData.length})` : ''}`
+                : tab === 'closing'
+                ? `🎯 Closing${activeDrillTab === 'closing' && drillData.length > 0 ? ` (${drillData.length})` : ''}`
+                : tab === 'followups' ? '📨 Follow Ups'
                 : '🧠 Learning'}
             </button>
           ))}
         </div>
 
-        {/* Sub-info untuk leads */}
         {activeDrillTab === 'leads' && (
           <div className="px-4 pt-3 pb-0">
             <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -596,8 +600,15 @@ const Dashboard = () => {
             </p>
           </div>
         )}
+        {activeDrillTab === 'closing' && (
+          <div className="px-4 pt-3 pb-0">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Closing = kontak yang mendapat label <strong className="text-emerald-400">Closing</strong> di periode ini ({rangeLabelMap[dateRange]}). Klik kontak untuk buka chat.
+            </p>
+          </div>
+        )}
 
-        <div className="p-4 max-h-72 overflow-y-auto custom-scrollbar">
+        <div className="p-4 max-h-80 overflow-y-auto custom-scrollbar">
           {drillLoading ? (
             <div className="flex justify-center py-8">
               <RefreshCw className="w-6 h-6 text-blue-500 animate-spin" />
@@ -605,23 +616,40 @@ const Dashboard = () => {
           ) : drillData.length > 0 ? (
             <div className="space-y-2">
               {activeDrillTab === 'leads' && drillData.map((lead: any, i: number) => (
-                <div key={i} className="flex items-center justify-between bg-slate-950/50 dark:bg-slate-50 rounded-lg p-3 hover:bg-slate-800/60 transition-colors">
+                <div key={i} className="flex items-center justify-between bg-slate-950/50 dark:bg-slate-50 rounded-xl p-3 hover:bg-slate-800/60 transition-colors">
                   <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 font-bold text-sm">
-                      {(lead.contact_name || lead.contact_id || '?').charAt(0).toUpperCase()}
+                    <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 font-bold text-sm shrink-0">
+                      {(lead.contact_name || lead.contact_phone || '?').charAt(0).toUpperCase()}
                     </div>
                     <div>
-                      <p className="text-sm text-white dark:text-slate-900 font-medium">{lead.contact_name || lead.contact_id}</p>
-                      <p className="text-xs text-slate-400 dark:text-slate-500">
-                        <span className="text-blue-400">{lead.store_name}</span> • {lead.contact_phone || lead.contact_id}
-                      </p>
+                      {lead.contact_name && <p className="text-sm text-white dark:text-slate-900 font-medium">{lead.contact_name}</p>}
+                      <p className="text-xs text-blue-400 font-mono">{lead.contact_phone || lead.contact_id}</p>
+                      <p className="text-[11px] text-slate-500">{lead.store_name}</p>
                     </div>
                   </div>
                   <span className="text-xs text-slate-500 shrink-0">{new Date(lead.last_updated).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })}</span>
                 </div>
               ))}
+              {activeDrillTab === 'closing' && drillData.map((item: any, i: number) => (
+                <div key={i} className="flex items-center justify-between bg-emerald-950/20 dark:bg-emerald-50 border border-emerald-800/20 rounded-xl p-3 hover:bg-emerald-900/20 transition-colors">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400 font-bold text-sm shrink-0">
+                      {(item.contact_name || item.contact_phone || '?').charAt(0).toUpperCase()}
+                    </div>
+                    <div>
+                      {item.contact_name && <p className="text-sm text-white dark:text-slate-900 font-medium">{item.contact_name}</p>}
+                      <p className="text-xs text-emerald-400 font-mono">{item.contact_phone || item.contact_id}</p>
+                      <p className="text-[11px] text-slate-500">{item.store_name}</p>
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <span className="text-xs font-bold text-emerald-400 block">✅ Closing</span>
+                    <span className="text-[11px] text-slate-500">{new Date(item.closing_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' } as any)}</span>
+                  </div>
+                </div>
+              ))}
               {activeDrillTab === 'followups' && drillData.map((fu: any, i: number) => (
-                <div key={i} className="flex items-center justify-between bg-slate-950/50 dark:bg-slate-50 rounded-lg p-3">
+                <div key={i} className="flex items-center justify-between bg-slate-950/50 dark:bg-slate-50 rounded-xl p-3">
                   <div>
                     <p className="text-sm text-white dark:text-slate-900 font-medium">{fu.name}</p>
                     <p className="text-xs text-slate-400 dark:text-slate-500">
@@ -639,7 +667,7 @@ const Dashboard = () => {
                 </div>
               ))}
               {activeDrillTab === 'learning' && drillData.map((item: any, i: number) => (
-                <div key={i} className="bg-slate-950/50 dark:bg-slate-50 rounded-lg p-3">
+                <div key={i} className="bg-slate-950/50 dark:bg-slate-50 rounded-xl p-3">
                   <div className="flex items-center justify-between mb-1">
                     <p className="text-sm text-white dark:text-slate-900 font-medium">{item.product_type || 'Generic'}</p>
                     <div className="flex items-center gap-2">
@@ -650,10 +678,7 @@ const Dashboard = () => {
                     </div>
                   </div>
                   <p className="text-xs text-slate-400 dark:text-slate-500">
-                    Pesan s/d closing: {item.pesan_sampai_closing} • 
-                    Alur: {item.alur_lengkap ? '✅' : '❌'} • 
-                    Data: {item.data_lengkap ? '✅' : '❌'} • 
-                    Bayar: {item.metode_bayar || '-'}
+                    Pesan: {item.pesan_sampai_closing} • Alur: {item.alur_lengkap ? '✅' : '❌'} • Data: {item.data_lengkap ? '✅' : '❌'} • Bayar: {item.metode_bayar || '-'}
                   </p>
                 </div>
               ))}
@@ -663,15 +688,20 @@ const Dashboard = () => {
               <Calendar className="w-8 h-8 mx-auto mb-2 opacity-40" />
               <p className="text-sm">
                 {activeDrillTab === 'leads'
-                  ? dateRange === 'today' 
-                    ? 'Belum ada leads baru hari ini' 
+                  ? dateRange === 'today'
+                    ? 'Belum ada leads baru hari ini'
                     : `Belum ada leads di periode ${rangeLabelMap[dateRange]}`
-                  : activeDrillTab === 'followups' 
-                    ? 'Belum ada data follow up' 
-                    : 'Belum ada data learning'}
+                  : activeDrillTab === 'closing'
+                  ? `Belum ada closing di periode ${rangeLabelMap[dateRange]}`
+                  : activeDrillTab === 'followups'
+                  ? 'Belum ada data follow up'
+                  : 'Belum ada data learning'}
               </p>
               {activeDrillTab === 'leads' && dateRange === 'today' && (
                 <p className="text-xs mt-1 text-slate-600">Leads masuk ketika ada nomor WA baru yang chat pertama kali</p>
+              )}
+              {activeDrillTab === 'closing' && (
+                <p className="text-xs mt-1 text-slate-600">Closing tercatat saat label "Closing" dipasang ke kontak</p>
               )}
             </div>
           )}

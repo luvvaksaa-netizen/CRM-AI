@@ -201,22 +201,20 @@ export const getLeads = async (req: Request, res: Response, next: NextFunction) 
     const { store_wa_id, label } = req.query;
     const { sDateMs, eDateMs } = parseDateRange(req.query);
 
-    // Default: tampilkan semua leads baru (baru_masuk) jika tidak ada label
     const effectiveLabel = (label as string) || 'baru_masuk';
 
     const summaryWhere: any = {};
     if (store_wa_id) summaryWhere.store_wa_id = store_wa_id;
 
     const allSummaries: any[] = await ChatSummary.findAll({ where: summaryWhere });
-    const stores: any[] = await Store.findAll({ attributes: ['wa_id', 'name'] });
+    const storeList: any[] = await Store.findAll({ attributes: ['wa_id', 'name'] });
     const storeMap: Record<string, string> = {};
-    for (const st of stores) storeMap[st.wa_id] = st.name;
+    for (const st of storeList) storeMap[st.wa_id] = st.name;
 
     const leads: any[] = [];
 
     for (const s of allSummaries) {
       if (effectiveLabel === 'baru_masuk') {
-        // Leads baru = ChatSummary dibuat (pertama kali chat) dalam range
         const ct = new Date(s.createdAt).getTime();
         if (ct >= sDateMs && ct <= eDateMs) leads.push(s);
         continue;
@@ -251,21 +249,109 @@ export const getLeads = async (req: Request, res: Response, next: NextFunction) 
 
     leads.sort((a, b) => new Date(b.last_updated || b.createdAt).getTime() - new Date(a.last_updated || a.createdAt).getTime());
 
-    const result = leads.slice(0, 100).map(s => ({
-      store_wa_id: s.store_wa_id,
-      store_name: storeMap[s.store_wa_id] || 'Unknown Store',
-      contact_id: s.contact_id,
-      contact_name: s.contact_name || 'Pelanggan',
-      contact_phone: s.contact_phone,
-      last_updated: s.last_updated || s.createdAt,
-      created_at: s.createdAt,
-    }));
+    const result = leads.slice(0, 100).map(s => {
+      let phoneDisplay = s.contact_phone ? `+${s.contact_phone}` : null;
+      if (!phoneDisplay && s.contact_id) {
+        if (s.contact_id.endsWith('@c.us')) {
+          phoneDisplay = `+${s.contact_id.replace('@c.us', '')}`;
+        } else {
+          const digits = s.contact_id.replace('@lid', '').replace(/\D/g, '');
+          phoneDisplay = digits ? `LID-${digits.slice(-6)}` : s.contact_id;
+        }
+      }
+      return {
+        store_wa_id: s.store_wa_id,
+        store_name: storeMap[s.store_wa_id] || 'Unknown Store',
+        contact_id: s.contact_id,
+        contact_name: (!s.contact_name || /^Kontak WA/.test(s.contact_name)) ? null : s.contact_name,
+        contact_phone: phoneDisplay,
+        last_updated: s.last_updated || s.createdAt,
+        created_at: s.createdAt,
+      };
+    });
 
     res.json(result);
   } catch (e) {
     next(e);
   }
 };
+
+/**
+ * GET /analytics/closing
+ * Daftar kontak yang sudah mendapat label CLOSING dalam rentang waktu.
+ * Sumber data: label_timestamps['Closing'] → wa_labels → regex di summary
+ * Memberikan full traceability: nomor WA, toko, waktu closing.
+ */
+export const getClosing = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { store_wa_id } = req.query;
+    const { sDateMs, eDateMs } = parseDateRange(req.query);
+
+    const summaryWhere: any = {};
+    if (store_wa_id) summaryWhere.store_wa_id = store_wa_id;
+
+    const allSummaries: any[] = await ChatSummary.findAll({ where: summaryWhere });
+    const storeList: any[] = await Store.findAll({ attributes: ['wa_id', 'name'] });
+    const storeMap: Record<string, string> = {};
+    for (const st of storeList) storeMap[st.wa_id] = st.name;
+
+    const closingList: any[] = [];
+
+    for (const s of allSummaries) {
+      let closingTime: number | null = null;
+
+      // Prioritas 1: label_timestamps['Closing'] — paling akurat
+      let ts: any = {};
+      try { ts = JSON.parse(s.label_timestamps || '{}'); } catch(_){}
+      if (ts['Closing'] && typeof ts['Closing'] === 'number') {
+        closingTime = ts['Closing'];
+      }
+
+      // Prioritas 2: wa_labels JSON array berisi 'Closing'
+      if (closingTime === null) {
+        let labels: string[] = [];
+        try { labels = JSON.parse(s.wa_labels || '[]'); } catch(_){}
+        if (labels.some(l => l.toLowerCase() === 'closing')) {
+          closingTime = new Date(s.last_updated || s.createdAt).getTime();
+        }
+      }
+
+      // Prioritas 3: regex di summary
+      if (closingTime === null && STATUS_REGEX_FALLBACK.closing.test(s.summary || '')) {
+        closingTime = new Date(s.last_updated || s.createdAt).getTime();
+      }
+
+      if (closingTime !== null && closingTime >= sDateMs && closingTime <= eDateMs) {
+        let phoneDisplay = s.contact_phone ? `+${s.contact_phone}` : null;
+        if (!phoneDisplay && s.contact_id) {
+          if (s.contact_id.endsWith('@c.us')) {
+            phoneDisplay = `+${s.contact_id.replace('@c.us', '')}`;
+          } else {
+            const digits = s.contact_id.replace('@lid', '').replace(/\D/g, '');
+            phoneDisplay = digits ? `LID-${digits.slice(-6)}` : s.contact_id;
+          }
+        }
+
+        closingList.push({
+          store_wa_id: s.store_wa_id,
+          store_name: storeMap[s.store_wa_id] || 'Unknown Store',
+          contact_id: s.contact_id,
+          contact_name: (!s.contact_name || /^Kontak WA/.test(s.contact_name)) ? null : s.contact_name,
+          contact_phone: phoneDisplay,
+          closing_at: new Date(closingTime).toISOString(),
+          last_updated: s.last_updated || s.createdAt,
+        });
+      }
+    }
+
+    closingList.sort((a, b) => new Date(b.closing_at).getTime() - new Date(a.closing_at).getTime());
+
+    res.json(closingList.slice(0, 200));
+  } catch (e) {
+    next(e);
+  }
+};
+
 
 export const getFollowups = async (req: Request, res: Response, next: NextFunction) => {
   try {
