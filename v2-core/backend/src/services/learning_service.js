@@ -209,8 +209,24 @@ Berikan output JSON yang valid. Extract MAKSIMAL 5 pola terbaik saja.`;
         // Ignore cost tracker error
     }
 
-    const content = response.choices[0]?.message?.content || '{}';
-    return JSON.parse(content);
+    const contentText = response.choices[0]?.message?.content || '{}';
+    let parsed = {};
+    try {
+        parsed = JSON.parse(contentText);
+    } catch (e) {
+        try {
+            // Fallback: extract json array or object if wrapped in markdown
+            const match = contentText.match(/\{([\s\S]*)\}/);
+            if (match) parsed = JSON.parse(match[0]);
+            else {
+                const matchArr = contentText.match(/\[([\s\S]*)\]/);
+                if (matchArr) parsed = JSON.parse(matchArr[0]);
+            }
+        } catch (e2) {
+            console.error('[Learning] Fallback JSON parse gagal:', e2.message);
+        }
+    }
+    return parsed;
 }
 
 /**
