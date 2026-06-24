@@ -336,7 +336,7 @@ function createWhatsAppClient(storeWaId) {
                 '--no-first-run',
                 '--disable-renderer-backgrounding',  // Hemat CPU saat tab tidak aktif
                 '--disable-backgrounding-occluded-windows',
-                '--js-flags=--max-old-space-size=256'  // Batasi JS heap per browser
+                '--js-flags=--max-old-space-size=1024' // Naikkan limit memori tiap browser agar WA tidak crash internal
             ],
             headless: true,
             handleSIGINT: false,
@@ -1227,7 +1227,7 @@ async function restartClientRuntime(storeWaId, reason = 'health-check', awaitRes
  * Jika client tidak merespon/terdeteksi macet, bot akan restart otomatis.
  */
 function initHealthCheck(storeWaId) {
-    const CHECK_INTERVAL = 10 * 60 * 1000; // Cek tiap 10 menit (cukup untuk deteksi hang tanpa over-restart)
+    const CHECK_INTERVAL = 2 * 60 * 1000; // Cek tiap 2 menit untuk deteksi hang lebih responsif
     const HANG_TIMEOUT_MS = 10000; // 10 detik — jika browser tidak respon, anggap hang
     
     const intervalId = setInterval(async () => {
