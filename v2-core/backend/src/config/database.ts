@@ -2,7 +2,7 @@ import { Sequelize } from 'sequelize';
 import { getDbPath } from './paths';
 import path from 'path';
 
-const USE_PG = !!process.env.DATABASE_URL;
+const USE_PG = false; // Memaksa menggunakan SQLite (mengabaikan environment variable DATABASE_URL yang nyangkut di Windows/PM2)
 
 export const sequelize = USE_PG
   ? new Sequelize(process.env.DATABASE_URL!, {
