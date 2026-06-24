@@ -70,6 +70,7 @@ export const getContacts = async (req: Request, res: Response, next: NextFunctio
         m.contact_id,
         m.sender_name,
         m.contact_display_name,
+        m.contact_phone,
         m.body           AS last_message,
         m.timestamp      AS last_seen,
         CASE WHEN m.is_from_me = 1 THEN 0 ELSE COALESCE(u.unread_count, 0) END AS unread_count

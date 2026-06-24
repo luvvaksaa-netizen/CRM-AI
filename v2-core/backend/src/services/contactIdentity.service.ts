@@ -10,7 +10,10 @@ import logger from '../utils/logger';
 
 export function isPlaceholderContactName(name: any): boolean {
   const value = String(name || '').trim();
-  return /^Kontak WA #\d+$/.test(value) || value === 'Kontak WA Privat' || value === 'Kontak WhatsApp';
+  return /^Kontak WA (#\d+|Privat)?$/.test(value)
+    || value === 'Kontak WA Privat'
+    || value === 'Kontak WhatsApp'
+    || /^LID(-\d+)?$/.test(value);
 }
 
 export function firstStableDisplayName(...values: any[]): string {

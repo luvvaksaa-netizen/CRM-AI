@@ -18,6 +18,7 @@ interface ChatContact {
   contact_id: string;
   sender_name: string;
   contact_display_name: string;
+  contact_phone?: string;
   last_message: string;
   last_seen: string;
   unread_count: number;
@@ -80,7 +81,11 @@ const formatTime = (dateStr: string) => {
 
 const formatPhoneDisplay = (contactId: string) => {
   if (contactId.endsWith('@c.us')) return '+' + contactId.replace('@c.us', '');
-  if (contactId.endsWith('@lid')) return 'LID (tap 📞 untuk resolve)';
+  if (contactId.endsWith('@lid')) {
+    // Ambil angka dari LID jika bisa — tampilkan sebagai ID pendek saja
+    const lidNum = contactId.replace('@lid', '').replace(/\D/g, '');
+    return lidNum ? `LID-${lidNum.slice(-6)}` : 'Nomor belum diketahui';
+  }
   return contactId;
 };
 
@@ -195,7 +200,15 @@ const ChatManagement = () => {
 
   const getDisplayName = (c: ChatContact | ChatMessage, fallbackId?: string) => {
     if ('contact_display_name' in c) {
-      return c.contact_display_name || c.sender_name || c.contact_id;
+      const raw = c as ChatContact;
+      const name = (raw.contact_display_name || raw.sender_name || '').trim();
+      // Jika nama adalah placeholder generik, tampilkan nomor HP asli
+      const isPlaceholder = !name || /^Kontak WA (#\d+|Privat)?$/.test(name) || name === 'Kontak WhatsApp';
+      if (isPlaceholder) {
+        if (raw.contact_phone) return `+${raw.contact_phone}`;
+        if (raw.contact_id?.endsWith('@c.us')) return `+${raw.contact_id.replace('@c.us', '')}`;
+      }
+      return name || raw.contact_id;
     }
     return c.sender_name || fallbackId || 'Unknown';
   };
@@ -1224,7 +1237,11 @@ const ChatManagement = () => {
                   <div>
                     <h3 className="font-bold text-white dark:text-slate-900 text-sm">{getDisplayName(activeContact)}</h3>
                     <p className="text-[10px] text-slate-500">
-                      {resolvedPhone ? `+${resolvedPhone}` : formatPhoneDisplay(activeContact.contact_id)}
+                      {resolvedPhone
+                        ? `+${resolvedPhone}`
+                        : (activeContact as any).contact_phone
+                          ? `+${(activeContact as any).contact_phone}`
+                          : formatPhoneDisplay(activeContact.contact_id)}
                     </p>
                     <p className="text-xs font-medium flex items-center gap-1 mt-0.5">
                       {activeContact.is_bot_paused ? (

@@ -80,6 +80,17 @@ function pushLearningJob(job) {
     _debounce.set(key, timer);
 }
 
+/** Format contactId menjadi nomor manusiawi untuk log (hilangkan @lid/@c.us) */
+function _formatId(contactId) {
+    if (!contactId) return '?';
+    if (contactId.endsWith('@c.us')) return `+${contactId.replace('@c.us', '')}`;
+    if (contactId.endsWith('@lid')) {
+        const digits = contactId.replace('@lid', '').replace(/\D/g, '');
+        return `LID-${digits.slice(-6) || '?'}`;
+    }
+    return contactId;
+}
+
 /**
  * Proses satu job dari antrian.
  * Dipanggil oleh worker loop.
@@ -92,7 +103,7 @@ async function _processNextJob() {
     const key = `${job.storeWaId}:${job.contactId}`;
 
     try {
-        logger.info(`[LearningWorker] 🔄 Memproses job: [${job.storeWaId}] kontak [${job.contactId}]`);
+        logger.info(`[LearningWorker] 🔄 Memproses job: [${job.storeWaId}] kontak [${_formatId(job.contactId)}]`);
 
         // Tandai sebagai sedang diproses (dedup)
         _dedup.set(key, Date.now());

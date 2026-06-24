@@ -69,14 +69,18 @@ function buildContactIdentity(chatId, contact = {}) {
   let displayName = realName;
   if (!displayName && type === 'phone') displayName = formatPhoneNumber(phone);
   if (!displayName && phone) displayName = formatPhoneNumber(phone);
-  if (!displayName && type === 'lid') displayName = shortLid ? `Kontak WA #${shortLid}` : 'Kontak WA Privat';
+  // Untuk @lid: jika phone sudah resolved → tampilkan nomor, bukan "Kontak WA #xxx"
+  if (!displayName && type === 'lid') {
+    displayName = phone ? formatPhoneNumber(phone) : (shortLid ? `LID-${shortLid}` : 'LID');
+  }
   if (!displayName && type === 'broadcast') displayName = 'Siaran WhatsApp';
   if (!displayName && type === 'newsletter') displayName = 'Channel WhatsApp';
   if (!displayName && type === 'group') displayName = 'Grup WhatsApp';
   if (!displayName) displayName = 'Kontak WhatsApp';
 
   if (isGeneratedNameForId(displayName, chatId) && type !== 'phone') {
-    displayName = type === 'lid' && shortLid ? `Kontak WA #${shortLid}` : 'Kontak WhatsApp';
+    // Jika nama terdeteksi dihasilkan dari ID (angka sama), ganti dengan nomor HP
+    displayName = phone ? formatPhoneNumber(phone) : (type === 'lid' && shortLid ? `LID-${shortLid}` : 'Kontak WhatsApp');
   }
 
   return {
