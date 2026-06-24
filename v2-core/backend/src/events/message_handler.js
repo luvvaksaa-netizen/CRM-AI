@@ -378,7 +378,7 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
         // ═══════════════════════════════════════════════════════
         let isBotActive = true;
         try {
-            const storeCheck = await Store.findOne({ where: { wa_id: storeWaId }, attributes: ['is_bot_active', 'ai_agent_id'] });
+            const storeCheck = await Store.findOne({ where: { wa_id: storeWaId }, attributes: ['is_bot_active', 'agent_id'] });
             if (!storeCheck || storeCheck.is_bot_active === false) {
                 isBotActive = false;
                 const logDisplay = `[${identity.displayName || ''}${identity.phone ? ' | +' + identity.phone : ''}] (${contactId})`;
@@ -391,7 +391,7 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
             // Evaluasi Idle untuk semua chat (Mendapatkan persentase closing)
             try {
                 const learningService = require('../services/learning_service');
-                learningService.onManualChatIdle(storeWaId, contactId, storeCheck?.ai_agent_id || null);
+                learningService.onManualChatIdle(storeWaId, contactId, storeCheck?.agent_id || null);
             } catch (learnErr) {
                 logger.warn(`[Learning] Gagal trigger evaluasi idle: ${learnErr.message}`);
             }
