@@ -172,6 +172,7 @@ FORMAT OUTPUT JSON:
   "data_lengkap": <true/false — apakah semua data customer lengkap sebelum rekap>,
   "ada_komplain": <true/false>,
   "metode_bayar": "COD" atau "Transfer" atau null,
+  "closing_probability": <angka 0-100 persentase kemungkinan customer ini akan transfer/deal berdasarkan minatnya>,
   "rekomendasi_prompt_ai": {
     "tambah_aturan": "1 aturan spesifik yang HARUS DITAMBAHKAN ke prompt bot AI agar bisa meniru kesuksesan CS manusia ini",
     "buang_kebiasaan": "1 kebiasaan bot yang HARUS DIBUANG agar tidak terlihat kaku/mengganggu (berdasarkan observasi percakapan ini)"
@@ -193,8 +194,45 @@ Berikan output JSON yang valid. Extract MAKSIMAL 5 pola terbaik saja.`;
         max_tokens: 2000
     }, { timeout: 60000 });
 
+    try {
+        const { logRequest } = require('./costTracker');
+        if (response.usage) {
+            logRequest({
+                model: config.MODEL_NAME,
+                promptTokens: response.usage.prompt_tokens,
+                completionTokens: response.usage.completion_tokens,
+                endpoint: 'chat_learning',
+                functionName: 'extractPatternsWithAI'
+            }).catch(() => {});
+        }
+    } catch (e) {
+        // Ignore cost tracker error
+    }
+
     const content = response.choices[0]?.message?.content || '{}';
     return JSON.parse(content);
+}
+
+/**
+ * Mengevaluasi chat manual yang sedang idle (CS manusia membalas).
+ * Sama seperti onClosingDetected, tapi hanya berjalan untuk interaksi manual.
+ */
+async function onManualChatIdle(storeWaId, contactId, agentId) {
+    const cacheKey = `${storeWaId}:${contactId}_idle`;
+    if (_closingDebounce.has(cacheKey)) {
+        clearTimeout(_closingDebounce.get(cacheKey));
+    }
+    
+    const timer = setTimeout(async () => {
+        _closingDebounce.delete(cacheKey);
+        try {
+            await _runClosingAnalysis({ storeWaId, contactId, agentId, sourceType: 'manual_idle' });
+        } catch (e) {
+            logger.warn(`[Learning] Error evaluasi manual idle: ${e.message}`);
+        }
+    }, 5 * 60 * 1000); // 5 menit debounce (tunggu chat benar-benar idle)
+    
+    _closingDebounce.set(cacheKey, timer);
 }
 
 /**
@@ -330,13 +368,13 @@ async function _runClosingAnalysis({ storeWaId, contactId, agentId, chatText, so
                 order: [['timestamp', 'ASC']],
                 limit: 200
             });
-            if (messages.length < 3) {
-                logger.info(`[Learning] [${contactId}] Terlalu sedikit pesan (${messages.length}), skip.`);
+            if (messages.length < 5) {
+                logger.info(`[Learning] Percakapan [${contactId}] terlalu pendek (${messages.length} msg). Skip.`);
                 return;
             }
             fullChatText = messages.map(m => {
-                const who = m.is_from_me ? 'CS' : 'Customer';
-                return `${who}: ${m.body || ''}`;
+                const prefix = m.is_from_me ? 'Admin' : 'Customer';
+                return `[${m.timestamp}] ${prefix}: ${m.body || '(media)'}`;
             }).join('\n');
         }
 
@@ -346,10 +384,28 @@ async function _runClosingAnalysis({ storeWaId, contactId, agentId, chatText, so
         }
 
         const productType = detectProductType(fullChatText);
-        logger.info(`[Learning] 🔍 Menganalisis closing${contactId ? ' [' + contactId + ']' : ''}... Produk: ${productType}`);
+        logger.info(`[Learning] Menganalisis percakapan [${contactId || sourceFile}], Tipe: ${productType}`);
 
         // Panggil AI untuk ekstrak pola
         const analysis = await extractPatternsWithAI(fullChatText, productType);
+
+        // Simpan probability ke ChatSummary
+        if (analysis && analysis.closing_probability !== undefined && storeWaId && contactId) {
+            try {
+                const { ChatSummary } = require('../models/index');
+                const summary = await ChatSummary.findOne({ where: { store_wa_id: storeWaId, contact_id: contactId } });
+                if (summary) {
+                    let oldSummary = summary.summary || '';
+                    // Remove old probability line if exists
+                    oldSummary = oldSummary.replace(/\n\n\[Analisis AI: Probabilitas Closing \d+%\]/g, '');
+                    summary.summary = oldSummary + `\n\n[Analisis AI: Probabilitas Closing ${analysis.closing_probability}%]`;
+                    await summary.save();
+                }
+            } catch (sumErr) {
+                logger.warn(`[Learning] Gagal update ChatSummary: ${sumErr.message}`);
+            }
+        }
+
         const patterns = analysis.patterns || [];
 
         // Hitung score akhir

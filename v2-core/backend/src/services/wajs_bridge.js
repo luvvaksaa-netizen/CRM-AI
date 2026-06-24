@@ -324,11 +324,15 @@ async function deleteLabel(client, labelId, storeWaId = 'default') {
   if (!cleanId) throw new Error('labelId wajib diisi.');
 
   const page = await getReadyPage(client, storeWaId);
-  return page.evaluate((id) => {
-    if (!window.WPP?.labels?.deleteLabel) {
-      throw new Error('WPP.labels.deleteLabel tidak tersedia.');
+  return page.evaluate(async (id) => {
+    try {
+      if (!window.WPP?.labels?.deleteLabel) {
+        throw new Error('WPP.labels.deleteLabel tidak tersedia.');
+      }
+      return await window.WPP.labels.deleteLabel(id);
+    } catch (err) {
+      throw new Error(err.message || 'Error executing WPP.labels.deleteLabel');
     }
-    return window.WPP.labels.deleteLabel(id);
   }, cleanId);
 }
 

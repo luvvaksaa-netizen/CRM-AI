@@ -70,11 +70,7 @@ export const updateConfig = async (req: Request, res: Response, next: NextFuncti
 export const testTelegram = async (_req: Request, res: Response, next: NextFunction) => {
   try {
     const ok = await sendTestNotification();
-    if (ok) {
-      res.json({ success: true, message: 'Notifikasi Telegram berhasil terkirim!' });
-    } else {
-      res.status(400).json({ success: false, message: 'Gagal kirim notifikasi. Cek token & chat ID Telegram.' });
-    }
+    res.json({ success: ok, message: ok ? 'Notifikasi Telegram berhasil terkirim!' : 'Gagal kirim notifikasi. Cek TELEGRAM_BOT_TOKEN dan TELEGRAM_CHAT_ID di .env' });
   } catch (e) {
     next(e);
   }

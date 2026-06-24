@@ -14,6 +14,7 @@ const MODEL_PRICING = {
   // DeepSeek Models (V3 Pricing - Cache Miss)
   'deepseek-chat':       { input: 0.270,  output: 1.100 },
   'deepseek-coder':      { input: 0.270,  output: 1.100 },
+  'deepseek-v4-pro':     { input: 0.270,  output: 1.100 },  // DeepSeek V4 Pro
   
   // OpenAI Models
   'gpt-4o-mini':         { input: 0.150,  output: 0.600 },

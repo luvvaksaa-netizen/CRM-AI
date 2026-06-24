@@ -609,7 +609,8 @@ async function _processAIResponse(userMessage, history = [], store = null, agent
             `7. PANDUAN KOMUNIKASI PEMBAYARAN (SOPAN, TIDAK MEMAKSA): DEFAULT arahkan ke Transfer dengan ramah. Jelaskan benefit transfer: pengerjaan & pengiriman diprioritaskan. Jika customer bertanya atau memilih COD, jawab BISA dan layani — JANGAN menolak COD. JANGAN memaksa transfer. Kasih value, bukan ultimatum. JANGAN menyebut COD duluan di opening.`,
             `8. DILARANG KERAS MEMBUAT JANJI PALSU / MENGARANG BENEFIT (ANTI-HALUSINASI). Kamu DILARANG: membuat janji gratis ongkir, diskon fiktif, bonus tambahan, hadiah gratis, garansi palsu, cashback, free sample, atau benefit apapun yang TIDAK TERTULIS di product knowledge. HANYA benefit yang benar-benar ada boleh disebutkan: subsidi bundling Rp 20.000 (KHUSUS BTS), diskon transfer Rp 3.000, prioritas pengerjaan & pengiriman untuk transfer.`,
             `9. DILARANG mengarang data customer (nama, alamat, nomor, ongkir, dll).`,
-            `10. PENTING: Dilarang keras membalas dalam satu paragraf panjang! Pecah jawabanmu menjadi kalimat-kalimat pendek. Gunakan ENTER GANDA (\\n\\n) untuk memisahkan setiap kalimat agar terkirim sebagai chat bubble yang terpisah.`,
+            `10. PENTING: Dilarang keras membalas dalam satu paragraf panjang! Pecah jawabanmu menjadi kalimat-kalimat pendek. Gunakan ENTER GANDA (\n\n) untuk memisahkan setiap kalimat agar terkirim sebagai chat bubble yang terpisah.`,
+            `10a. PENTING ONGKIR: Ongkir dihitung SEKALI per pengiriman, BUKAN per produk. Jika customer pesan 2+ produk, ongkir TETAP 1x selama dikirim dalam 1 paket. JANGAN mengalikan ongkir dengan jumlah produk. Gunakan quantity=1 di tool buat_order_mengantar.`,
             `11. Label HANYA boleh ditambahkan via tool tambahkan_label_chat dengan label yang tersedia.`,
             `12. matikan_bot_kontak HANYA untuk kasus di luar kemampuan bot (komplain berat, produk tak dikenal, dll).`,
             `    JANGAN matikan bot setelah Closing — obrolan selesai secara natural.`,
@@ -989,6 +990,55 @@ CATATAN: Gunakan data dari rekap pesanan. Isi semua field seakurat mungkin.`,
         }
 
         let responseMessage = response.choices[0].message;
+        
+        // ══════════════════════════════════════════════════════════════════
+        // 🔧 DSML TOOL CALL PARSER FALLBACK
+        // Beberapa model (terutama via fallback/Gemini) membocorkan format DSML
+        // ke dalam content alih-alih diparse jadi tool_calls JSON oleh SDK.
+        // Kita intercept dan konversi ke standar format OpenAI tool_calls.
+        // ══════════════════════════════════════════════════════════════════
+        if (responseMessage.content && responseMessage.content.includes('< | | DSML | | tool_calls>')) {
+            const invokeRegex = /< \| \| DSML \| \| invoke name="([^"]+)">([\s\S]*?)<\/ \| \| DSML \| \| invoke>/g;
+            const paramRegex = /< \| \| DSML \| \| parameter name="([^"]+)"[^>]*>([\s\S]*?)<\/ \| \| DSML \| \| parameter>/g;
+            
+            let invokeMatch;
+            const parsedToolCalls = [];
+            while ((invokeMatch = invokeRegex.exec(responseMessage.content)) !== null) {
+                const funcName = invokeMatch[1];
+                const paramsStr = invokeMatch[2];
+                let argsObj = {};
+                
+                let paramMatch;
+                while ((paramMatch = paramRegex.exec(paramsStr)) !== null) {
+                    const pName = paramMatch[1];
+                    const pValueRaw = paramMatch[2].trim();
+                    try {
+                        argsObj[pName] = JSON.parse(pValueRaw);
+                    } catch (e) {
+                        argsObj[pName] = pValueRaw;
+                    }
+                }
+                
+                parsedToolCalls.push({
+                    id: 'call_' + Math.random().toString(36).substr(2, 9),
+                    type: 'function',
+                    function: {
+                        name: funcName,
+                        arguments: JSON.stringify(argsObj)
+                    }
+                });
+            }
+
+            if (parsedToolCalls.length > 0) {
+                logger.warn(`[AI] 🔧 DSML Format terdeteksi! Mem-parsing manual: ${parsedToolCalls.length} tool calls`);
+                if (!responseMessage.tool_calls) responseMessage.tool_calls = [];
+                responseMessage.tool_calls.push(...parsedToolCalls);
+                
+                // Bersihkan text DSML agar tidak terkirim ke customer
+                responseMessage.content = responseMessage.content.replace(/< \| \| DSML \| \| tool_calls>[\s\S]*?<\/ \| \| DSML \| \| tool_calls>/g, '').trim();
+            }
+        }
+
         const downstreamToolCalls = responseMessage.tool_calls || [];
 
         // ══════════════════════════════════════════════════════════════════

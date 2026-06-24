@@ -28,12 +28,41 @@ export const getAllLabelCounts = async (req: Request, res: Response, next: NextF
     const { store_wa_id } = req.query;
     const where: any = {};
     if (store_wa_id) where.store_wa_id = store_wa_id;
+    
+    // Fetch actual WA labels to sync and remove ghost labels
+    let actualWaLabelNames = new Set<string>();
+    try {
+      const whatsappService = require('../whatsapp_service');
+      if (store_wa_id) {
+         const waLabels = await whatsappService.getLabels(store_wa_id as string);
+         if (waLabels && waLabels.length > 0) {
+             waLabels.forEach((l: any) => actualWaLabelNames.add(String(l.name).trim().toLowerCase()));
+         }
+      }
+    } catch (e) {
+      // Ignore if WA is disconnected
+    }
+
     const allSummaries: any[] = await ChatSummary.findAll({ where });
     const labelCounts: Record<string, number> = {};
     const contactLabels: any[] = [];
+    
     for (const s of allSummaries) {
       try {
-        const labels: string[] = JSON.parse(s.wa_labels || '[]');
+        let labels: string[] = JSON.parse(s.wa_labels || '[]');
+        let modified = false;
+        
+        // Clean up ghost labels if we successfully fetched WA labels
+        if (actualWaLabelNames.size > 0) {
+            const validLabels = labels.filter(l => actualWaLabelNames.has(String(l).trim().toLowerCase()));
+            if (validLabels.length !== labels.length) {
+                labels = validLabels;
+                s.wa_labels = JSON.stringify(labels);
+                await s.save();
+                modified = true;
+            }
+        }
+
         for (const l of labels) labelCounts[l] = (labelCounts[l] || 0) + 1;
         if (labels.length > 0) contactLabels.push({ contact_id: s.contact_id, contact_name: s.contact_name, labels, last_updated: s.last_updated });
       } catch {}

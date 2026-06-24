@@ -378,7 +378,7 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
         // ═══════════════════════════════════════════════════════
         let isBotActive = true;
         try {
-            const storeCheck = await Store.findOne({ where: { wa_id: storeWaId }, attributes: ['is_bot_active'] });
+            const storeCheck = await Store.findOne({ where: { wa_id: storeWaId }, attributes: ['is_bot_active', 'ai_agent_id'] });
             if (!storeCheck || storeCheck.is_bot_active === false) {
                 isBotActive = false;
                 const logDisplay = `[${identity.displayName || ''}${identity.phone ? ' | +' + identity.phone : ''}] (${contactId})`;
@@ -387,6 +387,15 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
                     safeSendReactionToMessage(message, '\uD83D\uDC4D', storeWaId);
                 }
             }
+            
+            // Evaluasi Idle untuk semua chat (Mendapatkan persentase closing)
+            try {
+                const learningService = require('../services/learning_service');
+                learningService.onManualChatIdle(storeWaId, contactId, storeCheck?.ai_agent_id || null);
+            } catch (learnErr) {
+                logger.warn(`[Learning] Gagal trigger evaluasi idle: ${learnErr.message}`);
+            }
+
         } catch (fwErr) {
             logger.warn(`[${storeWaId}] FIREWALL 3 DB check gagal: ${fwErr.message}. Mengasumsikan bot aktif.`);
         }
