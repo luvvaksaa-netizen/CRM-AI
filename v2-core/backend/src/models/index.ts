@@ -162,6 +162,7 @@ ClosingAnalytic.init({
   alur_lengkap: { type: DataTypes.BOOLEAN, defaultValue: false },
   data_lengkap: { type: DataTypes.BOOLEAN, defaultValue: false },
   ada_komplain: { type: DataTypes.BOOLEAN, defaultValue: false },
+  closing_probability: { type: DataTypes.INTEGER, allowNull: true },  // 0-100
   patterns_extracted: { type: DataTypes.INTEGER, defaultValue: 0 },
   analysis_json: { type: DataTypes.TEXT, allowNull: true },
   source_type: { type: DataTypes.STRING, defaultValue: 'production' },

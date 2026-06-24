@@ -101,12 +101,13 @@ function calculateQualityScore(chatText, analysisData = {}) {
 }
 
 /**
- * Hitung jumlah pesan sampai closing.
+ * Hitung jumlah pesan dari format chat kita: baris yang dimulai '[Admin' atau '[Customer'
  * @param {string} chatText
  * @returns {number}
  */
 function countMessagesUntilClosing(chatText) {
-    const lines = (chatText || '').split('\n').filter(l => /^\d{2}\/\d{2}\/\d{2}/.test(l));
+    // Format kita: "[Admin CS | 24 Jun 07:30]:" atau "[Customer | 24 Jun 07:30]:"
+    const lines = (chatText || '').split('\n').filter(l => /^\[(Admin|Customer)/i.test(l));
     return lines.length;
 }
 
@@ -333,6 +334,7 @@ async function saveAnalytic(data) {
             alur_lengkap: data.alurLengkap || false,
             data_lengkap: data.dataLengkap || false,
             ada_komplain: data.adaKomplain || false,
+            closing_probability: data.closingProbability !== undefined ? data.closingProbability : null,
             patterns_extracted: data.patternsExtracted || 0,
             analysis_json: data.analysisJson || null,
             source_type: data.sourceType || 'production',
@@ -343,6 +345,7 @@ async function saveAnalytic(data) {
         logger.warn(`[Learning] Gagal simpan analytic: ${err.message}`);
     }
 }
+
 
 /**
  * ENTRY POINT — Dipanggil saat label "Closing" terpasang pada kontak.
@@ -389,9 +392,12 @@ async function _runClosingAnalysis({ storeWaId, contactId, agentId, chatText, so
                 logger.info(`[Learning] Percakapan [${contactId}] terlalu pendek (${messages.length} msg). Skip.`);
                 return;
             }
+            // Format natural — agar AI mudah mengenali pola percakapan dan menghitung pesan
             fullChatText = messages.map(m => {
-                const prefix = m.is_from_me ? 'Admin' : 'Customer';
-                return `[${m.timestamp}] ${prefix}: ${m.body || '(media)'}`;
+                const who = m.is_from_me ? 'Admin CS' : 'Customer';
+                const ts = new Date(m.timestamp);
+                const dateStr = `${ts.getDate()} ${['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Ags','Sep','Okt','Nov','Des'][ts.getMonth()]} ${String(ts.getHours()).padStart(2,'0')}:${String(ts.getMinutes()).padStart(2,'0')}`;
+                return `[${who} | ${dateStr}]: ${m.body || '(media/voice)'}`;
             }).join('\n');
         }
 
@@ -439,13 +445,14 @@ async function _runClosingAnalysis({ storeWaId, contactId, agentId, chatText, so
         // ─────────────────────────────────────────────────────────────
         const isQualified = true; // Selalu luluskan untuk mengambil pembelajaran
 
-        // Tetap simpan analytic record untuk monitoring
+        // Tetap simpan analytic record untuk monitoring (sebelum pattern extraction)
         await saveAnalytic({
             storeWaId, contactId, agentId, productType,
             score: finalScore, messageCount, metodeBayar,
             alurLengkap: analysis.alur_lengkap || false,
             dataLengkap: analysis.data_lengkap || false,
             adaKomplain: analysis.ada_komplain || false,
+            closingProbability: analysis.closing_probability || null,
             patternsExtracted: patterns.length,
             analysisJson: JSON.stringify(analysis),
             sourceType: sourceType || 'production',
@@ -470,7 +477,7 @@ async function _runClosingAnalysis({ storeWaId, contactId, agentId, chatText, so
             if (saved) savedCount++;
         }
 
-        // Simpan analytic record
+        // Update analytic dengan jumlah pola yang benar-benar tersimpan
         await saveAnalytic({
             storeWaId, contactId, agentId, productType,
             score: finalScore,
@@ -479,13 +486,14 @@ async function _runClosingAnalysis({ storeWaId, contactId, agentId, chatText, so
             alurLengkap: analysis.alur_lengkap || false,
             dataLengkap: analysis.data_lengkap || false,
             adaKomplain: analysis.ada_komplain || false,
+            closingProbability: analysis.closing_probability || null,
             patternsExtracted: savedCount,
             analysisJson: JSON.stringify(analysis),
             sourceType: sourceType || 'production',
             sourceFile: sourceFile || null
         });
 
-        logger.info(`[Learning] ✅ Analisis selesai: ${savedCount} pola tersimpan (score: ${finalScore}/10)`);
+        logger.info(`[Learning] ✅ Analisis selesai: ${savedCount} pola tersimpan (score: ${finalScore}/10, prob: ${analysis.closing_probability || '?'}%)`);
 
     } catch (err) {
         logger.warn(`[Learning] Gagal analisis closing: ${err.message}`);

@@ -86,19 +86,78 @@ export const getPatterns = async (req: Request, res: Response, next: NextFunctio
 
 export const getAnalytics = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { agent_id, page, limit } = req.query;
+    const { agent_id, store_wa_id, page, limit } = req.query;
     const pageNum = Math.max(1, parseInt(page as string) || 1);
     const limitNum = Math.min(100, Math.max(1, parseInt(limit as string) || 30));
 
     const where: any = {};
     if (agent_id) where.agent_id = agent_id;
+    if (store_wa_id) where.store_wa_id = store_wa_id;
 
     const total = await ClosingAnalytic.count({ where });
-    const data = await ClosingAnalytic.findAll({
+    const rows = await ClosingAnalytic.findAll({
       where,
       order: [['analyzed_at', 'DESC']],
       offset: (pageNum - 1) * limitNum,
       limit: limitNum
+    });
+
+    // Enrich setiap row dengan contact info dari ChatMessage (phone + display name)
+    // Menggunakan batch query agar tidak N+1
+    const contactIds = [...new Set(rows.map((r: any) => r.contact_id).filter(Boolean))];
+    let contactInfoMap: Record<string, { phone: string; name: string }> = {};
+
+    if (contactIds.length > 0) {
+      const { ChatMessage } = require('../models');
+      // Ambil pesan terbaru per contact untuk dapatkan phone & display name
+      const latestMsgs = await (ChatMessage as any).findAll({
+        where: { contact_id: contactIds },
+        attributes: ['contact_id', 'contact_phone', 'contact_display_name', 'sender_name'],
+        order: [['timestamp', 'DESC']],
+        limit: contactIds.length * 3  // beberapa fallback per kontak
+      });
+      for (const m of latestMsgs) {
+        const cid = (m as any).contact_id;
+        if (!contactInfoMap[cid]) {
+          contactInfoMap[cid] = {
+            phone: (m as any).contact_phone || '',
+            name: (m as any).contact_display_name || (m as any).sender_name || ''
+          };
+        }
+      }
+    }
+
+    const data = rows.map((r: any) => {
+      const info = contactInfoMap[r.contact_id] || { phone: '', name: '' };
+      // Format display: prefer phone, fallback to contact_id
+      let contactDisplay = '';
+      if (info.phone) {
+        contactDisplay = `+${info.phone}`;
+      } else if (r.contact_id?.endsWith('@c.us')) {
+        contactDisplay = `+${r.contact_id.replace('@c.us', '')}`;
+      } else if (r.contact_id) {
+        const digits = r.contact_id.replace('@lid', '').replace(/\D/g, '');
+        contactDisplay = digits ? `LID-${digits.slice(-6)}` : r.contact_id;
+      }
+      return {
+        id: r.id,
+        store_wa_id: r.store_wa_id,
+        contact_id: r.contact_id,
+        contact_display: contactDisplay,
+        contact_name: info.name && !/^Kontak WA/.test(info.name) ? info.name : null,
+        agent_id: r.agent_id,
+        product_type: r.product_type,
+        conversation_score: r.conversation_score,
+        closing_probability: r.closing_probability,
+        pesan_sampai_closing: r.pesan_sampai_closing,
+        metode_bayar: r.metode_bayar,
+        alur_lengkap: r.alur_lengkap,
+        data_lengkap: r.data_lengkap,
+        ada_komplain: r.ada_komplain,
+        patterns_extracted: r.patterns_extracted,
+        source_type: r.source_type,
+        analyzed_at: r.analyzed_at
+      };
     });
 
     res.json({ data, total, page: pageNum, totalPages: Math.ceil(total / limitNum) || 1 });
@@ -106,6 +165,7 @@ export const getAnalytics = async (req: Request, res: Response, next: NextFuncti
     next(e);
   }
 };
+
 
 export const togglePattern = async (req: Request, res: Response, next: NextFunction) => {
   try {

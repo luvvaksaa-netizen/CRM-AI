@@ -52,9 +52,12 @@ interface LearningAnalytic {
   id: number;
   store_wa_id: string;
   contact_id: string;
+  contact_display: string;      // nomor WA terformat atau LID-xxx
+  contact_name: string | null;  // nama asli jika tersimpan
   agent_id: number;
   product_type: string;
   conversation_score: number;
+  closing_probability: number | null;  // 0-100
   pesan_sampai_closing: number;
   metode_bayar: string;
   alur_lengkap: boolean;
@@ -69,11 +72,12 @@ interface PromptEvolution {
   id: number;
   agent_id: number;
   agent_name: string;
-  analyzed_at: string;
-  tambah_aturan: string;
-  buang_kebiasaan: string;
-  score: number;
-  source_file: string;
+  prompt_before: string;
+  prompt_after: string;
+  summary_changes: string;
+  patterns_used: number;
+  tokens_used: number;
+  created_at: string;
 }
 
 const LearningCenter = () => {
@@ -144,8 +148,8 @@ const LearningCenter = () => {
       const params: any = { page: anaPage, limit: 20 };
       if (filterAgentId) params.agent_id = filterAgentId;
       const res = await api.get('/learning/analytics', { params });
-      setAnalytics(res.data.data);
-      setAnaTotalPages(res.data.totalPages);
+      setAnalytics(res.data.data || []);
+      setAnaTotalPages(res.data.totalPages || 1);
     } catch { toast.error('Gagal mengambil data analytics'); }
     finally { setLoading(false); }
   };
@@ -517,36 +521,75 @@ const LearningCenter = () => {
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="border-b border-slate-800 dark:border-slate-200">
+                        <tr className="border-b border-slate-800 dark:border-slate-200 bg-slate-950/40 dark:bg-slate-50">
                           <th className="text-left py-3 px-4 text-slate-400 dark:text-slate-500 font-medium">Tanggal</th>
+                          <th className="text-left py-3 px-4 text-slate-400 dark:text-slate-500 font-medium">Kontak</th>
                           <th className="text-left py-3 px-4 text-slate-400 dark:text-slate-500 font-medium">Produk</th>
                           <th className="text-center py-3 px-4 text-slate-400 dark:text-slate-500 font-medium">Score</th>
+                          <th className="text-center py-3 px-4 text-slate-400 dark:text-slate-500 font-medium">Prob.</th>
                           <th className="text-center py-3 px-4 text-slate-400 dark:text-slate-500 font-medium">Pesan</th>
-                          <th className="text-center py-3 px-4 text-slate-400 dark:text-slate-500 font-medium">Patterns</th>
+                          <th className="text-center py-3 px-4 text-slate-400 dark:text-slate-500 font-medium">Pola</th>
                           <th className="text-center py-3 px-4 text-slate-400 dark:text-slate-500 font-medium">Lengkap</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-800/50">
                         {analytics.map(item => (
                           <tr key={item.id} className="hover:bg-slate-800/30 dark:hover:bg-slate-50 transition-colors">
-                            <td className="py-3 px-4 text-slate-300 dark:text-slate-600 text-xs">
-                              {format(new Date(item.analyzed_at), 'dd MMM yyyy, HH:mm')}
+                            <td className="py-3 px-4 text-slate-400 dark:text-slate-500 text-xs whitespace-nowrap">
+                              {format(new Date(item.analyzed_at), 'dd MMM, HH:mm')}
+                            </td>
+                            <td className="py-3 px-4 max-w-[140px]">
+                              <div className="flex flex-col">
+                                {item.contact_name && (
+                                  <span className="text-xs font-medium text-slate-200 dark:text-slate-700 truncate">{item.contact_name}</span>
+                                )}
+                                <span className="text-[11px] font-mono text-blue-400 truncate">
+                                  {item.contact_display || item.contact_id || '—'}
+                                </span>
+                                {item.store_wa_id && (
+                                  <span className="text-[10px] text-slate-600 dark:text-slate-400 truncate">{item.store_wa_id}</span>
+                                )}
+                              </div>
                             </td>
                             <td className="py-3 px-4">
                               <span className="text-xs px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-400">{getProductLabel(item.product_type)}</span>
                             </td>
                             <td className="py-3 px-4 text-center">
-                              <span className={`text-sm font-bold ${item.conversation_score >= 6 ? 'text-emerald-400' : item.conversation_score >= 4 ? 'text-yellow-400' : 'text-red-400'}`}>
-                                {item.conversation_score?.toFixed(1)}
+                              <span className={`text-sm font-bold ${
+                                item.conversation_score >= 7 ? 'text-emerald-400' :
+                                item.conversation_score >= 5 ? 'text-yellow-400' : 'text-red-400'
+                              }`}>
+                                {Number(item.conversation_score)?.toFixed(1)}
                               </span>
                             </td>
-                            <td className="py-3 px-4 text-center text-slate-400 dark:text-slate-500 text-xs">{item.pesan_sampai_closing}</td>
-                            <td className="py-3 px-4 text-center text-slate-400 dark:text-slate-500 text-xs">{item.patterns_extracted}</td>
+                            <td className="py-3 px-4 text-center">
+                              {item.closing_probability != null ? (
+                                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                                  item.closing_probability >= 70 ? 'bg-emerald-500/20 text-emerald-400' :
+                                  item.closing_probability >= 40 ? 'bg-yellow-500/20 text-yellow-400' :
+                                  'bg-slate-700 text-slate-400'
+                                }`}>
+                                  {item.closing_probability}%
+                                </span>
+                              ) : (
+                                <span className="text-slate-600 text-xs">—</span>
+                              )}
+                            </td>
+                            <td className="py-3 px-4 text-center text-slate-300 dark:text-slate-600 text-xs font-medium">
+                              {item.pesan_sampai_closing > 0 ? item.pesan_sampai_closing : <span className="text-slate-600">—</span>}
+                            </td>
+                            <td className="py-3 px-4 text-center">
+                              {item.patterns_extracted > 0 ? (
+                                <span className="text-xs font-bold text-blue-400">{item.patterns_extracted}</span>
+                              ) : (
+                                <span className="text-slate-600 text-xs">0</span>
+                              )}
+                            </td>
                             <td className="py-3 px-4 text-center">
                               {item.alur_lengkap && item.data_lengkap ? (
-                                <span className="text-emerald-400 text-xs">✅</span>
+                                <span className="text-emerald-400 text-sm">✅</span>
                               ) : (
-                                <span className="text-slate-500 text-xs">—</span>
+                                <span className="text-slate-600 text-xs">—</span>
                               )}
                             </td>
                           </tr>
@@ -566,7 +609,7 @@ const LearningCenter = () => {
                 <div className="text-center py-12">
                   <BarChart3 className="w-12 h-12 mx-auto mb-3 text-slate-500 dark:text-slate-400 opacity-30" />
                   <p className="text-slate-400 dark:text-slate-500">Belum ada data analytics</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Data akan muncul setelah AI menganalisis percakapan closing.</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Data muncul otomatis setelah AI menganalisis percakapan (idle 5 menit).</p>
                 </div>
               )}
             </div>
@@ -578,46 +621,62 @@ const LearningCenter = () => {
               <div className="mb-6">
                 <h3 className="text-lg font-bold text-white dark:text-slate-900 flex items-center gap-2">
                   <TrendingUp className="w-5 h-5 text-emerald-400" />
-                  Evolusi Pembelajaran Bot (Dari CS Manusia)
+                  Evolusi Prompt Bot (Auto Self-Improving)
                 </h3>
                 <p className="text-sm text-slate-400 dark:text-slate-500 mt-1">
-                  Rekomendasi perbaikan sikap bot yang diekstrak AI saat mengamati keberhasilan CS menutup penjualan.
+                  Riwayat revisi prompt bot yang dilakukan AI secara otomatis setiap 3 analisis. Setiap revisi memperringkas dan mempermatang instruksi bot.
                 </p>
               </div>
 
               {evolutions.length > 0 ? (
-                <div className="space-y-4">
+                <div className="space-y-5">
                   {evolutions.map(evo => (
-                    <div key={evo.id} className="bg-slate-950/50 dark:bg-slate-50 border border-slate-800 dark:border-slate-200 rounded-xl p-5">
-                      <div className="flex items-start justify-between gap-4 mb-4">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium text-white dark:text-slate-900">{evo.agent_name}</span>
-                            <span className="text-xs text-slate-500 dark:text-slate-400">•</span>
-                            <span className="text-xs text-slate-500 dark:text-slate-400">{format(new Date(evo.analyzed_at), 'dd MMM yyyy, HH:mm')}</span>
-                          </div>
-                          <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">Score Percakapan: <strong className="text-emerald-400">{evo.score}</strong>/10</div>
+                    <div key={evo.id} className="bg-slate-950/50 dark:bg-slate-50 border border-slate-800 dark:border-slate-200 rounded-2xl overflow-hidden">
+                      {/* Header */}
+                      <div className="flex items-center justify-between gap-4 px-5 py-3 border-b border-slate-800 dark:border-slate-200 bg-slate-900/60">
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs font-bold text-white dark:text-slate-900 bg-blue-600 px-2 py-0.5 rounded-full">{evo.agent_name}</span>
+                          <span className="text-xs text-slate-500">{format(new Date(evo.created_at), 'dd MMM yyyy, HH:mm')}</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-xs text-slate-500">
+                          <span>{evo.patterns_used} pola</span>
+                          <span>•</span>
+                          <span>{evo.tokens_used} token</span>
                         </div>
                       </div>
-                      
-                      <div className="space-y-3">
-                        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3">
-                          <h4 className="text-xs font-bold text-emerald-400 uppercase mb-1">(+) Aturan Baru Ditambahkan</h4>
-                          <p className="text-sm text-slate-300 dark:text-slate-700">{evo.tambah_aturan}</p>
+                      {/* Summary */}
+                      {evo.summary_changes && (
+                        <div className="px-5 py-3 bg-blue-500/5 border-b border-blue-500/10">
+                          <p className="text-xs text-blue-300 dark:text-blue-600"><strong>Ringkasan Perubahan:</strong> {evo.summary_changes}</p>
                         </div>
-                        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
-                          <h4 className="text-xs font-bold text-red-400 uppercase mb-1">(-) Kebiasaan Buruk Dibuang</h4>
-                          <p className="text-sm text-slate-300 dark:text-slate-700">{evo.buang_kebiasaan}</p>
+                      )}
+                      {/* Before / After Diff */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-800 dark:divide-slate-200">
+                        <div className="p-4">
+                          <h4 className="text-[11px] font-bold uppercase text-red-400 mb-2 flex items-center gap-1">← Sebelum</h4>
+                          <pre className="text-[11px] text-slate-400 dark:text-slate-500 whitespace-pre-wrap font-mono leading-relaxed max-h-48 overflow-y-auto custom-scrollbar">
+                            {evo.prompt_before || '(Kosong — revisi pertama)'}
+                          </pre>
+                        </div>
+                        <div className="p-4">
+                          <h4 className="text-[11px] font-bold uppercase text-emerald-400 mb-2 flex items-center gap-1">→ Sesudah</h4>
+                          <pre className="text-[11px] text-slate-200 dark:text-slate-700 whitespace-pre-wrap font-mono leading-relaxed max-h-48 overflow-y-auto custom-scrollbar">
+                            {evo.prompt_after}
+                          </pre>
                         </div>
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="text-center py-12">
-                  <Brain className="w-12 h-12 mx-auto mb-3 text-slate-500 dark:text-slate-400 opacity-30" />
-                  <p className="text-slate-400 dark:text-slate-500">Belum ada rekomendasi evolusi</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Data akan muncul setelah ada closing berkualitas tinggi dari CS manual.</p>
+                <div className="text-center py-16">
+                  <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-slate-800/50 flex items-center justify-center">
+                    <TrendingUp className="w-8 h-8 text-slate-600" />
+                  </div>
+                  <p className="text-slate-300 dark:text-slate-600 font-medium">Belum ada evolusi prompt</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 max-w-sm mx-auto">
+                    Prompt bot akan otomatis direvisi setelah 3 siklus analisis percakapan berhasil. Semakin banyak chat, semakin cepat bot berkembang.
+                  </p>
                 </div>
               )}
             </div>

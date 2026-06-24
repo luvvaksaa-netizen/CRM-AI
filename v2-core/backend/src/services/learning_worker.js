@@ -23,7 +23,7 @@ const logger = require('../utils/logger');
 const WORKER_TICK_MS        = 5000;   // Cek antrian setiap 5 detik
 const IDLE_DEBOUNCE_MS      = 5 * 60 * 1000; // 5 menit idle sebelum analisis
 const DEDUP_WINDOW_MS       = 10 * 60 * 1000; // Kontak yang sama tidak dianalisis 2x dalam 10 menit
-const REVISION_EVERY_N_JOBS = 5;     // Setiap 5 analisis selesai → revisi prompt agent
+const REVISION_EVERY_N_JOBS = 3;     // Setiap 3 analisis selesai → revisi prompt agent
 const MAX_PATTERNS_INJECT   = 8;     // Maks pola yang dibaca saat revisi
 const MAX_QUEUE_SIZE        = 200;   // Batas atas antrian agar tidak memori bocor
 
