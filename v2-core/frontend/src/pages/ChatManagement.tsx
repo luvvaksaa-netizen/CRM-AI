@@ -194,9 +194,14 @@ const ChatManagement = () => {
   const fetchContactsDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fetchContactsRef = useRef<(pageToLoad?: number, searchQueryParam?: string, silent?: boolean) => void>(() => {});
 
-  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const skipAutoScrollRef = useRef(false);
+  // Refs untuk Virtuoso startReached — agar tidak stale closure
+  const hasMoreMessagesRef = useRef(false);
+  const loadingOlderRef = useRef(false);
+  // Sync state → refs agar Virtuoso bisa baca nilai terbaru tanpa stale closure
+  hasMoreMessagesRef.current = hasMoreMessages;
+  loadingOlderRef.current = loadingOlder;
 
   const getDisplayName = (c: ChatContact | ChatMessage, fallbackId?: string) => {
     if ('contact_display_name' in c) {
@@ -276,6 +281,7 @@ const ChatManagement = () => {
       });
       const { messages: newMessages, pagination } = res.data;
       if (before) {
+        // Muat pesan lebih lama — prepend ke atas
         const currentMessages = useChatStore.getState().messages;
         const seen = new Set(currentMessages.map(m => m.id));
         const trulyNew = newMessages.filter((m: any) => !seen.has(m.id));
@@ -283,11 +289,14 @@ const ChatManagement = () => {
           setFirstItemIndex(prev => prev - trulyNew.length);
           useChatStore.getState().setMessages([...trulyNew, ...currentMessages]);
         }
+        // Update hasMore hanya saat load lebih lama (bukan overwrite dengan load terbaru)
+        setHasMoreMessages(pagination?.hasMore ?? false);
       } else {
+        // Initial load — reset state
         setFirstItemIndex(10000);
         useChatStore.getState().setMessages(newMessages);
+        setHasMoreMessages(pagination?.hasMore ?? false);
       }
-      setHasMoreMessages(pagination?.hasMore ?? false);
     } catch {
       if (!before) toast.error('Gagal mengambil riwayat pesan');
     } finally {
@@ -296,18 +305,20 @@ const ChatManagement = () => {
   }, [setLoadingMessages, setHasMoreMessages]);
 
   const loadOlderMessages = useCallback(async () => {
-    if (!activeContact || !useChatStore.getState().selectedStore || loadingOlder || !hasMoreMessages) return;
-    const container = messagesContainerRef.current;
-    if (!container) return;
+    if (!activeContact || !useChatStore.getState().selectedStore || loadingOlderRef.current || !hasMoreMessagesRef.current) return;
+    loadingOlderRef.current = true;
     setLoadingOlder(true);
     skipAutoScrollRef.current = true;
     try {
-      const oldestTimestamp = messages.length > 0 ? messages[0].timestamp : undefined;
+      const currentMessages = useChatStore.getState().messages;
+      const oldestTimestamp = currentMessages.length > 0 ? currentMessages[0].timestamp : undefined;
+      if (!oldestTimestamp) return;
       await fetchMessages(activeContact.contact_id, oldestTimestamp);
     } finally {
+      loadingOlderRef.current = false;
       setLoadingOlder(false);
     }
-  }, [activeContact, loadingOlder, hasMoreMessages, messages, fetchMessages]);
+  }, [activeContact, fetchMessages]);
 
   const fetchMediaAssets = useCallback(async () => {
     const store = stores.find(s => s.wa_id === useChatStore.getState().selectedStore);
@@ -1328,11 +1339,7 @@ const ChatManagement = () => {
                     data={messages}
                     firstItemIndex={firstItemIndex}
                     initialTopMostItemIndex={messages.length > 0 ? messages.length - 1 + firstItemIndex : 0}
-                    startReached={() => {
-                      if (hasMoreMessages && !loadingOlder) {
-                        loadOlderMessages();
-                      }
-                    }}
+                    startReached={loadOlderMessages}
                     components={{
                       Header: () => loadingOlder ? (
                         <div className="flex justify-center py-3">
