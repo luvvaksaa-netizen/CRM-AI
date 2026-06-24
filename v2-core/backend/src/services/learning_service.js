@@ -138,12 +138,13 @@ async function extractPatternsWithAI(chatText, productType) {
 
     const prompt = `Kamu adalah AI analyst untuk sistem CRM penjualan ${productContext}.
 
-Analisis percakapan WhatsApp closing berikut antara CS toko (Label Nama CS Dea / Admin Dea) dan customer.
+Analisis percakapan WhatsApp berikut antara CS toko dan customer. 
+Percakapan ini BISA SAJA berujung closing (deal), BISA SAJA BELUM SELESAI, atau batal.
 Tugas kamu: 
-1. Ekstrak POLA SUKSES yang membuat customer akhirnya deal/order.
-2. Ekstrak REKOMENDASI EVOLUSI PROMPT untuk memperbaiki sikap bot AI di masa depan.
+1. Ekstrak POLA POSITIF / TEKNIK KOMUNIKASI yang dilakukan CS (jika ada) yang membuat customer merespon dengan baik atau meningkatkan persentase (probabilitas) menuju closing. Jika tidak ada yang bagus, biarkan array patterns kosong [].
+2. Berikan REKOMENDASI EVOLUSI PROMPT untuk memperbaiki sikap bot AI di masa depan berdasarkan percakapan ini.
 
-KRITERIA POLA YANG BAIK:
+KRITERIA POLA YANG BAIK (Ekstrak jika ada):
 ✅ Kalimat CS yang natural, hangat, dan tidak kaku
 ✅ Teknik persuasi yang berhasil (bukan hanya mendata)
 ✅ Cara CS menangani keberatan/pertanyaan customer
@@ -432,41 +433,28 @@ async function _runClosingAnalysis({ storeWaId, contactId, agentId, chatText, so
         logger.info(`[Learning] 📊 Score: ${finalScore}/10, Pesan: ${messageCount}, Pola: ${patterns.length}`);
 
         // ─────────────────────────────────────────────────────────────
-        // QUALITY GATE: Hanya simpan pola jika percakapan benar-benar
-        // merupakan closing yang valid dan berkualitas tinggi.
-        //
-        // Syarat WAJIB (semua harus terpenuhi):
-        //  1. Score ≥ 6.0  → kualitas percakapan cukup baik
-        //  2. alur_lengkap = true → alur produk→nama→alamat→ongkir→rekap ada
-        //  3. data_lengkap = true → semua data customer terpenuhi sebelum rekap
-        //
-        // Jika tidak memenuhi → catat analytic (untuk statistik) tapi
-        // JANGAN simpan pola agar bot tidak belajar dari closing palsu/tidak lengkap.
+        // (UPDATE): Sesuai request, semua pola yang berhasil diekstrak AI
+        // tetap disimpan meskipun skornya rendah atau alur tidak lengkap,
+        // asalkan AI memang menemukan poin pembelajaran yang berguna.
         // ─────────────────────────────────────────────────────────────
-        const MINIMUM_QUALITY_SCORE = 6.0;
-        const isQualified = finalScore >= MINIMUM_QUALITY_SCORE
-                         && analysis.alur_lengkap === true
-                         && analysis.data_lengkap === true;
+        const isQualified = true; // Selalu luluskan untuk mengambil pembelajaran
 
-        if (!isQualified) {
-            logger.info(
-                `[Learning] ⛔ Quality Gate GAGAL untuk [${contactId || sourceFile || 'dataset'}]. ` +
-                `Score: ${finalScore}/10, alur_lengkap: ${analysis.alur_lengkap}, data_lengkap: ${analysis.data_lengkap}. ` +
-                `Pola TIDAK disimpan untuk mencegah bot belajar dari data tidak valid.`
-            );
-            // Tetap simpan analytic record untuk monitoring — tapi tandai sebagai "rejected"
-            await saveAnalytic({
-                storeWaId, contactId, agentId, productType,
-                score: finalScore, messageCount, metodeBayar,
-                alurLengkap: analysis.alur_lengkap || false,
-                dataLengkap: analysis.data_lengkap || false,
-                adaKomplain: analysis.ada_komplain || false,
-                patternsExtracted: 0, // 0 karena ditolak
-                analysisJson: JSON.stringify({ ...analysis, quality_gate_rejected: true, rejection_reason: `score:${finalScore}<${MINIMUM_QUALITY_SCORE} alur:${analysis.alur_lengkap} data:${analysis.data_lengkap}` }),
-                sourceType: sourceType || 'production',
-                sourceFile: sourceFile || null
-            });
-            return; // Hentikan proses — tidak ada yang disimpan ke ClosingPatterns
+        // Tetap simpan analytic record untuk monitoring
+        await saveAnalytic({
+            storeWaId, contactId, agentId, productType,
+            score: finalScore, messageCount, metodeBayar,
+            alurLengkap: analysis.alur_lengkap || false,
+            dataLengkap: analysis.data_lengkap || false,
+            adaKomplain: analysis.ada_komplain || false,
+            patternsExtracted: patterns.length,
+            analysisJson: JSON.stringify(analysis),
+            sourceType: sourceType || 'production',
+            sourceFile: sourceFile || null
+        });
+
+        if (patterns.length === 0) {
+             logger.info(`[Learning] Tidak ada pola yang diekstrak untuk [${contactId || sourceFile || 'dataset'}].`);
+             return;
         }
 
         logger.info(`[Learning] ✅ Quality Gate LULUS (Score: ${finalScore}/10) — mulai simpan ${patterns.length} pola.`);
