@@ -683,6 +683,20 @@ async function togglePattern(patternId, isActive) {
  * @returns {Promise<string>}
  */
 async function buildLearningPromptSection(agentId, productType = 'generic') {
+    const { BotAgent } = require('../models/index');
+
+    // 1. Prioritas: Gunakan learned_prompt_addon yang sudah direvisi AI jika tersedia
+    //    Ini adalah "hasil akhir" yang sudah dipadatkan dan dioptimasi oleh Prompt Revision Engine.
+    if (agentId) {
+        try {
+            const agent = await BotAgent.findByPk(agentId, { attributes: ['learned_prompt_addon'] });
+            if (agent?.learned_prompt_addon && agent.learned_prompt_addon.trim().length > 50) {
+                return `\n═══════════════════════════════════════════\nINSTRUKSI TAMBAHAN (Hasil Pembelajaran Otomatis dari CS Nyata):\n═══════════════════════════════════════════\n${agent.learned_prompt_addon.trim()}\n⚡ Instruksi di atas wajib dipatuhi sebagai pelengkap sistem prompt utama.\n`;
+            }
+        } catch (e) { /* Jika gagal baca, fallback ke raw patterns */ }
+    }
+
+    // 2. Fallback: Belum ada learned_prompt_addon → bangun dari raw patterns (mode awal)
     const patterns = await getTopPatterns(agentId, productType, MAX_PATTERNS_INJECT);
     const refinements = await getRecentPromptRefinements(agentId, 3);
 
@@ -695,7 +709,7 @@ async function buildLearningPromptSection(agentId, productType = 'generic') {
         patternText = `
 ═══════════════════════════════════════════
 TEKNIK TERBUKTI DARI PERCAKAPAN SUKSES:
-(Dipelajari otomatis dari closing nyata CS Mbak Dea — wajib diadopsi!)
+(Dipelajari otomatis dari closing nyata CS — wajib diadopsi!)
 ═══════════════════════════════════════════
 ` + patterns.map((p, i) => {
             const freq = p.frequency || 1;

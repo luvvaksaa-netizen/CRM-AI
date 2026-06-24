@@ -388,12 +388,16 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
                 }
             }
             
-            // Evaluasi Idle untuk semua chat (Mendapatkan persentase closing)
+            // Push ke Learning Worker (non-blocking, <1ms, tidak mengganggu proses pesan utama)
             try {
-                const learningService = require('../services/learning_service');
-                learningService.onManualChatIdle(storeWaId, contactId, storeCheck?.agent_id || null);
+                const learningWorker = require('../services/learning_worker');
+                learningWorker.pushLearningJob({
+                    storeWaId,
+                    contactId,
+                    agentId: storeCheck?.agent_id || null
+                });
             } catch (learnErr) {
-                logger.warn(`[Learning] Gagal trigger evaluasi idle: ${learnErr.message}`);
+                // Silent fail — learning worker tidak boleh ganggu flow utama
             }
 
         } catch (fwErr) {

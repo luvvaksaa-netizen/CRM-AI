@@ -160,51 +160,77 @@ export const deletePattern = async (req: Request, res: Response, next: NextFunct
   }
 };
 
+
+import { PromptEvolutionLog } from '../models';
+
+/**
+ * Mengambil riwayat evolusi prompt dari PromptEvolutionLog.
+ * Ini adalah data aktual dari Prompt Revision Engine — berisi before/after diff, summary perubahan.
+ */
 export const getPromptEvolutions = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { agent_id, date } = req.query;
-    const where: any = {
-      conversation_score: { [Op.gte]: 7 }
-    };
+    const where: any = {};
     if (agent_id) where.agent_id = agent_id;
     if (date) {
       const startDate = new Date(date as string);
       startDate.setHours(0, 0, 0, 0);
       const endDate = new Date(date as string);
       endDate.setHours(23, 59, 59, 999);
-      where.analyzed_at = { [Op.between]: [startDate, endDate] };
+      where.created_at = { [Op.between]: [startDate, endDate] };
     }
 
-    const analytics = await ClosingAnalytic.findAll({
+    const logs = await PromptEvolutionLog.findAll({
       where,
-      order: [['analyzed_at', 'DESC']],
-      include: [{ model: BotAgent, as: 'BotAgent', attributes: ['name'] }]
+      order: [['created_at', 'DESC']],
+      limit: 50,
+      include: [{ model: BotAgent, as: 'BotAgent', attributes: ['name', 'bot_name'] }]
     });
 
-    const evolutions = [];
-    for (const a of analytics) {
-      try {
-        const analysis = typeof (a as any).analysis_json === 'string' 
-          ? JSON.parse((a as any).analysis_json) 
-          : ((a as any).analysis_json || {});
-        
-        if (analysis.rekomendasi_prompt_ai) {
-          evolutions.push({
-            id: (a as any).id,
-            agent_id: (a as any).agent_id,
-            agent_name: (a as any).BotAgent?.name || 'Unknown Agent',
-            analyzed_at: (a as any).analyzed_at,
-            tambah_aturan: analysis.rekomendasi_prompt_ai.tambah_aturan,
-            buang_kebiasaan: analysis.rekomendasi_prompt_ai.buang_kebiasaan,
-            score: (a as any).conversation_score,
-            source_file: (a as any).source_file
-          });
-        }
-      } catch (e) { /* ignore parse error */ }
-    }
+    const data = logs.map((log: any) => ({
+      id: log.id,
+      agent_id: log.agent_id,
+      agent_name: log.BotAgent?.name || log.BotAgent?.bot_name || 'Agent',
+      prompt_before: log.prompt_before,
+      prompt_after: log.prompt_after,
+      summary_changes: log.summary_changes,
+      patterns_used: log.patterns_used,
+      tokens_used: log.tokens_used,
+      created_at: log.created_at
+    }));
 
-    res.json({ data: evolutions, total: evolutions.length });
+    res.json({ data, total: data.length });
   } catch (e) {
     next(e);
   }
 };
+
+/**
+ * Mengambil current learned_prompt_addon untuk sebuah agent.
+ * Digunakan UI untuk preview apa yang sedang di-inject ke prompt bot.
+ */
+export const getLearnedPromptAddon = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { agent_id } = req.params;
+    if (!agent_id) return res.status(400).json({ error: 'agent_id diperlukan' });
+
+    const agentIdNum = parseInt(agent_id as string, 10);
+    if (isNaN(agentIdNum)) return res.status(400).json({ error: 'agent_id tidak valid' });
+
+    const agent = await BotAgent.findByPk(agentIdNum, {
+      attributes: ['id', 'name', 'bot_name', 'system_prompt', 'learned_prompt_addon']
+    });
+
+    if (!agent) return res.status(404).json({ error: 'Agent tidak ditemukan' });
+
+    res.json({
+      agent_id: (agent as any).id,
+      agent_name: (agent as any).name || (agent as any).bot_name,
+      learned_prompt_addon: (agent as any).learned_prompt_addon || null,
+      system_prompt_preview: ((agent as any).system_prompt || '').slice(0, 300) + '...'
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+

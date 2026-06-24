@@ -10,7 +10,9 @@ BotAgent.init({
   bot_name: { type: DataTypes.STRING, defaultValue: 'CS Bot' },
   system_prompt: { type: DataTypes.TEXT, defaultValue: '' },
   product_knowledge: { type: DataTypes.TEXT, defaultValue: '' },
-  auto_labels: { type: DataTypes.TEXT, defaultValue: '' }
+  auto_labels: { type: DataTypes.TEXT, defaultValue: '' },
+  // Hasil learning otomatis — dipisah dari system_prompt agar tidak merusak prompt asli
+  learned_prompt_addon: { type: DataTypes.TEXT, allowNull: true, defaultValue: null }
 }, { sequelize, modelName: 'BotAgent' });
 
 export class Store extends Model {}
@@ -267,3 +269,29 @@ OpenAICostLog.init({
   timestamps: false, // Kita manage created_at sendiri, jangan biarkan Sequelize auto-manage
 });
 
+// ─── Prompt Evolution Log (riwayat evolusi prompt per agent) ──
+export class PromptEvolutionLog extends Model {}
+PromptEvolutionLog.init({
+  id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+  agent_id: { type: DataTypes.INTEGER, allowNull: true },
+  // Snapshot prompt sebelum & sesudah revisi (untuk diff UI)
+  prompt_before: { type: DataTypes.TEXT, allowNull: true },
+  prompt_after: { type: DataTypes.TEXT, allowNull: true },
+  // Summary perubahan yang dilakukan AI
+  summary_changes: { type: DataTypes.TEXT, allowNull: true },
+  // Berapa pattern yang berkontribusi ke revisi ini
+  patterns_used: { type: DataTypes.INTEGER, defaultValue: 0 },
+  // Score rata-rata percakapan yang memicu revisi
+  avg_conversation_score: { type: DataTypes.FLOAT, defaultValue: 0 },
+  // Token cost untuk revisi ini
+  tokens_used: { type: DataTypes.INTEGER, defaultValue: 0 },
+  created_at: { type: DataTypes.DATE, defaultValue: DataTypes.NOW }
+}, {
+  sequelize,
+  modelName: 'PromptEvolutionLog',
+  tableName: 'PromptEvolutionLogs',
+  timestamps: false
+});
+
+BotAgent.hasMany(PromptEvolutionLog, { foreignKey: 'agent_id' });
+PromptEvolutionLog.belongsTo(BotAgent, { foreignKey: 'agent_id' });

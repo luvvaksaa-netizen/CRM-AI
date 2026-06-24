@@ -339,6 +339,12 @@ const gracefulShutdown = async (signal: string) => {
     console.log('[Xendit] Scheduler stopped');
   } catch (_) {}
 
+  // 3.7 Stop Learning Worker
+  try {
+    const { stopWorker } = require('./services/learning_worker');
+    stopWorker();
+  } catch (_) {}
+
   // 4. Close database connection
   try {
     await sequelize.close();
@@ -379,6 +385,14 @@ export const startServer = async () => {
     startScheduler();
   } catch (e: any) {
     console.warn('[OpenAI Billing] Scheduler init:', e.message);
+  }
+
+  // Init Learning Worker (isolated background queue)
+  try {
+    const { startWorker } = require('./services/learning_worker');
+    startWorker();
+  } catch (e: any) {
+    console.warn('[LearningWorker] Failed to start:', e.message);
   }
 
   // Init Xendit scheduler
