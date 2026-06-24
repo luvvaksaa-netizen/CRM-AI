@@ -7,16 +7,47 @@
  *
  * Cara pakai:
  *   node migrate_cost_log_context.js
+ *
+ * Atau dengan path eksplisit:
+ *   DATA_DIR="C:\Users\Lenovo\Documents\CRM-AI\data" node migrate_cost_log_context.js
  */
 
 const path = require('path');
+const fs   = require('fs');
 const Database = require('sqlite3').verbose();
 
-// ─── Resolve DB path (sama seperti production) ───
-const DATA_DIR = process.env.DATA_DIR || path.resolve(__dirname, '../data');
+// ─── Auto-load .env jika ada (ambil DATA_DIR dari konfigurasi backend) ───
+const envPath = path.resolve(__dirname, '.env');
+if (fs.existsSync(envPath)) {
+  const envLines = fs.readFileSync(envPath, 'utf8').split('\n');
+  for (const line of envLines) {
+    const match = line.match(/^\s*DATA_DIR\s*=\s*(.+)\s*$/);
+    if (match && !process.env.DATA_DIR) {
+      process.env.DATA_DIR = match[1].trim().replace(/^["']|["']$/g, '');
+      console.log(`[Migration] DATA_DIR dari .env: ${process.env.DATA_DIR}`);
+    }
+  }
+}
+
+// ─── Resolve DB path ─────────────────────────────────────────────────────
+// Struktur folder: CRM-AI/
+//   ├── data/           ← database.sqlite ada di sini (production)
+//   └── v2-core/
+//       └── backend/    ← script ini ada di sini (__dirname)
+//
+// Jadi dari __dirname naik 2 level (../../) = CRM-AI/data/
+const DATA_DIR = process.env.DATA_DIR || path.resolve(__dirname, '../../data');
 const DB_PATH  = path.resolve(DATA_DIR, 'database.sqlite');
 
 console.log(`[Migration] Database: ${DB_PATH}`);
+
+// Validasi file database ada
+if (!fs.existsSync(DB_PATH)) {
+  console.error(`[Migration] ❌ File database tidak ditemukan: ${DB_PATH}`);
+  console.error(`[Migration] Pastikan DATA_DIR benar, atau jalankan dengan:`);
+  console.error(`[Migration]   DATA_DIR="path/ke/folder/data" node migrate_cost_log_context.js`);
+  process.exit(1);
+}
 
 const db = new Database.Database(DB_PATH, (err) => {
   if (err) {
