@@ -760,6 +760,7 @@ async function getRecentPromptRefinements(agentId, limit = 3) {
 
 module.exports = {
     onClosingDetected,
+    onManualChatIdle,
     processDatasetFile,
     getTopPatterns,
     getLearningStats,
