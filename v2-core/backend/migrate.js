@@ -7,15 +7,15 @@
  * Aman dijalankan berkali-kali (idempotent).
  */
 
-require('dotenv').config();
-const path = require('path');
-const sqlite3 = require('sqlite3').verbose();
+require("dotenv").config();
+const path = require("path");
+const sqlite3 = require("sqlite3").verbose();
 
 const DATA_DIR = process.env.DATA_DIR
   ? path.resolve(process.env.DATA_DIR)
-  : path.join(process.cwd(), 'data');
+  : path.join(process.cwd(), "data");
 
-const DB_PATH = path.join(DATA_DIR, 'database.sqlite');
+const DB_PATH = path.join(DATA_DIR, "database.sqlite");
 
 console.log(`[Migration] Target DB: ${DB_PATH}`);
 
@@ -26,38 +26,41 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
   }
 });
 
-db.run('PRAGMA journal_mode=WAL');
+db.run("PRAGMA journal_mode=WAL");
 
 // Helper: jalankan query dan return Promise
 function run(sql) {
   return new Promise((resolve, reject) => {
-    db.run(sql, (err) => err ? reject(err) : resolve());
+    db.run(sql, (err) => (err ? reject(err) : resolve()));
   });
 }
 
 // Helper: ambil semua baris
 function all(sql, params = []) {
   return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => err ? reject(err) : resolve(rows));
+    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)));
   });
 }
 
 async function columnExists(table, column) {
   const rows = await all(`PRAGMA table_info(${table})`);
-  return rows.some(col => col.name === column);
+  return rows.some((col) => col.name === column);
 }
 
 async function tableExists(table) {
-  const rows = await all(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, [table]);
+  const rows = await all(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
+    [table],
+  );
   return rows.length > 0;
 }
 
 async function main() {
   const migrations = [
     {
-      desc: 'Create / ensure PausedContacts table with paused_until',
+      desc: "Create / ensure PausedContacts table with paused_until",
       run: async () => {
-        const exists = await tableExists('PausedContacts');
+        const exists = await tableExists("PausedContacts");
         if (!exists) {
           await run(`
             CREATE TABLE PausedContacts (
@@ -69,42 +72,54 @@ async function main() {
               PRIMARY KEY (store_wa_id, contact_id)
             )
           `);
-          return 'Created PausedContacts table';
+          return "Created PausedContacts table";
         }
-        return 'SKIP — table already exists';
-      }
+        return "SKIP — table already exists";
+      },
     },
     {
-      desc: 'Add paused_until column to PausedContacts',
+      desc: "Add paused_until column to PausedContacts",
       run: async () => {
-        if (!(await tableExists('PausedContacts'))) return 'SKIP — table not found';
-        if (await columnExists('PausedContacts', 'paused_until')) return 'SKIP — already exists';
-        await run(`ALTER TABLE PausedContacts ADD COLUMN paused_until DATETIME`);
-        return 'ADDED paused_until column ✅';
-      }
+        if (!(await tableExists("PausedContacts")))
+          return "SKIP — table not found";
+        if (await columnExists("PausedContacts", "paused_until"))
+          return "SKIP — already exists";
+        await run(
+          `ALTER TABLE PausedContacts ADD COLUMN paused_until DATETIME`,
+        );
+        return "ADDED paused_until column ✅";
+      },
     },
     {
-      desc: 'Add paused_at column to PausedContacts',
+      desc: "Add paused_at column to PausedContacts",
       run: async () => {
-        if (!(await tableExists('PausedContacts'))) return 'SKIP — table not found';
-        if (await columnExists('PausedContacts', 'paused_at')) return 'SKIP — already exists';
-        await run(`ALTER TABLE PausedContacts ADD COLUMN paused_at DATETIME DEFAULT (datetime('now'))`);
-        return 'ADDED paused_at column ✅';
-      }
+        if (!(await tableExists("PausedContacts")))
+          return "SKIP — table not found";
+        if (await columnExists("PausedContacts", "paused_at"))
+          return "SKIP — already exists";
+        await run(
+          `ALTER TABLE PausedContacts ADD COLUMN paused_at DATETIME DEFAULT (datetime('now'))`,
+        );
+        return "ADDED paused_at column ✅";
+      },
     },
     {
-      desc: 'Add paused_by column to PausedContacts',
+      desc: "Add paused_by column to PausedContacts",
       run: async () => {
-        if (!(await tableExists('PausedContacts'))) return 'SKIP — table not found';
-        if (await columnExists('PausedContacts', 'paused_by')) return 'SKIP — already exists';
-        await run(`ALTER TABLE PausedContacts ADD COLUMN paused_by TEXT DEFAULT 'manual'`);
-        return 'ADDED paused_by column ✅';
-      }
+        if (!(await tableExists("PausedContacts")))
+          return "SKIP — table not found";
+        if (await columnExists("PausedContacts", "paused_by"))
+          return "SKIP — already exists";
+        await run(
+          `ALTER TABLE PausedContacts ADD COLUMN paused_by TEXT DEFAULT 'manual'`,
+        );
+        return "ADDED paused_by column ✅";
+      },
     },
     {
-      desc: 'Create / ensure OpenAICostLogs table',
+      desc: "Create / ensure OpenAICostLogs table",
       run: async () => {
-        const exists = await tableExists('OpenAICostLogs');
+        const exists = await tableExists("OpenAICostLogs");
         if (!exists) {
           await run(`
             CREATE TABLE OpenAICostLogs (
@@ -118,18 +133,32 @@ async function main() {
               total_cost        TEXT    DEFAULT '0.00000000',
               endpoint          TEXT,
               function_name     TEXT,
+              store_wa_id       TEXT,
+              contact_id        TEXT,
+              contact_phone     TEXT,
               created_at        DATETIME DEFAULT (datetime('now'))
             )
           `);
-          return 'Created OpenAICostLogs table ✅';
+          return "Created OpenAICostLogs table (✅ incl. context columns)";
         }
         // Pastikan kolom created_at ada (mungkin tabel dibuat tanpa kolom ini)
-        if (!(await columnExists('OpenAICostLogs', 'created_at'))) {
-          await run(`ALTER TABLE OpenAICostLogs ADD COLUMN created_at DATETIME DEFAULT (datetime('now'))`);
-          return 'ADDED created_at column to OpenAICostLogs ✅';
+        if (!(await columnExists("OpenAICostLogs", "created_at"))) {
+          await run(
+            `ALTER TABLE OpenAICostLogs ADD COLUMN created_at DATETIME DEFAULT (datetime('now'))`,
+          );
         }
-        return 'SKIP — table already exists';
-      }
+        // Tambah context columns (commit b65b7f6 — store_wa_id, contact_id, contact_phone)
+        if (!(await columnExists("OpenAICostLogs", "store_wa_id"))) {
+          await run(`ALTER TABLE OpenAICostLogs ADD COLUMN store_wa_id TEXT`);
+        }
+        if (!(await columnExists("OpenAICostLogs", "contact_id"))) {
+          await run(`ALTER TABLE OpenAICostLogs ADD COLUMN contact_id TEXT`);
+        }
+        if (!(await columnExists("OpenAICostLogs", "contact_phone"))) {
+          await run(`ALTER TABLE OpenAICostLogs ADD COLUMN contact_phone TEXT`);
+        }
+        return "SKIP — table already exists (context columns ensured) ✅";
+      },
     },
   ];
 
@@ -147,11 +176,13 @@ async function main() {
   }
 
   db.close();
-  console.log(`\n[Migration] ${allOk ? '✅ SELESAI — restart wa-crm-v2 sekarang' : '⚠️  SELESAI dengan error'}\n`);
+  console.log(
+    `\n[Migration] ${allOk ? "✅ SELESAI — restart wa-crm-v2 sekarang" : "⚠️  SELESAI dengan error"}\n`,
+  );
 }
 
-main().catch(e => {
-  console.error('[Migration] Fatal:', e.message);
+main().catch((e) => {
+  console.error("[Migration] Fatal:", e.message);
   db.close();
   process.exit(1);
 });

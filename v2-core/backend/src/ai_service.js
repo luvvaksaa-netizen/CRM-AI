@@ -9,51 +9,61 @@
  *  - Graceful error recovery: queue never freezes
  */
 
-const OpenAI = require('openai');
-const moment = require('moment');
-const fs = require('fs');
-const config = require('./config');
-const { ERRORS } = require('./constants');
-const logger = require('./utils/logger');
-const mengantarService = require('./services/mengantar.service');
-const { getSendableMedia, getKnowledgeMedia } = require('./services/media.service');
-const { MediaAsset } = require('./models/index');
-const { logRequest } = require('./services/costTracker');
+const OpenAI = require("openai");
+const moment = require("moment");
+const fs = require("fs");
+const config = require("./config");
+const { ERRORS } = require("./constants");
+const logger = require("./utils/logger");
+const mengantarService = require("./services/mengantar.service");
+const {
+  getSendableMedia,
+  getKnowledgeMedia,
+} = require("./services/media.service");
+const { MediaAsset } = require("./models/index");
+const { logRequest } = require("./services/costTracker");
 
-const openai = new OpenAI({ 
-    apiKey: process.env.DEEPSEEK_API_KEY || config.OPENAI_API_KEY,
-    baseURL: 'https://api.deepseek.com/v1'
+const openai = new OpenAI({
+  apiKey: process.env.DEEPSEEK_API_KEY || config.OPENAI_API_KEY,
+  baseURL: "https://api.deepseek.com/v1",
 });
-const { buildLearningPromptSection } = require('./services/learning_service');
-const LEGACY_XENDIT_ENABLED = process.env.ENABLE_LEGACY_XENDIT === 'true';
+const { buildLearningPromptSection } = require("./services/learning_service");
+const LEGACY_XENDIT_ENABLED = process.env.ENABLE_LEGACY_XENDIT === "true";
 
 // ── Xendit QRIS Service ──
 // Diload secara lazy (runtime require) karena file ini TypeScript yang dikompilasi.
 // Singleton pattern agar tidak double-require.
 let _xenditQris = null;
 function getXenditService() {
-    if (!LEGACY_XENDIT_ENABLED) {
-        logger.warn('[AI] Legacy Xendit QRIS disabled. Set ENABLE_LEGACY_XENDIT=true only for migration fallback.');
-        return null;
+  if (!LEGACY_XENDIT_ENABLED) {
+    logger.warn(
+      "[AI] Legacy Xendit QRIS disabled. Set ENABLE_LEGACY_XENDIT=true only for migration fallback.",
+    );
+    return null;
+  }
+  if (_xenditQris) return _xenditQris;
+  try {
+    const svc = require("./services/xendit.service");
+    // Handle kemungkinan default export atau named export
+    const candidate = svc?.createQrisPayment
+      ? svc
+      : svc?.default?.createQrisPayment
+        ? svc.default
+        : null;
+    if (candidate) {
+      _xenditQris = candidate;
+      logger.info("[AI] Xendit QRIS service loaded (createQrisPayment ready).");
+    } else {
+      logger.warn(
+        "[AI] Xendit service ditemukan tapi createQrisPayment tidak tersedia.",
+      );
+      _xenditQris = null;
     }
-    if (_xenditQris) return _xenditQris;
-    try {
-        const svc = require('./services/xendit.service');
-        // Handle kemungkinan default export atau named export
-        const candidate = svc?.createQrisPayment ? svc
-            : (svc?.default?.createQrisPayment ? svc.default : null);
-        if (candidate) {
-            _xenditQris = candidate;
-            logger.info('[AI] Xendit QRIS service loaded (createQrisPayment ready).');
-        } else {
-            logger.warn('[AI] Xendit service ditemukan tapi createQrisPayment tidak tersedia.');
-            _xenditQris = null;
-        }
-    } catch (err) {
-        logger.warn(`[AI] Xendit service tidak bisa dimuat: ${err.message}`);
-        _xenditQris = null;
-    }
-    return _xenditQris;
+  } catch (err) {
+    logger.warn(`[AI] Xendit service tidak bisa dimuat: ${err.message}`);
+    _xenditQris = null;
+  }
+  return _xenditQris;
 }
 
 // ── Scalev Order+Payment Service ──
@@ -61,80 +71,95 @@ function getXenditService() {
 // Jika SCALEV_API_KEY dikonfigurasi, ini menjadi metode pembayaran UTAMA.
 let _scalevSvc = null;
 function getScalevService() {
-    if (_scalevSvc) return _scalevSvc;
-    try {
-        const svc = require('./services/scalev.service');
-        const candidate = svc?.createOrderAndPay ? svc : (svc?.default?.createOrderAndPay ? svc.default : null);
-        if (candidate) {
-            _scalevSvc = candidate;
-            logger.info('[AI] Scalev service loaded (createOrderAndPay ready).');
-        } else {
-            logger.warn('[AI] Scalev service ditemukan tapi createOrderAndPay tidak tersedia.');
-        }
-    } catch (err) {
-        logger.warn(`[AI] Scalev service tidak bisa dimuat: ${err.message}`);
+  if (_scalevSvc) return _scalevSvc;
+  try {
+    const svc = require("./services/scalev.service");
+    const candidate = svc?.createOrderAndPay
+      ? svc
+      : svc?.default?.createOrderAndPay
+        ? svc.default
+        : null;
+    if (candidate) {
+      _scalevSvc = candidate;
+      logger.info("[AI] Scalev service loaded (createOrderAndPay ready).");
+    } else {
+      logger.warn(
+        "[AI] Scalev service ditemukan tapi createOrderAndPay tidak tersedia.",
+      );
     }
-    return _scalevSvc;
+  } catch (err) {
+    logger.warn(`[AI] Scalev service tidak bisa dimuat: ${err.message}`);
+  }
+  return _scalevSvc;
 }
 
 // === RESPONSE TYPE CONSTANTS ===
 const RESPONSE_TYPE = {
-    TEXT: 'text',
-    MEDIA: 'media'
+  TEXT: "text",
+  MEDIA: "media",
 };
 
 const AI_CHAT_TIMEOUT_MS = Number(process.env.OPENAI_CHAT_TIMEOUT_MS || 18000);
-const AI_SECOND_CALL_TIMEOUT_MS = Number(process.env.OPENAI_SECOND_CALL_TIMEOUT_MS || Math.min(AI_CHAT_TIMEOUT_MS, 10000));
-const AI_MEDIA_FAST_REPLY_ENABLED = process.env.AI_MEDIA_FAST_REPLY_ENABLED !== 'false';
+const AI_SECOND_CALL_TIMEOUT_MS = Number(
+  process.env.OPENAI_SECOND_CALL_TIMEOUT_MS ||
+    Math.min(AI_CHAT_TIMEOUT_MS, 10000),
+);
+const AI_MEDIA_FAST_REPLY_ENABLED =
+  process.env.AI_MEDIA_FAST_REPLY_ENABLED !== "false";
 const NORMAL_BUBBLE_MAX_WORDS = Number(process.env.AI_MAX_BUBBLE_WORDS || 10);
 
-function parseAutoLabels(value = '') {
-    return String(value || '')
-        .split(',')
-        .map(label => label.trim())
-        .filter(Boolean)
-        .filter((label, index, list) => list.findIndex(x => x.toLowerCase() === label.toLowerCase()) === index);
+function parseAutoLabels(value = "") {
+  return String(value || "")
+    .split(",")
+    .map((label) => label.trim())
+    .filter(Boolean)
+    .filter(
+      (label, index, list) =>
+        list.findIndex((x) => x.toLowerCase() === label.toLowerCase()) ===
+        index,
+    );
 }
 
-function countWords(text = '') {
-    return (String(text).trim().match(/\S+/g) || []).length;
+function countWords(text = "") {
+  return (String(text).trim().match(/\S+/g) || []).length;
 }
 
 /**
  * Deteksi apakah respons adalah pesan terstruktur (rekap/order/rekening).
  * Rekap harus selalu dikirim utuh tanpa dipotong bubble.
  */
-function isStructuredReply(text = '') {
-    return /rekap\s+pesanan|produk\s*:|nama\s+cetak\s*:|total\s+pesanan\s*:|ongkir\s+(awal|ke)\s*:|metode\s+pembayaran\s*:|harga\s+produk\s*:|total\s+harus\s+dibayar|balas\s+iya|bank\s+(bca|mandiri|bri)/i.test(String(text || ''));
+function isStructuredReply(text = "") {
+  return /rekap\s+pesanan|produk\s*:|nama\s+cetak\s*:|total\s+pesanan\s*:|ongkir\s+(awal|ke)\s*:|metode\s+pembayaran\s*:|harga\s+produk\s*:|total\s+harus\s+dibayar|balas\s+iya|bank\s+(bca|mandiri|bri)/i.test(
+    String(text || ""),
+  );
 }
-
 
 /**
  * Bersihkan teks respons AI dari noise sebelum dikirim ke WhatsApp.
  * - Hapus baris berupa catatan internal AI: (Kirim gambar...), (Kirim video...), [SISTEM:...], dsb.
  * - Normalisasi whitespace berlebih.
  */
-function sanitizeTextOutput(text = '') {
-    if (!text) return '';
-    const lines = String(text)
-        .split('\n')
-        .map(line => line.trim())
-        .filter(line => {
-            if (!line) return false;
-            // Hapus baris yang hanya berisi catatan/action AI dalam kurung atau bracket
-            if (/^\(Kirim/i.test(line)) return false;
-            if (/^\[Kirim/i.test(line)) return false;
-            if (/^\(Mengirim/i.test(line)) return false;
-            if (/^\[SISTEM:/i.test(line)) return false;
-            if (/^\[AI-/i.test(line)) return false;
-            if (/^\*\s*\(Kirim/i.test(line)) return false;
-            // Hapus baris yang hanya berisi tanda baca / emoji saja
-            if (/^[\s\p{Emoji}\-_*#>]+$/u.test(line) && line.length < 4) return false;
-            return true;
-        })
-        .join('\n');
-    // Normalisasi: lebih dari 2 baris kosong berturut → 2
-    return lines.replace(/\n{3,}/g, '\n\n').trim();
+function sanitizeTextOutput(text = "") {
+  if (!text) return "";
+  const lines = String(text)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => {
+      if (!line) return false;
+      // Hapus baris yang hanya berisi catatan/action AI dalam kurung atau bracket
+      if (/^\(Kirim/i.test(line)) return false;
+      if (/^\[Kirim/i.test(line)) return false;
+      if (/^\(Mengirim/i.test(line)) return false;
+      if (/^\[SISTEM:/i.test(line)) return false;
+      if (/^\[AI-/i.test(line)) return false;
+      if (/^\*\s*\(Kirim/i.test(line)) return false;
+      // Hapus baris yang hanya berisi tanda baca / emoji saja
+      if (/^[\s\p{Emoji}\-_*#>]+$/u.test(line) && line.length < 4) return false;
+      return true;
+    })
+    .join("\n");
+  // Normalisasi: lebih dari 2 baris kosong berturut → 2
+  return lines.replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /**
@@ -146,21 +171,28 @@ function sanitizeTextOutput(text = '') {
  * @returns {'dtf'|'uv'|'bts'|'generic'}
  */
 function inferAgentProductKind(agent = {}, mediaList = []) {
-    const safeAgent = agent || {};
-    const haystack = [
-        safeAgent.name,
-        safeAgent.system_prompt,
-        safeAgent.product_knowledge,
-        ...mediaList.map(item => item?.media?.label || item?.label || '')
-    ].join(' ').toLowerCase();
+  const safeAgent = agent || {};
+  const haystack = [
+    safeAgent.name,
+    safeAgent.system_prompt,
+    safeAgent.product_knowledge,
+    ...mediaList.map((item) => item?.media?.label || item?.label || ""),
+  ]
+    .join(" ")
+    .toLowerCase();
 
-    // Prioritas: BTS lebih spesifik, cek duluan
-    if (/\bbts\b|back.to.school|bundling.bts|stiker.buku|alat.tulis|tempat.makan/.test(haystack)) return 'bts';
-    if (/\buv\b|stiker.keras|timbul|botol|helm|tumbler/.test(haystack)) return 'uv';
-    if (/\bdtf\b|setrika|baju|kain|seragam|hijab/.test(haystack)) return 'dtf';
-    return 'generic';
+  // Prioritas: BTS lebih spesifik, cek duluan
+  if (
+    /\bbts\b|back.to.school|bundling.bts|stiker.buku|alat.tulis|tempat.makan/.test(
+      haystack,
+    )
+  )
+    return "bts";
+  if (/\buv\b|stiker.keras|timbul|botol|helm|tumbler/.test(haystack))
+    return "uv";
+  if (/\bdtf\b|setrika|baju|kain|seragam|hijab/.test(haystack)) return "dtf";
+  return "generic";
 }
-
 
 /**
  * Auto-inject media jika AI menyebut media dalam teks tapi TIDAK memanggil tool.
@@ -171,139 +203,197 @@ function inferAgentProductKind(agent = {}, mediaList = []) {
  * @returns {Array|null} - Array media untuk dikirim, atau null jika tidak ada
  */
 function _autoInjectMedia(content, kind, sendableMedia) {
-    if (!content || !sendableMedia || sendableMedia.length === 0) return null;
+  if (!content || !sendableMedia || sendableMedia.length === 0) return null;
 
-    const lower = content.toLowerCase();
+  const lower = content.toLowerCase();
 
-    // Keyword yang menandakan AI ingin tunjukkan media tapi lupa panggil tool
-    const VIDEO_REF     = ['videonya', 'video cara', 'cek video', 'tonton video', 'lihat video', 'video kami', 'kirim video', 'ada video'];
-    const KATALOG_REF   = ['katalognya', 'pilihan font', 'varian font', 'lihat pilihan', 'foto varian', 'lihat katalog', 'pilihan warna', 'cek katalog', 'katalog kami', 'pilihan kami'];
-    const TESTIMONI_REF = ['testimoni', 'review customer', 'bukti nyata', 'foto testimoni', 'hasil pelanggan', 'hasil aslinya', 'ini hasilnya', 'contoh hasil', 'realpict', 'real pic'];
-    const VALUE_REF     = ['keunggulan produk', 'nilai produk', 'kenapa pilih', 'premium lho', 'kualitas produk'];
+  // Keyword yang menandakan AI ingin tunjukkan media tapi lupa panggil tool
+  const VIDEO_REF = [
+    "videonya",
+    "video cara",
+    "cek video",
+    "tonton video",
+    "lihat video",
+    "video kami",
+    "kirim video",
+    "ada video",
+  ];
+  const KATALOG_REF = [
+    "katalognya",
+    "pilihan font",
+    "varian font",
+    "lihat pilihan",
+    "foto varian",
+    "lihat katalog",
+    "pilihan warna",
+    "cek katalog",
+    "katalog kami",
+    "pilihan kami",
+  ];
+  const TESTIMONI_REF = [
+    "testimoni",
+    "review customer",
+    "bukti nyata",
+    "foto testimoni",
+    "hasil pelanggan",
+    "hasil aslinya",
+    "ini hasilnya",
+    "contoh hasil",
+    "realpict",
+    "real pic",
+  ];
+  const VALUE_REF = [
+    "keunggulan produk",
+    "nilai produk",
+    "kenapa pilih",
+    "premium lho",
+    "kualitas produk",
+  ];
 
-    // Dinamis re-detect kind dari teks respons AI (override jika disebut eksplisit)
-    let dynamicKind = kind;
-    if (/\b(dtf|baju|kain|seragam|setrika|hijab)\b/i.test(lower)) dynamicKind = 'dtf';
-    else if (/\b(bts|bundling|stiker.buku|alat.tulis|tempat.makan)\b/i.test(lower)) dynamicKind = 'bts';
-    else if (/\b(uv|keras|botol|helm|tumbler|kaca)\b/i.test(lower)) dynamicKind = 'uv';
+  // Dinamis re-detect kind dari teks respons AI (override jika disebut eksplisit)
+  let dynamicKind = kind;
+  if (/\b(dtf|baju|kain|seragam|setrika|hijab)\b/i.test(lower))
+    dynamicKind = "dtf";
+  else if (
+    /\b(bts|bundling|stiker.buku|alat.tulis|tempat.makan)\b/i.test(lower)
+  )
+    dynamicKind = "bts";
+  else if (/\b(uv|keras|botol|helm|tumbler|kaca)\b/i.test(lower))
+    dynamicKind = "uv";
 
-    // Pilih suffix label berdasarkan tipe produk
-    const suffix = dynamicKind === 'uv' ? 'uv' : (dynamicKind === 'bts' ? 'bts' : 'dtf');
+  // Pilih suffix label berdasarkan tipe produk
+  const suffix =
+    dynamicKind === "uv" ? "uv" : dynamicKind === "bts" ? "bts" : "dtf";
 
-    const targetLabels = [];
-    if (VIDEO_REF.some(kw     => lower.includes(kw))) targetLabels.push(`video ${suffix}`);
-    if (KATALOG_REF.some(kw   => lower.includes(kw))) targetLabels.push(`katalog ${suffix}`);
-    if (TESTIMONI_REF.some(kw => lower.includes(kw))) targetLabels.push(`testimoni ${suffix}`);
-    if (VALUE_REF.some(kw     => lower.includes(kw))) targetLabels.push(`value ${suffix}`);
+  const targetLabels = [];
+  if (VIDEO_REF.some((kw) => lower.includes(kw)))
+    targetLabels.push(`video ${suffix}`);
+  if (KATALOG_REF.some((kw) => lower.includes(kw)))
+    targetLabels.push(`katalog ${suffix}`);
+  if (TESTIMONI_REF.some((kw) => lower.includes(kw)))
+    targetLabels.push(`testimoni ${suffix}`);
+  if (VALUE_REF.some((kw) => lower.includes(kw)))
+    targetLabels.push(`value ${suffix}`);
 
-    if (targetLabels.length === 0) return null;
+  if (targetLabels.length === 0) return null;
 
-    const results = [];
-    for (const targetLabel of targetLabels) {
-        const [word1, word2] = targetLabel.split(' ');
-        
-        // Temukan semua media yang cocok dengan keyword
-        const matchesForLabel = sendableMedia.filter(m => {
-            if (!m.label) return false;
-            const lbl = m.label.toLowerCase();
-            return lbl.includes(word1) && (kind === 'generic' || (word2 && lbl.includes(word2)));
-        });
+  const results = [];
+  for (const targetLabel of targetLabels) {
+    const [word1, word2] = targetLabel.split(" ");
 
-        const videos = matchesForLabel.filter(m => (m.type || '').startsWith('video'));
-        const images = matchesForLabel.filter(m => (m.type || '').startsWith('image'));
+    // Temukan semua media yang cocok dengan keyword
+    const matchesForLabel = sendableMedia.filter((m) => {
+      if (!m.label) return false;
+      const lbl = m.label.toLowerCase();
+      return (
+        lbl.includes(word1) &&
+        (kind === "generic" || (word2 && lbl.includes(word2)))
+      );
+    });
 
-        // Inject 1 RANDOM foto/image jika ada lebih dari 1 (Fix Media Spam)
-        if (images.length > 0) {
-            const randomImage = images[Math.floor(Math.random() * images.length)];
-            if (!results.find(r => r.id === randomImage.id)) {
-                results.push(randomImage);
-            }
-        }
+    const videos = matchesForLabel.filter((m) =>
+      (m.type || "").startsWith("video"),
+    );
+    const images = matchesForLabel.filter((m) =>
+      (m.type || "").startsWith("image"),
+    );
 
-        // Inject 1 RANDOM video jika ada lebih dari 1
-        if (videos.length > 0) {
-            const randomVideo = videos[Math.floor(Math.random() * videos.length)];
-            if (!results.find(r => r.id === randomVideo.id)) {
-                results.push(randomVideo);
-            }
-        }
+    // Inject 1 RANDOM foto/image jika ada lebih dari 1 (Fix Media Spam)
+    if (images.length > 0) {
+      const randomImage = images[Math.floor(Math.random() * images.length)];
+      if (!results.find((r) => r.id === randomImage.id)) {
+        results.push(randomImage);
+      }
     }
 
-    return results.length > 0 ? results : null;
+    // Inject 1 RANDOM video jika ada lebih dari 1
+    if (videos.length > 0) {
+      const randomVideo = videos[Math.floor(Math.random() * videos.length)];
+      if (!results.find((r) => r.id === randomVideo.id)) {
+        results.push(randomVideo);
+      }
+    }
+  }
+
+  return results.length > 0 ? results : null;
 }
 
 function buildFastMediaReply(agent, mediaResults = [], interactionCount = 1) {
-    const kind = inferAgentProductKind(agent, mediaResults);
-    
-    // Variasi copywriting agar tidak dianggap SPAM oleh WhatsApp (anti-banned)
-    const uvVariations = [
-        'Promo Stiker UV nya masih ada bun 😊\nMau pilih varian yang mana nih?',
-        'Untuk Stiker UV timbulnya ready bun 🥰\nBunda mau pilih varian yang mana?',
-        'Stiker UV kita masih promo ya bun 😊\nSilakan dipilih variannya bun',
-        'Stiker UV anti airnya ready bun 😍\nBunda suka varian yang mana?'
-    ];
-    
-    const dtfVariations = [
-        'Promo Label Nama DTF masih tersedia ya bun 😊\nMau pilih varian yang mana bun?',
-        'Label setrika bajunya ready bun 🥰\nBunda mau pilih varian font yang mana nih?',
-        'Label DTF kita masih promo ya bun 😊\nSilakan dipilih varian fontnya',
-        'Label baju anti luntur ready bun 😍\nBunda suka varian font nomor berapa?'
-    ];
-    
-    const genericVariations = [
-        'Ini ya bun 😊\nMau pilih yang mana bun?',
-        'Silakan dilihat bun 🥰\nMau pilih yang mana nih?',
-        'Bisa dicek dulu bun gambarnya 😊\nMau pilih yang mana?',
-        'Ini contohnya ya bun 😍\nKira-kira bunda suka yang mana?'
-    ];
+  const kind = inferAgentProductKind(agent, mediaResults);
 
-    const pickRandom = (arr) => arr[Math.floor(Math.random() * arr.length)];
+  // Variasi copywriting agar tidak dianggap SPAM oleh WhatsApp (anti-banned)
+  const uvVariations = [
+    "Promo Stiker UV nya masih ada bun 😊\nMau pilih varian yang mana nih?",
+    "Untuk Stiker UV timbulnya ready bun 🥰\nBunda mau pilih varian yang mana?",
+    "Stiker UV kita masih promo ya bun 😊\nSilakan dipilih variannya bun",
+    "Stiker UV anti airnya ready bun 😍\nBunda suka varian yang mana?",
+  ];
 
-    if (interactionCount === 1 && kind === 'uv') return pickRandom(uvVariations);
-    if (interactionCount === 1 && kind === 'dtf') return pickRandom(dtfVariations);
-    
-    return pickRandom(genericVariations);
+  const dtfVariations = [
+    "Promo Label Nama DTF masih tersedia ya bun 😊\nMau pilih varian yang mana bun?",
+    "Label setrika bajunya ready bun 🥰\nBunda mau pilih varian font yang mana nih?",
+    "Label DTF kita masih promo ya bun 😊\nSilakan dipilih varian fontnya",
+    "Label baju anti luntur ready bun 😍\nBunda suka varian font nomor berapa?",
+  ];
+
+  const genericVariations = [
+    "Ini ya bun 😊\nMau pilih yang mana bun?",
+    "Silakan dilihat bun 🥰\nMau pilih yang mana nih?",
+    "Bisa dicek dulu bun gambarnya 😊\nMau pilih yang mana?",
+    "Ini contohnya ya bun 😍\nKira-kira bunda suka yang mana?",
+  ];
+
+  const pickRandom = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+  if (interactionCount === 1 && kind === "uv") return pickRandom(uvVariations);
+  if (interactionCount === 1 && kind === "dtf")
+    return pickRandom(dtfVariations);
+
+  return pickRandom(genericVariations);
 }
 
 function splitLongBubble(text, maxWords = NORMAL_BUBBLE_MAX_WORDS) {
-    const words = String(text || '').trim().split(/\s+/).filter(Boolean);
-    if (words.length <= maxWords) return [String(text || '').trim()].filter(Boolean);
+  const words = String(text || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (words.length <= maxWords)
+    return [String(text || "").trim()].filter(Boolean);
 
-    const chunks = [];
-    for (let i = 0; i < words.length; i += maxWords) {
-        chunks.push(words.slice(i, i + maxWords).join(' '));
-    }
-    return chunks;
+  const chunks = [];
+  for (let i = 0; i < words.length; i += maxWords) {
+    chunks.push(words.slice(i, i + maxWords).join(" "));
+  }
+  return chunks;
 }
 
 function prepareOutboundBubbles(text) {
-    const clean = sanitizeTextOutput(text);
-    if (!clean) return [];
+  const clean = sanitizeTextOutput(text);
+  if (!clean) return [];
 
-    // Rekap/order/payment harus tetap utuh supaya data transaksi tidak hilang.
-    if (isStructuredReply(clean)) return [clean];
+  // Rekap/order/payment harus tetap utuh supaya data transaksi tidak hilang.
+  if (isStructuredReply(clean)) return [clean];
 
-    // Pecah hanya di ENTER GANDA (\n\n) — batas alami antar bubble.
-    // Single newline dianggap masih 1 bubble (misal: list keunggulan produk).
-    const rawBubbles = clean
-        .split(/\n{2,}/)
-        .map(part => part.trim())
-        .filter(Boolean);
+  // Pecah hanya di ENTER GANDA (\n\n) — batas alami antar bubble.
+  // Single newline dianggap masih 1 bubble (misal: list keunggulan produk).
+  const rawBubbles = clean
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter(Boolean);
 
-    // HARD CAP: Diperlonggar ke 6 bubble per respons agar bot 
-    // bisa mengirim pesan pendek-pendek (sesuai Master Prompt).
-    const MAX_BUBBLES = 6;
-    if (rawBubbles.length <= MAX_BUBBLES) {
-        return rawBubbles;
-    }
-    // Gabungkan bubble ke-3 dan seterusnya menjadi satu bubble akhir
-    const merged = [
-        ...rawBubbles.slice(0, MAX_BUBBLES - 1),
-        rawBubbles.slice(MAX_BUBBLES - 1).join('\n')
-    ];
-    return merged;
+  // HARD CAP: Diperlonggar ke 6 bubble per respons agar bot
+  // bisa mengirim pesan pendek-pendek (sesuai Master Prompt).
+  const MAX_BUBBLES = 6;
+  if (rawBubbles.length <= MAX_BUBBLES) {
+    return rawBubbles;
+  }
+  // Gabungkan bubble ke-3 dan seterusnya menjadi satu bubble akhir
+  const merged = [
+    ...rawBubbles.slice(0, MAX_BUBBLES - 1),
+    rawBubbles.slice(MAX_BUBBLES - 1).join("\n"),
+  ];
+  return merged;
 }
-
 
 // ══════════════════════════════════════════════════════════════════
 // FAULT-TOLERANT CONCURRENCY LIMITER (Deadlock-Proof)
@@ -315,48 +405,69 @@ const pendingQueue = [];
 const QUEUE_TIMEOUT_MS = 60 * 1000; // 1 Menit maksimal antre (Hardening Phase 2)
 
 function runNextInQueue() {
-    while (activeRequests < MAX_CONCURRENCY && pendingQueue.length > 0) {
-        const { resolve, reject, execute, queuedAt } = pendingQueue.shift();
-        
-        // --- STALE QUEUE PRUNING ---
-        // Jika antrean tertunda lebih dari batas waktu, gugurkan (mencegah balasan basi)
-        if (Date.now() - queuedAt > QUEUE_TIMEOUT_MS) {
-            logger.warn(`[AI Queue] Antrean digugurkan (Stale > 2 mins). OpenAI lambat/down.`);
-            resolve({ type: RESPONSE_TYPE.TEXT, content: ERRORS.AI_FALLBACK });
-            continue; // Lanjut ke item berikutnya tanpa menambah activeRequests
-        }
+  while (activeRequests < MAX_CONCURRENCY && pendingQueue.length > 0) {
+    const { resolve, reject, execute, queuedAt } = pendingQueue.shift();
 
-        activeRequests++;
-        
-        execute()
-            .then(res => resolve(res))
-            .catch(err => {
-                // KRITIS: Tangkap error agar slot tidak hilang selamanya
-                logger.error(`[AI Queue] Error dalam proses: ${err.message}`);
-                reject(err);
-            })
-            .finally(() => {
-                // KRITIS: Slot SELALU dibebaskan, apapun yang terjadi
-                activeRequests--;
-                runNextInQueue();
-            });
+    // --- STALE QUEUE PRUNING ---
+    // Jika antrean tertunda lebih dari batas waktu, gugurkan (mencegah balasan basi)
+    if (Date.now() - queuedAt > QUEUE_TIMEOUT_MS) {
+      logger.warn(
+        `[AI Queue] Antrean digugurkan (Stale > 2 mins). OpenAI lambat/down.`,
+      );
+      resolve({ type: RESPONSE_TYPE.TEXT, content: ERRORS.AI_FALLBACK });
+      continue; // Lanjut ke item berikutnya tanpa menambah activeRequests
     }
+
+    activeRequests++;
+
+    execute()
+      .then((res) => resolve(res))
+      .catch((err) => {
+        // KRITIS: Tangkap error agar slot tidak hilang selamanya
+        logger.error(`[AI Queue] Error dalam proses: ${err.message}`);
+        reject(err);
+      })
+      .finally(() => {
+        // KRITIS: Slot SELALU dibebaskan, apapun yang terjadi
+        activeRequests--;
+        runNextInQueue();
+      });
+  }
 }
 
-async function getAIResponse(userMessage, history = [], store = null, agent = null, customerMediaContext = "", conversationSummary = "", interactionCount = 1, customerPhone = "") {
-    return new Promise((resolve, reject) => {
-        pendingQueue.push({
-            resolve,
-            reject,
-            queuedAt: Date.now(),
-            execute: () => _processAIResponse(userMessage, history, store, agent, customerMediaContext, conversationSummary, interactionCount, customerPhone)
-        });
-        runNextInQueue();
-    }).catch(err => {
-        // Safety net: jika queue gagal, kembalikan fallback (server TIDAK BOLEH mati)
-        logger.error(`[AI] Fallback response triggered: ${err.message}`);
-        return { type: RESPONSE_TYPE.TEXT, content: ERRORS.AI_FALLBACK };
+async function getAIResponse(
+  userMessage,
+  history = [],
+  store = null,
+  agent = null,
+  customerMediaContext = "",
+  conversationSummary = "",
+  interactionCount = 1,
+  customerPhone = "",
+) {
+  return new Promise((resolve, reject) => {
+    pendingQueue.push({
+      resolve,
+      reject,
+      queuedAt: Date.now(),
+      execute: () =>
+        _processAIResponse(
+          userMessage,
+          history,
+          store,
+          agent,
+          customerMediaContext,
+          conversationSummary,
+          interactionCount,
+          customerPhone,
+        ),
     });
+    runNextInQueue();
+  }).catch((err) => {
+    // Safety net: jika queue gagal, kembalikan fallback (server TIDAK BOLEH mati)
+    logger.error(`[AI] Fallback response triggered: ${err.message}`);
+    return { type: RESPONSE_TYPE.TEXT, content: ERRORS.AI_FALLBACK };
+  });
 }
 
 /**
@@ -374,345 +485,407 @@ async function getAIResponse(userMessage, history = [], store = null, agent = nu
  * @returns {Promise<{valid: boolean, missing: string}>}
  */
 async function _runInspectorValidation(content, kind) {
-    if (!content) return { valid: true };
+  if (!content) return { valid: true };
 
-    // Hanya aktif jika output berisi pola rekap — tidak setiap pesan
-    const RECAP_PATTERN = /rekap\s+pesanan|nama\s+cetak\s*:|total\s+pesanan\s*:|metode\s+pembayaran\s*:/i;
-    if (!RECAP_PATTERN.test(content)) return { valid: true };
+  // Hanya aktif jika output berisi pola rekap — tidak setiap pesan
+  const RECAP_PATTERN =
+    /rekap\s+pesanan|nama\s+cetak\s*:|total\s+pesanan\s*:|metode\s+pembayaran\s*:/i;
+  if (!RECAP_PATTERN.test(content)) return { valid: true };
 
-    const modelName = config.MODEL_NAME;
+  const modelName = config.MODEL_NAME;
 
-    // Schema validasi per produk — bisa diperluas tanpa ubah kode
-    const PRODUCT_SCHEMAS = {
-        dtf: [
-            'Nama Cetak (minimal 1 nama, bukan placeholder)',
-            'Varian DTF (Varian 1/2/3/4 atau deskripsi varian)',
-            'Warna DTF (Pink/Kuning/Putih/Hijau/Biru/Hitam)',
-            'Jumlah paket (angka, bukan placeholder)',
-            'Alamat lengkap (minimal Kecamatan dan Kota/Kabupaten)',
-            'Ongkir (nominal Rp, bukan placeholder)',
-            'Total pesanan (nominal Rp, bukan placeholder)',
-            'Metode pembayaran (Transfer/COD, bukan UNKNOWN)',
-        ],
-        uv: [
-            'Nama Cetak (minimal 1 nama, bukan placeholder)',
-            'Varian UV (Cowok/Cewek/Polos — JANGAN tanya warna, UV tidak punya pilihan warna)',
-            'Jumlah paket (angka, bukan placeholder)',
-            'Alamat lengkap (minimal Kecamatan dan Kota/Kabupaten)',
-            'Ongkir (nominal Rp, bukan placeholder)',
-            'Total pesanan (nominal Rp, bukan placeholder)',
-            'Metode pembayaran (Transfer/COD, bukan UNKNOWN)',
-        ],
-        bts: [
-            'Nama Cetak (minimal 1 nama, semua komponen pakai nama yang sama)',
-            'Desain Stiker Buku',
-            'Desain Stiker Alat Tulis',
-            'Desain Stiker Tempat Makan',
-            'Varian bonus DTF (Varian 1/2/3/4)',
-            'Warna bonus DTF (Pink/Kuning/Putih/Hijau/Biru/Hitam)',
-            'Jumlah bundle (angka)',
-            'Alamat lengkap (minimal Kecamatan dan Kota/Kabupaten)',
-            'Ongkir awal dan subsidi ongkir BTS (maks Rp20.000)',
-            'Total pesanan (nominal Rp)',
-            'Metode pembayaran (Transfer/COD)',
-        ],
-        generic: [
-            'Nama Cetak atau identitas produk (minimal terisi)',
-            'Jumlah (angka)',
-            'Alamat lengkap (minimal Kecamatan dan Kota)',
-            'Total pesanan (nominal Rp)',
-        ],
+  // Schema validasi per produk — bisa diperluas tanpa ubah kode
+  const PRODUCT_SCHEMAS = {
+    dtf: [
+      "Nama Cetak (minimal 1 nama, bukan placeholder)",
+      "Varian DTF (Varian 1/2/3/4 atau deskripsi varian)",
+      "Warna DTF (Pink/Kuning/Putih/Hijau/Biru/Hitam)",
+      "Jumlah paket (angka, bukan placeholder)",
+      "Alamat lengkap (minimal Kecamatan dan Kota/Kabupaten)",
+      "Ongkir (nominal Rp, bukan placeholder)",
+      "Total pesanan (nominal Rp, bukan placeholder)",
+      "Metode pembayaran (Transfer/COD, bukan UNKNOWN)",
+    ],
+    uv: [
+      "Nama Cetak (minimal 1 nama, bukan placeholder)",
+      "Varian UV (Cowok/Cewek/Polos — JANGAN tanya warna, UV tidak punya pilihan warna)",
+      "Jumlah paket (angka, bukan placeholder)",
+      "Alamat lengkap (minimal Kecamatan dan Kota/Kabupaten)",
+      "Ongkir (nominal Rp, bukan placeholder)",
+      "Total pesanan (nominal Rp, bukan placeholder)",
+      "Metode pembayaran (Transfer/COD, bukan UNKNOWN)",
+    ],
+    bts: [
+      "Nama Cetak (minimal 1 nama, semua komponen pakai nama yang sama)",
+      "Desain Stiker Buku",
+      "Desain Stiker Alat Tulis",
+      "Desain Stiker Tempat Makan",
+      "Varian bonus DTF (Varian 1/2/3/4)",
+      "Warna bonus DTF (Pink/Kuning/Putih/Hijau/Biru/Hitam)",
+      "Jumlah bundle (angka)",
+      "Alamat lengkap (minimal Kecamatan dan Kota/Kabupaten)",
+      "Ongkir awal dan subsidi ongkir BTS (maks Rp20.000)",
+      "Total pesanan (nominal Rp)",
+      "Metode pembayaran (Transfer/COD)",
+    ],
+    generic: [
+      "Nama Cetak atau identitas produk (minimal terisi)",
+      "Jumlah (angka)",
+      "Alamat lengkap (minimal Kecamatan dan Kota)",
+      "Total pesanan (nominal Rp)",
+    ],
+  };
+
+  const schema = PRODUCT_SCHEMAS[kind] || PRODUCT_SCHEMAS.generic;
+  const schemaText = schema.map((s, i) => `${i + 1}. ${s}`).join("\n");
+
+  try {
+    const inspectorResponse = await openai.chat.completions.create({
+      model: modelName,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: [
+            "Kamu adalah Inspector Agent (Quality Control).",
+            "Tugasmu: Periksa apakah form Rekap Pesanan berikut sudah LENGKAP sesuai schema wajib.",
+            "",
+            `Tipe Produk: ${kind.toUpperCase()}`,
+            'Field yang WAJIB ada dan terisi (bukan placeholder, bukan kosong, bukan "[...]"):',
+            schemaText,
+            "",
+            "ATURAN KEPUTUSAN (SANGAT KETAT):",
+            "- valid: true  → SEMUA field wajib terisi dengan data nyata hasil diskusi dengan pelanggan, tanpa ada satupun placeholder.",
+            '- valid: false → Ada 1 atau lebih field yang kosong, berisi placeholder seperti "[...]", "belum diisi", "TBA", atau data tidak masuk akal.',
+            "- valid: false → Metode pembayaran HARUS jelas antara Transfer atau COD. Jika UNKNOWN atau belum dipilih, maka TIDAK VALID.",
+            "",
+            'Kembalikan HANYA JSON: { "valid": true/false, "missing": "Daftar field yang kurang, pisahkan koma" }',
+            "Jika valid=true, missing boleh dikosongkan.",
+          ].join("\n"),
+        },
+        {
+          role: "user",
+          content: `Isi Rekap untuk dicek:\n\n${content}`,
+        },
+      ],
+      temperature: 0.0, // Deterministik, bukan kreatif
+      max_tokens: 200,
+    });
+
+    const raw = inspectorResponse.choices[0].message.content;
+    const cleanRaw = raw
+      .replace(/```json/gi, "")
+      .replace(/```/g, "")
+      .trim();
+    const result = JSON.parse(cleanRaw);
+    return {
+      valid: result.valid !== false,
+      missing: result.missing || "",
     };
-
-    const schema = PRODUCT_SCHEMAS[kind] || PRODUCT_SCHEMAS.generic;
-    const schemaText = schema.map((s, i) => `${i + 1}. ${s}`).join('\n');
-
-    try {
-        const inspectorResponse = await openai.chat.completions.create({
-            model: modelName,
-            response_format: { type: 'json_object' },
-            messages: [
-                {
-                    role: 'system',
-                    content: [
-                        'Kamu adalah Inspector Agent (Quality Control).',
-                        'Tugasmu: Periksa apakah form Rekap Pesanan berikut sudah LENGKAP sesuai schema wajib.',
-                        '',
-                        `Tipe Produk: ${kind.toUpperCase()}`,
-                        'Field yang WAJIB ada dan terisi (bukan placeholder, bukan kosong, bukan "[...]"):',
-                        schemaText,
-                        '',
-                        'ATURAN KEPUTUSAN (SANGAT KETAT):',
-                        '- valid: true  → SEMUA field wajib terisi dengan data nyata hasil diskusi dengan pelanggan, tanpa ada satupun placeholder.',
-                        '- valid: false → Ada 1 atau lebih field yang kosong, berisi placeholder seperti "[...]", "belum diisi", "TBA", atau data tidak masuk akal.',
-                        '- valid: false → Metode pembayaran HARUS jelas antara Transfer atau COD. Jika UNKNOWN atau belum dipilih, maka TIDAK VALID.',
-                        '',
-                        'Kembalikan HANYA JSON: { "valid": true/false, "missing": "Daftar field yang kurang, pisahkan koma" }',
-                        'Jika valid=true, missing boleh dikosongkan.',
-                    ].join('\n'),
-                },
-                {
-                    role: 'user',
-                    content: `Isi Rekap untuk dicek:\n\n${content}`,
-                },
-            ],
-            temperature: 0.0, // Deterministik, bukan kreatif
-            max_tokens: 200,
-        });
-
-        const raw = inspectorResponse.choices[0].message.content;
-        const cleanRaw = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
-        const result = JSON.parse(cleanRaw);
-        return {
-            valid: result.valid !== false,
-            missing: result.missing || '',
-        };
-    } catch (err) {
-        // Non-fatal: jika inspector error, loloskan saja (jangan block customer)
-        logger.error(`[Inspector] Validation error (non-fatal): ${err.message}`);
-        return { valid: true };
-    }
+  } catch (err) {
+    // Non-fatal: jika inspector error, loloskan saja (jangan block customer)
+    logger.error(`[Inspector] Validation error (non-fatal): ${err.message}`);
+    return { valid: true };
+  }
 }
-
 
 /**
  * Logika internal pemrosesan AI (Refactored: Smarter & Safer)
  */
-async function _processAIResponse(userMessage, history = [], store = null, agent = null, customerMediaContext = "", conversationSummary = "", interactionCount = 1, customerPhone = "", isRetry = false) {
-    // Guard: Validasi API Key tanpa crash
-    if (!config.OPENAI_API_KEY || !config.OPENAI_API_KEY.startsWith('sk-')) {
-        logger.error("OpenAI API Key belum dikonfigurasi atau tidak valid!");
-        return { type: RESPONSE_TYPE.TEXT, content: ERRORS.AI_FALLBACK };
+async function _processAIResponse(
+  userMessage,
+  history = [],
+  store = null,
+  agent = null,
+  customerMediaContext = "",
+  conversationSummary = "",
+  interactionCount = 1,
+  customerPhone = "",
+  isRetry = false,
+) {
+  // Guard: Validasi API Key — cukup salah satu (DeepSeek ATAU OpenAI) terkonfigurasi
+  const hasDeepSeekKey = !!process.env.DEEPSEEK_API_KEY;
+  const hasOpenAiKey = !!(
+    config.OPENAI_API_KEY && config.OPENAI_API_KEY.startsWith("sk-")
+  );
+  if (!hasDeepSeekKey && !hasOpenAiKey) {
+    logger.error(
+      "AI API Key belum dikonfigurasi! Set DEEPSEEK_API_KEY atau OPENAI_API_KEY di .env",
+    );
+    return { type: RESPONSE_TYPE.TEXT, content: ERRORS.AI_FALLBACK };
+  }
+
+  try {
+    // BOT_NAME: Store override > Agent default (1 Agent, banyak nama CS per-WA)
+    const botName = (store?.bot_name || agent?.bot_name || "CS Bot").trim();
+    const rawSysPrompt =
+      agent?.system_prompt ||
+      store?.system_prompt ||
+      "Anda adalah admin CS yang ramah.";
+    const sysPrompt = rawSysPrompt.replace(/\{BOT_NAME\}/gi, botName);
+    const knowledge =
+      agent?.product_knowledge ||
+      store?.product_knowledge ||
+      "Kami melayani pembuatan barang berkualitas.";
+    const modelName = config.MODEL_NAME;
+    const agentId = agent?.id || null;
+    const configuredLabels = parseAutoLabels(agent?.auto_labels);
+
+    // ── Media Load ───────────────────────────────────────────────────────
+    const knowledgeMedia = agentId ? await getKnowledgeMedia(agentId) : [];
+    const sendableMedia = agentId ? await getSendableMedia(agentId) : [];
+
+    // Deteksi jenis produk agent (dtf/uv/bts/generic) — dipakai auto-inject & fast reply
+    const kind = inferAgentProductKind(
+      agent,
+      sendableMedia.map((m) => ({ media: m })),
+    );
+
+    // ── LEARNING BOT: Pola sukses dari closing nyata ─────────────────────
+    let learningSection = "";
+    try {
+      learningSection = await buildLearningPromptSection(agentId, kind);
+    } catch (_learningErr) {
+      // Non-critical — jangan sampai fail prompt karena learning service error
     }
 
-    try {
-        // BOT_NAME: Store override > Agent default (1 Agent, banyak nama CS per-WA)
-        const botName = (store?.bot_name || agent?.bot_name || 'CS Bot').trim();
-        const rawSysPrompt = agent?.system_prompt || store?.system_prompt || 'Anda adalah admin CS yang ramah.';
-        const sysPrompt = rawSysPrompt.replace(/\{BOT_NAME\}/gi, botName);
-        const knowledge = agent?.product_knowledge || store?.product_knowledge || 'Kami melayani pembuatan barang berkualitas.';
-        const modelName = config.MODEL_NAME;
-        const agentId   = agent?.id || null;
-        const configuredLabels = parseAutoLabels(agent?.auto_labels);
+    // ══════════════════════════════════════════════════════════════════
+    // SYSTEM PROMPT — PRODUCT-AGNOSTIC ARCHITECTURE
+    //
+    // Filosofi: "Prompt mengatur percakapan. Kode mengatur validasi data."
+    // (sesuai CRM_AI_V2_AGENT_READABLE_SPEC.md § 0.1)
+    //
+    // Kode ini TIDAK boleh hardcode knowledge produk DTF/UV/BTS.
+    // Semua knowledge produk, gaya bahasa, dan alur percakapan
+    // berasal dari agent.system_prompt dan agent.product_knowledge (DB).
+    //
+    // Yang tersisa di sini HANYA:
+    //   - Variabel sistem (waktu, media, label, nomor WA)
+    //   - Aturan teknis absolut (format bubble, anti-hallucination, tools)
+    //   - Inject prompt dari DB agent
+    // ══════════════════════════════════════════════════════════════════
+    const customerPhoneFormatted = customerPhone
+      ? String(customerPhone).replace(/[^0-9+]/g, "")
+      : "";
+    const customerWADisplay = customerPhoneFormatted
+      ? customerPhoneFormatted.startsWith("+")
+        ? customerPhoneFormatted
+        : `+${customerPhoneFormatted}`
+      : "(belum tersedia)";
 
-        // ── Media Load ───────────────────────────────────────────────────────
-        const knowledgeMedia = agentId ? await getKnowledgeMedia(agentId) : [];
-        const sendableMedia  = agentId ? await getSendableMedia(agentId) : [];
+    const nowStr = moment().format("dddd, DD MMMM YYYY HH:mm");
 
-        // Deteksi jenis produk agent (dtf/uv/bts/generic) — dipakai auto-inject & fast reply
-        const kind = inferAgentProductKind(agent, sendableMedia.map(m => ({ media: m })));
+    // ── Bagian 1: System Context (Data Teknis Runtime) ────────────────
+    const systemContextBlock = [
+      `WAKTU SISTEM: ${nowStr}`,
+      `Gunakan waktu ini HANYA untuk konteks internal (sapaan pagi/malam).`,
+      `DILARANG menulis tanggal/jam di teks balasan ke customer.`,
+      ``,
+      `NOMOR WA CUSTOMER (injeksi server, GUNAKAN untuk field No. WA di rekap):`,
+      `No WA: ${customerWADisplay}`,
+      `DILARANG menulis placeholder "[nomor wa]", "[...]" untuk field No WA.`,
+    ].join("\n");
 
-        // ── LEARNING BOT: Pola sukses dari closing nyata ─────────────────────
-        let learningSection = '';
-        try {
-            learningSection = await buildLearningPromptSection(agentId, kind);
-        } catch (_learningErr) {
-            // Non-critical — jangan sampai fail prompt karena learning service error
-        }
+    // ── Bagian 2: Media Knowledge (pengetahuan visual AI) ────────────
+    const mediaKnowledgeBlock =
+      knowledgeMedia.length > 0
+        ? [
+            `=== PENGETAHUAN VISUAL (${knowledgeMedia.length} item) ===`,
+            knowledgeMedia
+              .map((m) => {
+                const icon = m.type?.startsWith("video")
+                  ? "🎬 VIDEO"
+                  : "📸 FOTO";
+                const parts = [
+                  `[${icon}]${m.label ? ` Topik: ${m.label}` : ""}`,
+                ];
+                if (m.description) parts.push(`  Deskripsi: ${m.description}`);
+                if (m.ai_analysis)
+                  parts.push(`  Analisis Visual: ${m.ai_analysis}`);
+                if (m.video_transcript)
+                  parts.push(`  Narasi: "${m.video_transcript}"`);
+                return parts.join("\n");
+              })
+              .join("\n\n"),
+          ].join("\n")
+        : `=== PENGETAHUAN VISUAL === (belum ada media knowledge)`;
 
+    // ── Bagian 3: Catalog Media (media yang bisa dikirim) ────────────
+    const catalogBlock =
+      sendableMedia.length > 0
+        ? [
+            `=== KATALOG MEDIA YANG BISA DIKIRIM (${sendableMedia.length} item) ===`,
+            `Gunakan tool "kirim_media_katalog" dengan ID atau label_names di bawah:`,
+            sendableMedia
+              .map(
+                (m) =>
+                  `  ID:${m.id} | Label:"${m.label || "tanpa-label"}" | Tipe:${m.type}${m.description ? ` | ${m.description}` : ""}`,
+              )
+              .join("\n"),
+          ].join("\n")
+        : `=== KATALOG MEDIA === (belum ada media yang bisa dikirim)`;
 
+    // ── Bagian 4: Label Config ────────────────────────────────────────
+    const labelBlock =
+      configuredLabels.length > 0
+        ? `=== LABEL YANG TERSEDIA ===\n${configuredLabels.map((l) => `  - ${l}`).join("\n")}`
+        : `=== LABEL === (belum dikonfigurasi untuk agen ini)`;
 
-        // ══════════════════════════════════════════════════════════════════
-        // SYSTEM PROMPT — PRODUCT-AGNOSTIC ARCHITECTURE
-        //
-        // Filosofi: "Prompt mengatur percakapan. Kode mengatur validasi data."
-        // (sesuai CRM_AI_V2_AGENT_READABLE_SPEC.md § 0.1)
-        //
-        // Kode ini TIDAK boleh hardcode knowledge produk DTF/UV/BTS.
-        // Semua knowledge produk, gaya bahasa, dan alur percakapan
-        // berasal dari agent.system_prompt dan agent.product_knowledge (DB).
-        //
-        // Yang tersisa di sini HANYA:
-        //   - Variabel sistem (waktu, media, label, nomor WA)
-        //   - Aturan teknis absolut (format bubble, anti-hallucination, tools)
-        //   - Inject prompt dari DB agent
-        // ══════════════════════════════════════════════════════════════════
-        const customerPhoneFormatted = customerPhone ? String(customerPhone).replace(/[^0-9+]/g, '') : '';
-        const customerWADisplay = customerPhoneFormatted
-            ? (customerPhoneFormatted.startsWith('+') ? customerPhoneFormatted : `+${customerPhoneFormatted}`)
-            : '(belum tersedia)';
+    // ── Bagian 5: Learning Patterns (async, non-critical) ────────────
+    const learningBlock = learningSection
+      ? `=== POLA SUKSES CLOSING (dari data nyata) ===\n${learningSection}`
+      : "";
 
-        const nowStr = moment().format('dddd, DD MMMM YYYY HH:mm');
-
-        // ── Bagian 1: System Context (Data Teknis Runtime) ────────────────
-        const systemContextBlock = [
-            `WAKTU SISTEM: ${nowStr}`,
-            `Gunakan waktu ini HANYA untuk konteks internal (sapaan pagi/malam).`,
-            `DILARANG menulis tanggal/jam di teks balasan ke customer.`,
+    // ── Bagian 6: Conversation State ─────────────────────────────────
+    const conversationBlock =
+      interactionCount === 1
+        ? [
+            `=== STATUS: INTERAKSI PERTAMA ===`,
+            `Prioritas: Jika customer belum tahu produk, panggil tool kirim_media_katalog sekarang untuk mengirim katalog/video produk.`,
+            `Namun jika customer sudah jelas tahu apa yang mau dibeli, langsung sambut dan tanyakan data yang dibutuhkan.`,
+          ].join("\n")
+        : [
+            `=== STATUS: INTERAKSI KE-${interactionCount} ===`,
+            `=== REKAP PEMBAHASAN SEBELUMNYA (Long-Term Memory) ===`,
+            conversationSummary || "Percakapan sedang berlangsung.",
             ``,
-            `NOMOR WA CUSTOMER (injeksi server, GUNAKAN untuk field No. WA di rekap):`,
-            `No WA: ${customerWADisplay}`,
-            `DILARANG menulis placeholder "[nomor wa]", "[...]" untuk field No WA.`,
-        ].join('\n');
+            `PENTING: Data yang sudah dikumpulkan di atas JANGAN ditanyakan ulang.`,
+            `Jika customer tanya katalog/varian → panggil kirim_media_katalog.`,
+          ].join("\n");
 
-        // ── Bagian 2: Media Knowledge (pengetahuan visual AI) ────────────
-        const mediaKnowledgeBlock = knowledgeMedia.length > 0
-            ? [
-                `=== PENGETAHUAN VISUAL (${knowledgeMedia.length} item) ===`,
-                knowledgeMedia.map(m => {
-                    const icon = m.type?.startsWith('video') ? '🎬 VIDEO' : '📸 FOTO';
-                    const parts = [`[${icon}]${m.label ? ` Topik: ${m.label}` : ''}`];
-                    if (m.description)      parts.push(`  Deskripsi: ${m.description}`);
-                    if (m.ai_analysis)      parts.push(`  Analisis Visual: ${m.ai_analysis}`);
-                    if (m.video_transcript) parts.push(`  Narasi: "${m.video_transcript}"`);
-                    return parts.join('\n');
-                }).join('\n\n'),
-            ].join('\n')
-            : `=== PENGETAHUAN VISUAL === (belum ada media knowledge)`;
+    // ── Bagian 7: Technical Rules (immutable, system-level) ──────────
+    const technicalRulesBlock = [
+      `=== ATURAN TEKNIS SISTEM (MUTLAK, TIDAK BOLEH DILANGGAR) ===`,
+      `1. DILARANG menulis karakter ![...](...), URL http://, atau link fiktif apapun.`,
+      `2. DILARANG menulis ID media, timestamp teknis, atau info sistem di teks balasan.`,
+      `3. DILARANG menulis catatan internal seperti "(Kirim gambar...)", "[SISTEM:...]" — sistem kirim otomatis.`,
+      `4. DILARANG mengakhiri setiap pesan dengan pertanyaan jika proses sudah selesai.`,
+      `5. DILARANG menandai Closing Transfer sebelum bukti pembayaran diterima dan valid.`,
+      `6. DILARANG menandai Closing COD sebelum rekap dikonfirmasi customer.`,
+      `7. PANDUAN KOMUNIKASI PEMBAYARAN (SOPAN, TIDAK MEMAKSA): DEFAULT arahkan ke Transfer dengan ramah. Jelaskan benefit transfer: pengerjaan & pengiriman diprioritaskan. Jika customer bertanya atau memilih COD, jawab BISA dan layani — JANGAN menolak COD. JANGAN memaksa transfer. Kasih value, bukan ultimatum. JANGAN menyebut COD duluan di opening.`,
+      `8. DILARANG KERAS MEMBUAT JANJI PALSU / MENGARANG BENEFIT (ANTI-HALUSINASI). Kamu DILARANG: membuat janji gratis ongkir, diskon fiktif, bonus tambahan, hadiah gratis, garansi palsu, cashback, free sample, atau benefit apapun yang TIDAK TERTULIS di product knowledge. HANYA benefit yang benar-benar ada boleh disebutkan: subsidi bundling Rp 20.000 (KHUSUS BTS), diskon transfer Rp 3.000, prioritas pengerjaan & pengiriman untuk transfer.`,
+      `9. DILARANG mengarang data customer (nama, alamat, nomor, ongkir, dll).`,
+      `10. PENTING: Dilarang keras membalas dalam satu paragraf panjang! Pecah jawabanmu menjadi kalimat-kalimat pendek. Gunakan ENTER GANDA (\n\n) untuk memisahkan setiap kalimat agar terkirim sebagai chat bubble yang terpisah.`,
+      `10a. PENTING ONGKIR: Ongkir dihitung SEKALI per pengiriman, BUKAN per produk. Jika customer pesan 2+ produk, ongkir TETAP 1x selama dikirim dalam 1 paket. JANGAN mengalikan ongkir dengan jumlah produk. Gunakan quantity=1 di tool buat_order_mengantar.`,
+      `11. Label HANYA boleh ditambahkan via tool tambahkan_label_chat dengan label yang tersedia.`,
+      `12. matikan_bot_kontak HANYA untuk kasus di luar kemampuan bot (komplain berat, produk tak dikenal, dll).`,
+      `    JANGAN matikan bot setelah Closing — obrolan selesai secara natural.`,
+      `13. DILARANG memberikan dua diskon ongkir sekaligus (Transfer Rp3.000 dan komplain Rp3.000 tidak boleh ditumpuk).`,
+      `14. Subsidi ongkir bundling BTS maksimal Rp 20.000 — JANGAN menyebut angka lebih besar atau mengklaim "gratis ongkir".`,
+      `15. DILARANG KERAS menyebutkan nama merek ekspedisi (seperti J&T, JNE, Pos, dll) di pesan kepada customer. Selalu sebutkan sebagai "Pengiriman Reguler" atau "Pengiriman COD".`,
+      `16. BUKTI TRANSFER: Jika customer mengirim gambar yang terdeteksi sebagai Bukti Transfer atau Bukti Pembayaran (misal lewat respon AI-VISION), WAJIB ucapkan terima kasih, konfirmasi bahwa pembayaran telah diterima, dan beri tahu pesanan akan segera diproses. DILARANG KERAS melakukan penawaran produk lain (upsell/bundling) ketika customer baru saja mengonfirmasi pembayaran pesanan.`,
+      ...(process.env.SCALEV_API_KEY
+        ? [
+            `17. INTEGRASI SCALEV AKTIF: Jika customer sepakat untuk melakukan pembayaran via Transfer atau DP, kamu WAJIB memanggil tool 'buat_order_scalev' untuk membuat pesanan dan menerbitkan QRIS dinamis. SEKALIGUS di pesan yang sama, kamu WAJIB memberikan nomor rekening manual (dari Product Knowledge) sebagai opsi alternatif. Contoh: "Bund, ini QRIS-nya ya, atau kalau mau manual bisa transfer ke rekening BCA 123xxxx. Silakan dipilih bund."`,
+          ]
+        : []),
+    ].join("\n");
 
-        // ── Bagian 3: Catalog Media (media yang bisa dikirim) ────────────
-        const catalogBlock = sendableMedia.length > 0
-            ? [
-                `=== KATALOG MEDIA YANG BISA DIKIRIM (${sendableMedia.length} item) ===`,
-                `Gunakan tool "kirim_media_katalog" dengan ID atau label_names di bawah:`,
-                sendableMedia.map(m =>
-                    `  ID:${m.id} | Label:"${m.label || 'tanpa-label'}" | Tipe:${m.type}${m.description ? ` | ${m.description}` : ''}`
-                ).join('\n'),
-            ].join('\n')
-            : `=== KATALOG MEDIA === (belum ada media yang bisa dikirim)`;
+    // ── Bagian 8: Agent Prompt dari DB (product-specific knowledge) ──
+    const agentPromptBlock = [
+      `=== IDENTITAS, PRODUK, DAN INSTRUKSI AGENT (PRIORITAS TERTINGGI) ===`,
+      `Instruksi berikut MENGGANTIKAN segala aturan teknis di atas jika bertentangan.`,
+      ``,
+      sysPrompt,
+      ``,
+      `=== INFORMASI PRODUK & KNOWLEDGE BASE ===`,
+      knowledge,
+    ].join("\n");
 
-        // ── Bagian 4: Label Config ────────────────────────────────────────
-        const labelBlock = configuredLabels.length > 0
-            ? `=== LABEL YANG TERSEDIA ===\n${configuredLabels.map(l => `  - ${l}`).join('\n')}`
-            : `=== LABEL === (belum dikonfigurasi untuk agen ini)`;
+    // ── Assembly: gabungkan semua blok ───────────────────────────────
+    const fullSystemInstruction = [
+      systemContextBlock,
+      mediaKnowledgeBlock,
+      catalogBlock,
+      labelBlock,
+      learningBlock,
+      conversationBlock,
+      technicalRulesBlock,
+      agentPromptBlock,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
 
-        // ── Bagian 5: Learning Patterns (async, non-critical) ────────────
-        const learningBlock = learningSection
-            ? `=== POLA SUKSES CLOSING (dari data nyata) ===\n${learningSection}`
-            : '';
-
-        // ── Bagian 6: Conversation State ─────────────────────────────────
-        const conversationBlock = interactionCount === 1
-            ? [
-                `=== STATUS: INTERAKSI PERTAMA ===`,
-                `Prioritas: Jika customer belum tahu produk, panggil tool kirim_media_katalog sekarang untuk mengirim katalog/video produk.`,
-                `Namun jika customer sudah jelas tahu apa yang mau dibeli, langsung sambut dan tanyakan data yang dibutuhkan.`,
-              ].join('\n')
-            : [
-                `=== STATUS: INTERAKSI KE-${interactionCount} ===`,
-                `=== REKAP PEMBAHASAN SEBELUMNYA (Long-Term Memory) ===`,
-                conversationSummary || 'Percakapan sedang berlangsung.',
-                ``,
-                `PENTING: Data yang sudah dikumpulkan di atas JANGAN ditanyakan ulang.`,
-                `Jika customer tanya katalog/varian → panggil kirim_media_katalog.`,
-              ].join('\n');
-
-        // ── Bagian 7: Technical Rules (immutable, system-level) ──────────
-        const technicalRulesBlock = [
-            `=== ATURAN TEKNIS SISTEM (MUTLAK, TIDAK BOLEH DILANGGAR) ===`,
-            `1. DILARANG menulis karakter ![...](...), URL http://, atau link fiktif apapun.`,
-            `2. DILARANG menulis ID media, timestamp teknis, atau info sistem di teks balasan.`,
-            `3. DILARANG menulis catatan internal seperti "(Kirim gambar...)", "[SISTEM:...]" — sistem kirim otomatis.`,
-            `4. DILARANG mengakhiri setiap pesan dengan pertanyaan jika proses sudah selesai.`,
-            `5. DILARANG menandai Closing Transfer sebelum bukti pembayaran diterima dan valid.`,
-            `6. DILARANG menandai Closing COD sebelum rekap dikonfirmasi customer.`,
-            `7. PANDUAN KOMUNIKASI PEMBAYARAN (SOPAN, TIDAK MEMAKSA): DEFAULT arahkan ke Transfer dengan ramah. Jelaskan benefit transfer: pengerjaan & pengiriman diprioritaskan. Jika customer bertanya atau memilih COD, jawab BISA dan layani — JANGAN menolak COD. JANGAN memaksa transfer. Kasih value, bukan ultimatum. JANGAN menyebut COD duluan di opening.`,
-            `8. DILARANG KERAS MEMBUAT JANJI PALSU / MENGARANG BENEFIT (ANTI-HALUSINASI). Kamu DILARANG: membuat janji gratis ongkir, diskon fiktif, bonus tambahan, hadiah gratis, garansi palsu, cashback, free sample, atau benefit apapun yang TIDAK TERTULIS di product knowledge. HANYA benefit yang benar-benar ada boleh disebutkan: subsidi bundling Rp 20.000 (KHUSUS BTS), diskon transfer Rp 3.000, prioritas pengerjaan & pengiriman untuk transfer.`,
-            `9. DILARANG mengarang data customer (nama, alamat, nomor, ongkir, dll).`,
-            `10. PENTING: Dilarang keras membalas dalam satu paragraf panjang! Pecah jawabanmu menjadi kalimat-kalimat pendek. Gunakan ENTER GANDA (\n\n) untuk memisahkan setiap kalimat agar terkirim sebagai chat bubble yang terpisah.`,
-            `10a. PENTING ONGKIR: Ongkir dihitung SEKALI per pengiriman, BUKAN per produk. Jika customer pesan 2+ produk, ongkir TETAP 1x selama dikirim dalam 1 paket. JANGAN mengalikan ongkir dengan jumlah produk. Gunakan quantity=1 di tool buat_order_mengantar.`,
-            `11. Label HANYA boleh ditambahkan via tool tambahkan_label_chat dengan label yang tersedia.`,
-            `12. matikan_bot_kontak HANYA untuk kasus di luar kemampuan bot (komplain berat, produk tak dikenal, dll).`,
-            `    JANGAN matikan bot setelah Closing — obrolan selesai secara natural.`,
-            `13. DILARANG memberikan dua diskon ongkir sekaligus (Transfer Rp3.000 dan komplain Rp3.000 tidak boleh ditumpuk).`,
-            `14. Subsidi ongkir bundling BTS maksimal Rp 20.000 — JANGAN menyebut angka lebih besar atau mengklaim "gratis ongkir".`,
-            `15. DILARANG KERAS menyebutkan nama merek ekspedisi (seperti J&T, JNE, Pos, dll) di pesan kepada customer. Selalu sebutkan sebagai "Pengiriman Reguler" atau "Pengiriman COD".`,
-            `16. BUKTI TRANSFER: Jika customer mengirim gambar yang terdeteksi sebagai Bukti Transfer atau Bukti Pembayaran (misal lewat respon AI-VISION), WAJIB ucapkan terima kasih, konfirmasi bahwa pembayaran telah diterima, dan beri tahu pesanan akan segera diproses. DILARANG KERAS melakukan penawaran produk lain (upsell/bundling) ketika customer baru saja mengonfirmasi pembayaran pesanan.`,
-            ...(process.env.SCALEV_API_KEY ? [
-                `17. INTEGRASI SCALEV AKTIF: Jika customer sepakat untuk melakukan pembayaran via Transfer atau DP, kamu WAJIB memanggil tool 'buat_order_scalev' untuk membuat pesanan dan menerbitkan QRIS dinamis. SEKALIGUS di pesan yang sama, kamu WAJIB memberikan nomor rekening manual (dari Product Knowledge) sebagai opsi alternatif. Contoh: "Bund, ini QRIS-nya ya, atau kalau mau manual bisa transfer ke rekening BCA 123xxxx. Silakan dipilih bund."`
-            ] : []),
-        ].join('\n');
-
-        // ── Bagian 8: Agent Prompt dari DB (product-specific knowledge) ──
-        const agentPromptBlock = [
-            `=== IDENTITAS, PRODUK, DAN INSTRUKSI AGENT (PRIORITAS TERTINGGI) ===`,
-            `Instruksi berikut MENGGANTIKAN segala aturan teknis di atas jika bertentangan.`,
-            ``,
-            sysPrompt,
-            ``,
-            `=== INFORMASI PRODUK & KNOWLEDGE BASE ===`,
-            knowledge,
-        ].join('\n');
-
-        // ── Assembly: gabungkan semua blok ───────────────────────────────
-        const fullSystemInstruction = [
-            systemContextBlock,
-            mediaKnowledgeBlock,
-            catalogBlock,
-            labelBlock,
-            learningBlock,
-            conversationBlock,
-            technicalRulesBlock,
-            agentPromptBlock,
-        ].filter(Boolean).join('\n\n');
-
-
-
-        // === TOOL DEFINITIONS ===
-        const tools = [
-            {
-                type: "function",
-                function: {
-                    name: "cek_ongkir",
-                    description: "Mengecek biaya ongkos kirim J&T dari Kediri ke kota tujuan di Indonesia.",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            destinationCity: { type: "string", description: "Nama KECAMATAN dan KOTA/KABUPATEN tujuan. Jika pelanggan memberikan alamat lengkap (contoh: Desa Patihan, Kecamatan Loceret, Kabupaten Nganjuk), ekstrak format 'Kecamatan, Kabupaten/Kota' (contoh: 'Loceret, Nganjuk') untuk hasil yang presisi." },
-                            weightGrams: { type: "integer", description: "Berat paket dalam gram (default 1000)." }
-                        },
-                        required: ["destinationCity"]
-                    }
-                }
+    // === TOOL DEFINITIONS ===
+    const tools = [
+      {
+        type: "function",
+        function: {
+          name: "cek_ongkir",
+          description:
+            "Mengecek biaya ongkos kirim J&T dari Kediri ke kota tujuan di Indonesia.",
+          parameters: {
+            type: "object",
+            properties: {
+              destinationCity: {
+                type: "string",
+                description:
+                  "Nama KECAMATAN dan KOTA/KABUPATEN tujuan. Jika pelanggan memberikan alamat lengkap (contoh: Desa Patihan, Kecamatan Loceret, Kabupaten Nganjuk), ekstrak format 'Kecamatan, Kabupaten/Kota' (contoh: 'Loceret, Nganjuk') untuk hasil yang presisi.",
+              },
+              weightGrams: {
+                type: "integer",
+                description: "Berat paket dalam gram (default 1000).",
+              },
             },
-            {
-                type: "function",
-                function: {
-                    name: "kirim_media_katalog",
-                    description: "Mengirimkan foto/video produk ke pelanggan berdasarkan ID atau nama label.",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            media_ids: { 
-                                type: "array", 
-                                items: { type: "integer" },
-                                description: "Array ID media (Opsional, gunakan label_names jika lebih mudah)." 
-                            },
-                            label_names: { 
-                                type: "array", 
-                                items: { type: "string" },
-                                description: "Array nama label dari media yang ingin dikirim (misal: ['katalog dtf', 'video dtf'] atau ['katalog uv', 'video uv'])." 
-                            },
-                            caption: { type: "string", description: "Teks penjelasan singkat untuk media." }
-                        }
-                    }
-                }
+            required: ["destinationCity"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "kirim_media_katalog",
+          description:
+            "Mengirimkan foto/video produk ke pelanggan berdasarkan ID atau nama label.",
+          parameters: {
+            type: "object",
+            properties: {
+              media_ids: {
+                type: "array",
+                items: { type: "integer" },
+                description:
+                  "Array ID media (Opsional, gunakan label_names jika lebih mudah).",
+              },
+              label_names: {
+                type: "array",
+                items: { type: "string" },
+                description:
+                  "Array nama label dari media yang ingin dikirim (misal: ['katalog dtf', 'video dtf'] atau ['katalog uv', 'video uv']).",
+              },
+              caption: {
+                type: "string",
+                description: "Teks penjelasan singkat untuk media.",
+              },
             },
-            {
-                type: "function",
-                function: {
-                    name: "matikan_bot_kontak",
-                    description: "Mem-pause bot untuk kontak ini jika percakapan harus dilanjutkan CS manusia, misalnya produk di luar scope agent, komplain berat, atau kasus yang berisiko.",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            reason: {
-                                type: "string",
-                                description: "Alasan singkat kenapa bot harus dipause."
-                            }
-                        },
-                        required: ["reason"]
-                    }
-                }
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "matikan_bot_kontak",
+          description:
+            "Mem-pause bot untuk kontak ini jika percakapan harus dilanjutkan CS manusia, misalnya produk di luar scope agent, komplain berat, atau kasus yang berisiko.",
+          parameters: {
+            type: "object",
+            properties: {
+              reason: {
+                type: "string",
+                description: "Alasan singkat kenapa bot harus dipause.",
+              },
             },
-            // ── TOOL EKSKLUSIF v2-core: Buat Order Scalev + QRIS Dinamis ──
-            // ATURAN: HANYA untuk NON-COD / Transfer. JANGAN panggil untuk COD.
-            // Flow: createOrderAndPay → (Scalev creates order) → (Scalev generates QRIS) → render PNG → kirim ke WA customer
-            {
-                type: "function",
-                function: {
-                    name: "buat_order_scalev",
-                    description: `Membuat order di Scalev dan QRIS dinamis untuk customer yang memilih Transfer atau DP, lalu mengirim gambar QRIS langsung ke WhatsApp customer.
+            required: ["reason"],
+          },
+        },
+      },
+      // ── TOOL EKSKLUSIF v2-core: Buat Order Scalev + QRIS Dinamis ──
+      // ATURAN: HANYA untuk NON-COD / Transfer. JANGAN panggil untuk COD.
+      // Flow: createOrderAndPay → (Scalev creates order) → (Scalev generates QRIS) → render PNG → kirim ke WA customer
+      {
+        type: "function",
+        function: {
+          name: "buat_order_scalev",
+          description: `Membuat order di Scalev dan QRIS dinamis untuk customer yang memilih Transfer atau DP, lalu mengirim gambar QRIS langsung ke WhatsApp customer.
 
 KAPAN PANGGIL: Hanya jika customer SUDAH konfirmasi memilih Transfer/NON-COD atau bersedia DP.
 JANGAN PANGGIL jika:
@@ -728,71 +901,101 @@ SETELAH TOOL DIPANGGIL:
 - Jangan menyebut nama platform ke customer — cukup bilang "QRIS" atau "gambar pembayaran"
 
 NOMINAL: WAJIB persis sama dengan rekap. DP = 50% dari Total Harus Dibayar. Lunas = Total Harus Dibayar. DILARANG mengarang nominal.`,
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            customer_name: {
-                                type: "string",
-                                description: "Nama customer persis seperti di rekap pesanan."
-                            },
-                            customer_phone: {
-                                type: "string",
-                                description: "Nomor HP customer (format internasional misal: 6281234567890). Ambil dari conversation context."
-                            },
-                            address: {
-                                type: "string",
-                                description: "Alamat lengkap customer dari rekap pesanan."
-                            },
-                            amount: {
-                                type: "integer",
-                                description: "Nominal dalam Rupiah (bilangan bulat). WAJIB diambil dari rekap: untuk DP = 50% dari Total Harus Dibayar; untuk Lunas = Total Harus Dibayar. JANGAN karang nominal sendiri."
-                            },
-                            description: {
-                                type: "string",
-                                description: "Deskripsi singkat pesanan. Contoh: 'Label DTF 30pcs - Bunda Sari' atau 'UV Stiker - Bunda Rini'"
-                            },
-                            tipe_bayar: {
-                                type: "string",
-                                enum: ["DP", "LUNAS"],
-                                description: "Tipe pembayaran: DP (bayar sebagian/down payment) atau LUNAS (bayar penuh)."
-                            },
-                            shipping_cost: {
-                                type: "integer",
-                                description: "Ongkos kirim dalam Rupiah dari rekap pesanan (opsional)."
-                            },
-                            contact_id: {
-                                type: "string",
-                                description: "WAJIB: ID kontak WhatsApp customer (format: 62812345678 atau 62812345678@c.us)."
-                            },
-                            store_wa_id: {
-                                type: "string",
-                                description: "WAJIB: ID store WhatsApp bot yang sedang dipakai."
-                            },
-                            ordervariants: {
-                                type: "array",
-                                description: "Detail produk yang dipesan (opsional tapi SANGAT DISARANKAN untuk rekap di Scalev). Isi sesuai rekap pesanan.",
-                                items: {
-                                    type: "object",
-                                    properties: {
-                                        product_name: { type: "string", description: "Nama produk. Contoh: 'Label Nama DTF', 'Stiker UV DTF', 'Paket Bundling BTS'" },
-                                        variant_name: { type: "string", description: "Varian yang dipilih customer. Contoh: 'Varian 2 - Pink', 'Varian Cewek'" },
-                                        quantity: { type: "integer", description: "Jumlah paket yang dipesan (angka)." },
-                                        price: { type: "integer", description: "Harga per paket dalam Rupiah. Contoh: 39000" }
-                                    }
-                                }
-                            }
-                        },
-                        required: ["customer_name", "amount", "description", "tipe_bayar", "contact_id", "store_wa_id"]
-                    }
-                }
+          parameters: {
+            type: "object",
+            properties: {
+              customer_name: {
+                type: "string",
+                description: "Nama customer persis seperti di rekap pesanan.",
+              },
+              customer_phone: {
+                type: "string",
+                description:
+                  "Nomor HP customer (format internasional misal: 6281234567890). Ambil dari conversation context.",
+              },
+              address: {
+                type: "string",
+                description: "Alamat lengkap customer dari rekap pesanan.",
+              },
+              amount: {
+                type: "integer",
+                description:
+                  "Nominal dalam Rupiah (bilangan bulat). WAJIB diambil dari rekap: untuk DP = 50% dari Total Harus Dibayar; untuk Lunas = Total Harus Dibayar. JANGAN karang nominal sendiri.",
+              },
+              description: {
+                type: "string",
+                description:
+                  "Deskripsi singkat pesanan. Contoh: 'Label DTF 30pcs - Bunda Sari' atau 'UV Stiker - Bunda Rini'",
+              },
+              tipe_bayar: {
+                type: "string",
+                enum: ["DP", "LUNAS"],
+                description:
+                  "Tipe pembayaran: DP (bayar sebagian/down payment) atau LUNAS (bayar penuh).",
+              },
+              shipping_cost: {
+                type: "integer",
+                description:
+                  "Ongkos kirim dalam Rupiah dari rekap pesanan (opsional).",
+              },
+              contact_id: {
+                type: "string",
+                description:
+                  "WAJIB: ID kontak WhatsApp customer (format: 62812345678 atau 62812345678@c.us).",
+              },
+              store_wa_id: {
+                type: "string",
+                description:
+                  "WAJIB: ID store WhatsApp bot yang sedang dipakai.",
+              },
+              ordervariants: {
+                type: "array",
+                description:
+                  "Detail produk yang dipesan (opsional tapi SANGAT DISARANKAN untuk rekap di Scalev). Isi sesuai rekap pesanan.",
+                items: {
+                  type: "object",
+                  properties: {
+                    product_name: {
+                      type: "string",
+                      description:
+                        "Nama produk. Contoh: 'Label Nama DTF', 'Stiker UV DTF', 'Paket Bundling BTS'",
+                    },
+                    variant_name: {
+                      type: "string",
+                      description:
+                        "Varian yang dipilih customer. Contoh: 'Varian 2 - Pink', 'Varian Cewek'",
+                    },
+                    quantity: {
+                      type: "integer",
+                      description: "Jumlah paket yang dipesan (angka).",
+                    },
+                    price: {
+                      type: "integer",
+                      description:
+                        "Harga per paket dalam Rupiah. Contoh: 39000",
+                    },
+                  },
+                },
+              },
             },
-            // ── TOOL LAMA: buat_link_pembayaran_dp (DEPRECATED — fallback ke Xendit) ──
-            // Dipertahankan untuk backward compat jika Scalev tidak dikonfigurasi
-            {
-                type: "function",
-                function: {
-                    name: "buat_link_pembayaran_dp",
-                    description: `[DEPRECATED — gunakan buat_order_scalev] Membuat QRIS dinamis via Xendit untuk customer yang SUDAH KONFIRMASI memilih Transfer atau DP.
+            required: [
+              "customer_name",
+              "amount",
+              "description",
+              "tipe_bayar",
+              "contact_id",
+              "store_wa_id",
+            ],
+          },
+        },
+      },
+      // ── TOOL LAMA: buat_link_pembayaran_dp (DEPRECATED — fallback ke Xendit) ──
+      // Dipertahankan untuk backward compat jika Scalev tidak dikonfigurasi
+      {
+        type: "function",
+        function: {
+          name: "buat_link_pembayaran_dp",
+          description: `[DEPRECATED — gunakan buat_order_scalev] Membuat QRIS dinamis via Xendit untuk customer yang SUDAH KONFIRMASI memilih Transfer atau DP.
 
 HANYA gunakan sebagai fallback jika buat_order_scalev tidak tersedia.
 
@@ -807,54 +1010,70 @@ SETELAH TOOL DIPANGGIL:
 - Kamu cukup info dengan ramah: "Bunda, gambar pembayaran sudah kami kirim ya, tinggal scan dari m-banking 😊 Kalau lebih nyaman transfer biasa ke Mandiri/BCA juga bisa kok."
 
 NOMINAL: WAJIB dari rekap yang disetujui customer. DP = 50%, Lunas = 100%. JANGAN mengarang nominal.`,
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            amount: {
-                                type: "integer",
-                                description: "Nominal dalam Rupiah (bilangan bulat). WAJIB diambil dari data rekap pesanan yang sudah dikonfirmasi customer. Jangan karang nominal sendiri."
-                            },
-                            description: {
-                                type: "string",
-                                description: "Deskripsi singkat. Contoh: 'DP 50% Label DTF - Bunda Sari' atau 'Pelunasan UV DTF - Bunda Rini'"
-                            },
-                            tipe_bayar: {
-                                type: "string",
-                                enum: ["DP", "LUNAS"],
-                                description: "Tipe pembayaran: DP (bayar sebagian/down payment) atau LUNAS (bayar penuh)."
-                            },
-                            payment_type: {
-                                type: "string",
-                                enum: ["TRANSFER"],
-                                description: "WAJIB 'TRANSFER'. Tool ini hanya untuk pembayaran via transfer/QRIS."
-                            },
-                            contact_id: {
-                                type: "string",
-                                description: "WAJIB: ID kontak WhatsApp customer (nomor telepon format internasional, contoh: 62812345678@c.us). Diambil dari conversation context."
-                            },
-                            store_wa_id: {
-                                type: "string",
-                                description: "WAJIB: ID store WhatsApp bot (nomor bot yang sedang dipakai, contoh: 6281234567890@c.us). Diambil dari conversation context."
-                            }
-                        },
-                        required: ["amount", "description", "tipe_bayar", "payment_type", "contact_id", "store_wa_id"]
-                    }
-                }
-            }
-        ];
+          parameters: {
+            type: "object",
+            properties: {
+              amount: {
+                type: "integer",
+                description:
+                  "Nominal dalam Rupiah (bilangan bulat). WAJIB diambil dari data rekap pesanan yang sudah dikonfirmasi customer. Jangan karang nominal sendiri.",
+              },
+              description: {
+                type: "string",
+                description:
+                  "Deskripsi singkat. Contoh: 'DP 50% Label DTF - Bunda Sari' atau 'Pelunasan UV DTF - Bunda Rini'",
+              },
+              tipe_bayar: {
+                type: "string",
+                enum: ["DP", "LUNAS"],
+                description:
+                  "Tipe pembayaran: DP (bayar sebagian/down payment) atau LUNAS (bayar penuh).",
+              },
+              payment_type: {
+                type: "string",
+                enum: ["TRANSFER"],
+                description:
+                  "WAJIB 'TRANSFER'. Tool ini hanya untuk pembayaran via transfer/QRIS.",
+              },
+              contact_id: {
+                type: "string",
+                description:
+                  "WAJIB: ID kontak WhatsApp customer (nomor telepon format internasional, contoh: 62812345678@c.us). Diambil dari conversation context.",
+              },
+              store_wa_id: {
+                type: "string",
+                description:
+                  "WAJIB: ID store WhatsApp bot (nomor bot yang sedang dipakai, contoh: 6281234567890@c.us). Diambil dari conversation context.",
+              },
+            },
+            required: [
+              "amount",
+              "description",
+              "tipe_bayar",
+              "payment_type",
+              "contact_id",
+              "store_wa_id",
+            ],
+          },
+        },
+      },
+    ];
 
-        // ── TOOL: Buat Resi Mengantar (setelah customer bayar) ──
-        if (!LEGACY_XENDIT_ENABLED) {
-            const deprecatedPaymentToolIndex = tools.findIndex(tool => tool.function?.name === 'buat_link_pembayaran_dp');
-            if (deprecatedPaymentToolIndex >= 0) tools.splice(deprecatedPaymentToolIndex, 1);
-        }
+    // ── TOOL: Buat Resi Mengantar (setelah customer bayar) ──
+    if (!LEGACY_XENDIT_ENABLED) {
+      const deprecatedPaymentToolIndex = tools.findIndex(
+        (tool) => tool.function?.name === "buat_link_pembayaran_dp",
+      );
+      if (deprecatedPaymentToolIndex >= 0)
+        tools.splice(deprecatedPaymentToolIndex, 1);
+    }
 
-        if (process.env.MENGANTAR_API_KEY) {
-            tools.push({
-                type: "function",
-                function: {
-                    name: "buat_resi_mengantar",
-                    description: `Membuat nomor resi/AWB di Mengantar untuk pesanan yang SUDAH LUNAS/TERBAYAR.
+    if (process.env.MENGANTAR_API_KEY) {
+      tools.push({
+        type: "function",
+        function: {
+          name: "buat_resi_mengantar",
+          description: `Membuat nomor resi/AWB di Mengantar untuk pesanan yang SUDAH LUNAS/TERBAYAR.
 
 KAPAN PANGGIL:
 - Hanya SETELAH pembayaran customer dikonfirmasi (bukti transfer valid, atau payment terkonfirmasi)
@@ -866,492 +1085,750 @@ SETELAH TOOL DIPANGGIL:
 - Kamu cukup ucapkan terima kasih dan info paket sedang diproses
 
 CATATAN: Gunakan data dari rekap pesanan. Isi semua field seakurat mungkin.`,
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            customer_name: { type: "string", description: "Nama penerima (sesuai rekap pesanan)" },
-                            customer_phone: { type: "string", description: "Nomor HP penerima (format: 081234567890 atau 6281234567890)" },
-                            customer_address: { type: "string", description: "Alamat lengkap penerima dari rekap pesanan" },
-                            destination_keyword: { type: "string", description: "Nama Kecamatan dan Kota/Kabupaten tujuan. Contoh: 'Loceret, Nganjuk'" },
-                            parcel_content: { type: "string", description: "Isi paket / nama produk. Contoh: 'Label Nama DTF 30pcs'" },
-                            weight: { type: "number", description: "Berat paket dalam kg (default 1)" },
-                            quantity: { type: "integer", description: "Jumlah item (default 1)" },
-                            goods_value: { type: "integer", description: "Nilai barang dalam Rupiah (untuk asuransi). Ambil dari total pesanan." },
-                            courier: {
-                                type: "string",
-                                enum: ["JT", "JNE", "Sap", "SiCepat", "Ninja", "iDexpress", "lion", "anteraja"],
-                                description: "Kurir pengiriman (default: JT)."
-                            },
-                            contact_id: { type: "string", description: "ID kontak WhatsApp customer untuk kirim notif resi" },
-                            store_wa_id: { type: "string", description: "ID store WA bot yang dipakai" },
-                            custom_products: {
-                                type: "array",
-                                description: "Detail produk (opsional)",
-                                items: {
-                                    type: "object",
-                                    properties: {
-                                        name: { type: "string" },
-                                        variant: { type: "string" },
-                                        qty: { type: "integer" },
-                                        price: { type: "integer" }
-                                    }
-                                }
-                            }
-                        },
-                        required: ["customer_name", "customer_address", "destination_keyword", "parcel_content", "contact_id", "store_wa_id"]
-                    }
-                }
-            });
-        }
-
-        if (configuredLabels.length > 0) {
-            tools.push({
-                type: "function",
-                function: {
-                    name: "tambahkan_label_chat",
-                    description: "Menambahkan label khusus ke kontak WhatsApp pelanggan. Gunakan HANYA label yang tersedia dari konfigurasi agen.",
-                    parameters: {
-                        type: "object",
-                        properties: {
-                            label_names: {
-                                type: "array",
-                                items: {
-                                    type: "string",
-                                    enum: configuredLabels
-                                },
-                                description: "Daftar nama label persis dari konfigurasi agen (bisa lebih dari satu)."
-                            }
-                        },
-                        required: ["label_names"]
-                    }
-                }
-            });
-        }
-
-        // ══════════════════════════════════════════════════════════════════
-        // BUILD MESSAGES — FIX TIMESTAMP HALLUCINATION
-        // Timestamp HANYA diberikan untuk role 'user', TIDAK untuk 'assistant'
-        // ══════════════════════════════════════════════════════════════════
-        let userContent = userMessage;
-        if (customerMediaContext) {
-            userContent = `[SISTEM: Pelanggan baru saja mengirim MEDIA/FOTO. Berikut adalah deskripsi visualnya untuk panduanmu: ${customerMediaContext}]\n\nPESAN PELANGGAN: ${userMessage || '(Hanya mengirim foto)'}`;
-        }
-
-        const filteredHistory = history.length > 0 
-            ? history.slice(0, history.length - 1) 
-            : [];
-
-        // Build messages — conversation summary is handled by conversationBlock in fullSystemInstruction
-        let messages = [
-            { role: 'system', content: fullSystemInstruction },
-            ...filteredHistory.map(h => {
-                if (h.is_from_me) {
-                    return {
-                        role: 'assistant',
-                        content: h.body || h.content || ''
-                    };
-                } else {
-                    const dayStr = h.timestamp ? moment(h.timestamp).format('DD MMM HH:mm') : '';
-                    return {
-                        role: 'user',
-                        content: dayStr ? `(Dikirim ${dayStr})\n${h.body || h.content || ''}` : (h.body || h.content || '')
-                    };
-                }
-            }),
-            { role: 'user', content: userContent }
-        ];
-
-
-
-
-
-
-
-
-
-        // === FIRST AI CALL (with timeout) ===
-        const response = await openai.chat.completions.create({
-            model: modelName,
-            messages,
-            tools,
-            tool_choice: "auto",
-            temperature: 0.55,
-        }, { timeout: AI_CHAT_TIMEOUT_MS });
-
-        // Track cost for this request
-        if (response && response.usage) {
-            logRequest({
-                model: modelName,
-                promptTokens: response.usage.prompt_tokens,
-                completionTokens: response.usage.completion_tokens,
-                endpoint: 'chat',
-                functionName: 'getAIResponse',
-                storeWaId: store?.wa_id || null,
-                contactPhone: customerPhone || null,
-            }).catch(() => {});
-        }
-
-        let responseMessage = response.choices[0].message;
-        
-        // ══════════════════════════════════════════════════════════════════
-        // 🔧 DSML TOOL CALL PARSER FALLBACK
-        // Beberapa model (terutama via fallback/Gemini) membocorkan format DSML
-        // ke dalam content alih-alih diparse jadi tool_calls JSON oleh SDK.
-        // Kita intercept dan konversi ke standar format OpenAI tool_calls.
-        // ══════════════════════════════════════════════════════════════════
-        if (responseMessage.content && responseMessage.content.includes('< | | DSML | | tool_calls>')) {
-            const invokeRegex = /< \| \| DSML \| \| invoke name="([^"]+)">([\s\S]*?)<\/ \| \| DSML \| \| invoke>/g;
-            const paramRegex = /< \| \| DSML \| \| parameter name="([^"]+)"[^>]*>([\s\S]*?)<\/ \| \| DSML \| \| parameter>/g;
-            
-            let invokeMatch;
-            const parsedToolCalls = [];
-            while ((invokeMatch = invokeRegex.exec(responseMessage.content)) !== null) {
-                const funcName = invokeMatch[1];
-                const paramsStr = invokeMatch[2];
-                let argsObj = {};
-                
-                let paramMatch;
-                while ((paramMatch = paramRegex.exec(paramsStr)) !== null) {
-                    const pName = paramMatch[1];
-                    const pValueRaw = paramMatch[2].trim();
-                    try {
-                        argsObj[pName] = JSON.parse(pValueRaw);
-                    } catch (e) {
-                        argsObj[pName] = pValueRaw;
-                    }
-                }
-                
-                parsedToolCalls.push({
-                    id: 'call_' + Math.random().toString(36).substr(2, 9),
-                    type: 'function',
-                    function: {
-                        name: funcName,
-                        arguments: JSON.stringify(argsObj)
-                    }
-                });
-            }
-
-            if (parsedToolCalls.length > 0) {
-                logger.warn(`[AI] 🔧 DSML Format terdeteksi! Mem-parsing manual: ${parsedToolCalls.length} tool calls`);
-                if (!responseMessage.tool_calls) responseMessage.tool_calls = [];
-                responseMessage.tool_calls.push(...parsedToolCalls);
-                
-                // Bersihkan text DSML agar tidak terkirim ke customer
-                responseMessage.content = responseMessage.content.replace(/< \| \| DSML \| \| tool_calls>[\s\S]*?<\/ \| \| DSML \| \| tool_calls>/g, '').trim();
-            }
-        }
-
-        const downstreamToolCalls = responseMessage.tool_calls || [];
-
-        // ══════════════════════════════════════════════════════════════════
-        // 🔧 AUTO-INJECT MEDIA SAFETY NET
-        // Jika AI menulis teks yang mereferensikan video/foto/katalog TANPA
-        // memanggil tool, sistem otomatis deteksi & inject media yang relevan.
-        // Mencegah "ghost media" — bot bilang "cek videonya" tapi tidak kirim.
-        // ══════════════════════════════════════════════════════════════════
-        if ((!responseMessage.tool_calls || responseMessage.tool_calls.length === 0) && responseMessage.content) {
-            const autoMedia = _autoInjectMedia(responseMessage.content, kind, sendableMedia);
-            if (autoMedia && autoMedia.length > 0) {
-                logger.warn(`[AI] 🔧 Ghost-media dicegah! AI menyebut media dalam teks tanpa call tool. Auto-inject: ${autoMedia.map(m => m.label).join(', ')}`);
-                return {
-                    type: RESPONSE_TYPE.MEDIA,
-                    content: sanitizeTextOutput(responseMessage.content),
-                    mediaList: autoMedia.map(m => ({ media: m, caption: '' })),
-                    tool_calls: []
-                };
-            }
-        }
-
-        // === TOOL CALLING HANDLER ===
-        if (responseMessage.tool_calls) {
-            // 🛡️ PRE-TOOL INSPECTOR MIDDLEWARE
-            // Cegah AI mengeksekusi tool (seperti pembuat QRIS) jika rekapnya belum valid!
-            if (!isRetry && responseMessage.content) {
-                const inspectorResult = await _runInspectorValidation(responseMessage.content, kind);
-                if (!inspectorResult.valid) {
-                    logger.warn(`[Inspector] Rekap ditolak (PRE-TOOL): ${inspectorResult.missing}. Retrying...`);
-                    const retryHistory = [...history];
-                    retryHistory.push({ role: 'assistant', content: responseMessage.content, is_from_me: true });
-                    retryHistory.push({ 
-                        role: 'user', 
-                        content: `[SISTEM INSPECTOR]: Draf rekap DITOLAK karena data kurang: ${inspectorResult.missing}. Tanyakan kekurangan data ini ke pelanggan dengan bahasa natural. JANGAN memanggil tool buat_order_scalev sebelum rekap lengkap!` 
-                    });
-                    return _processAIResponse("", retryHistory, store, agent, customerMediaContext, conversationSummary, interactionCount, customerPhone, true);
-                }
-            }
-
-            messages.push(responseMessage);
-            let mediaResults = [];
-            let needsSecondCall = false;
-
-            for (const toolCall of responseMessage.tool_calls) {
-                try {
-                    if (toolCall.function.name !== 'kirim_media_katalog') {
-                        const { executeTool } = require('./services/tool_executor');
-                        const result = await executeTool(toolCall, store, customerPhone, history, agent);
-                        if (result) {
-                            messages.push({ tool_call_id: toolCall.id, role: "tool", name: result.name, content: result.content });
-                            if (result.needsSecondCall) needsSecondCall = true;
-                        }
-                        continue;
-                    }
-
-                    if (toolCall.function.name === 'kirim_media_katalog') {
-                        const args = JSON.parse(toolCall.function.arguments);
-                        const ids = args.media_ids || [];
-                        const labels = args.label_names || (args.label ? [args.label] : []);
-                        
-                        if (!agentId) {
-                             messages.push({ tool_call_id: toolCall.id, role: "tool", name: "kirim_media_katalog", content: "Gagal: Agent ID tidak ditemukan." });
-                             needsSecondCall = true;
-                             continue;
-                        }
-                        
-                        const sendableMedia = await getSendableMedia(agentId);
-                        const allowedMedia = [];
-
-                        // 1. Eksekusi via ID
-                        if (ids.length > 0) {
-                            allowedMedia.push(...sendableMedia.filter(m => ids.includes(m.id)));
-                        }
-
-                        // 2. Eksekusi via Label Names
-                        if (labels.length > 0) {
-                            for (const qLbl of labels) {
-                                const qLower = qLbl.toLowerCase().trim();
-                                
-                                // Kumpulkan semua media yang match
-                                const matchesForLabel = sendableMedia.filter(m => {
-                                    if (!m.label) return false;
-                                    const mLbl = m.label.toLowerCase().trim();
-                                    return mLbl === qLower || mLbl.includes(qLower) || qLower.includes(mLbl);
-                                });
-
-                                const videos = matchesForLabel.filter(m => (m.type || '').startsWith('video'));
-                                const images = matchesForLabel.filter(m => (m.type || '').startsWith('image'));
-
-                                // Inject 1 RANDOM foto/image jika ada lebih dari 1 (Fix Media Spam)
-                                if (images.length > 0) {
-                                    const randomImage = images[Math.floor(Math.random() * images.length)];
-                                    if (!allowedMedia.find(fm => fm.id === randomImage.id)) {
-                                        allowedMedia.push(randomImage);
-                                    }
-                                }
-
-                                // Pilih 1 video SECARA RANDOM
-                                if (videos.length > 0) {
-                                    const randomVideo = videos[Math.floor(Math.random() * videos.length)];
-                                    if (!allowedMedia.find(fm => fm.id === randomVideo.id)) {
-                                        allowedMedia.push(randomVideo);
-                                    }
-                                }
-                            }
-                        }
-
-                        if (allowedMedia.length > 0) {
-                            mediaResults.push(...allowedMedia.map((m, idx) => ({ media: m, caption: idx === 0 ? (args.caption || "") : "" })));
-                            messages.push({ tool_call_id: toolCall.id, role: "tool", name: "kirim_media_katalog", content: `${allowedMedia.length} media berhasil dikirim.` });
-                            needsSecondCall = true;
-                        } else {
-                            const availableLabels = sendableMedia.map(m => m.label).filter(Boolean).join(', ');
-                            messages.push({ tool_call_id: toolCall.id, role: "tool", name: "kirim_media_katalog", content: `Media tidak ditemukan untuk label: ${labels.join(', ')}. Label yang tersedia: ${availableLabels || '(kosong, belum ada media)'}` });
-                            needsSecondCall = true;
-                        }
-                    }
-
-                    // ── TOOL: Buat Resi Mengantar ──
-                    if (toolCall.function.name === 'buat_resi_mengantar') {
-                        try {
-                            const args = JSON.parse(toolCall.function.arguments || '{}');
-                            const contactId = args.contact_id || customerPhone || null;
-                            const storeWaId = args.store_wa_id || store?.wa_id || null;
-
-                            if (!args.customer_name || !args.customer_address || !args.destination_keyword || !args.parcel_content) {
-                                messages.push({ tool_call_id: toolCall.id, role: 'tool', name: 'buat_resi_mengantar', content: 'Gagal: Data tidak lengkap. Pastikan nama, alamat, kecamatan/kota, dan nama produk sudah diisi.' });
-                                needsSecondCall = true;
-                                continue;
-                            }
-
-                            logger.info(`[AI] Membuat resi Mengantar untuk ${args.customer_name}...`);
-                            const resiResult = await mengantarService.createOrder({
-                                customerName: args.customer_name,
-                                customerPhone: args.customer_phone || (contactId ? contactId.replace('@c.us', '') : ''),
-                                customerAddress: args.customer_address,
-                                destinationKeyword: args.destination_keyword,
-                                parcelContent: args.parcel_content,
-                                weight: args.weight || 1,
-                                quantity: args.quantity || 1,
-                                goodsValue: args.goods_value,
-                                courier: args.courier,
-                                customProducts: args.custom_products,
-                                pickupType: 'dropOff',
-                            });
-
-                            if (resiResult.success) {
-                                if (storeWaId && contactId) {
-                                    try {
-                                        const waSvc = require('./whatsapp_service');
-                                        const clients = waSvc.getClients ? waSvc.getClients() : null;
-                                        const waClient = clients ? clients.get(storeWaId) : null;
-                                        if (waClient) {
-                                            const resiMsg = mengantarService.formatResiMessage(resiResult);
-                                            const waId = contactId.includes('@c.us') ? contactId : `${contactId}@c.us`;
-                                            await waClient.sendMessage(waId, resiMsg);
-                                            logger.info(`[AI] ✅ Notif resi terkirim ke ${contactId}`);
-                                        }
-                                    } catch (waErr) {
-                                        logger.error(`[AI] Gagal kirim notif resi ke WA: ${waErr.message}`);
-                                    }
-                                }
-                                messages.push({
-                                    tool_call_id: toolCall.id, role: 'tool', name: 'buat_resi_mengantar',
-                                    content: [
-                                        `Resi berhasil dibuat di Mengantar!`,
-                                        resiResult.cnote_no ? `Nomor Resi: ${resiResult.cnote_no}` : '',
-                                        `Kurir: ${resiResult.courier || 'JT'}`,
-                                        resiResult.destination ? `Tujuan: ${resiResult.destination}` : '',
-                                        resiResult.is_unpaid ? `PERHATIAN: Saldo Mengantar kurang, resi perlu diaktivasi manual.` : `Status: Aktif & terbayar.`,
-                                        `Notif resi sudah dikirim ke customer via WhatsApp.`,
-                                        `Instruksi: Ucapkan terima kasih dan info paket sedang diproses.`,
-                                    ].filter(Boolean).join(' ')
-                                });
-                                logger.info(`[AI] ✅ Resi Mengantar: ${resiResult.cnote_no} untuk ${args.customer_name}`);
-                            } else {
-                                messages.push({ tool_call_id: toolCall.id, role: 'tool', name: 'buat_resi_mengantar', content: `Gagal membuat resi: ${resiResult.error}. Minta owner buat resi manual di aplikasi Mengantar.` });
-                                logger.warn(`[AI] Resi Mengantar gagal: ${resiResult.error}`);
-                            }
-                            needsSecondCall = true;
-                        } catch (resiErr) {
-                            logger.error(`[AI] buat_resi_mengantar error: ${resiErr.message}`);
-                            messages.push({ tool_call_id: toolCall.id, role: 'tool', name: 'buat_resi_mengantar', content: `Sistem Mengantar tidak tersedia. Buat resi manual di aplikasi Mengantar ya.` });
-                            needsSecondCall = true;
-                        }
-                    }
-
-                } catch (toolErr) {
-                    logger.error(`[AI] Tool call error [${toolCall.function.name}]: ${toolErr.message}`);
-                    messages.push({ tool_call_id: toolCall.id, role: "tool", name: toolCall.function.name, content: `Error: ${toolErr.message}` });
-                    needsSecondCall = true;
-                }
-            }
-
-            const toolNames = responseMessage.tool_calls.map(tc => tc.function.name);
-            // Disable fast return media so AI always generates natural follow-up text after sending catalogs
-            const canFastReturnMedia = false;
-            let finalContent = sanitizeTextOutput(responseMessage.content || "");
-
-            if (needsSecondCall && !canFastReturnMedia) {
-                const secondResponse = await openai.chat.completions.create({ 
-                    model: modelName, 
-                    messages: [
-                        ...messages,
-                        { role: "system", content: "PENGINGAT TEKNIS: Jangan tulis link/tag media/ID/timestamp. Untuk chat normal, pisahkan bubble dengan newline dan maksimal 10 kata per bubble. Untuk rekap/order/payment, tulis lengkap dan rapi." }
-                    ],
-                    temperature: 0.45
-                }, { timeout: AI_SECOND_CALL_TIMEOUT_MS });
-
-                // Track cost for second call
-                if (secondResponse && secondResponse.usage) {
-                    logRequest({
-                        model: modelName,
-                        promptTokens: secondResponse.usage.prompt_tokens,
-                        completionTokens: secondResponse.usage.completion_tokens,
-                        endpoint: 'chat',
-                        functionName: 'getAIResponse_secondCall',
-                        storeWaId: store?.wa_id || null,
-                        contactPhone: customerPhone || null,
-                    }).catch(() => {});
-                }
-
-                responseMessage = secondResponse.choices[0].message;
-                finalContent = responseMessage.content;
-            } else if (canFastReturnMedia && !finalContent) {
-                finalContent = buildFastMediaReply(agent, mediaResults, interactionCount);
-            }
-
-            // ══════════════════════════════════════════════════════════════════
-            // 🛡️ INSPECTOR MIDDLEWARE: Cegat Rekap Pesanan yang tidak lengkap
-            // ══════════════════════════════════════════════════════════════════
-            if (!isRetry && finalContent) {
-                const inspectorResult = await _runInspectorValidation(finalContent, kind);
-                if (!inspectorResult.valid) {
-                    logger.warn(`[Inspector] Rekap ditolak: ${inspectorResult.missing}. Retrying...`);
-                    const retryHistory = [...history];
-                    retryHistory.push({ role: 'assistant', body: finalContent, is_from_me: true });
-                    retryHistory.push({ 
-                        role: 'user', 
-                        body: `[SISTEM INSPECTOR]: Draf rekap DITOLAK karena data kurang: ${inspectorResult.missing}. Tanyakan kekurangan data ini ke pelanggan dengan bahasa natural. JANGAN kirim form rekap ke pelanggan!` 
-                    });
-                    
-                    // Recursive call exactly 1 time
-                    const retryResult = await _processAIResponse("", retryHistory, store, agent, customerMediaContext, conversationSummary, interactionCount, customerPhone, true);
-                    
-                    // FIX: Jika retry tidak menghasilkan teks (hanya tool call), paksa tanya data yang kurang
-                    if (!retryResult?.content || retryResult.content.trim() === '' || retryResult.content === 'Ada yang bisa saya bantu?') {
-                        const missingFields = inspectorResult.missing || 'data yang diperlukan';
-                        logger.warn(`[Inspector] Retry tidak menghasilkan teks — pakai fallback tanya data kurang: ${missingFields}`);
-                        return {
-                            type: RESPONSE_TYPE.TEXT,
-                            content: `Sebentar ya bun 😊 Sebelum kami buatkan rekap, boleh tahu ${missingFields.split(',')[0].trim().toLowerCase()}nya dulu?`,
-                        };
-                    }
-                    return retryResult;
-                }
-            }
-
-            if (mediaResults.length > 0) {
-                return {
-                    type: RESPONSE_TYPE.MEDIA,
-                    content: finalContent ? sanitizeTextOutput(finalContent) : "",
-                    mediaList: mediaResults,
-                    tool_calls: downstreamToolCalls
-                };
-            }
-            
-            return {
-                type: RESPONSE_TYPE.TEXT,
-                content: sanitizeTextOutput(finalContent) || "Ada yang bisa saya bantu?",
-                tool_calls: downstreamToolCalls
-            };
-        }
-
-        // 🛡️ INSPECTOR MIDDLEWARE untuk basic flow
-        let basicContent = sanitizeTextOutput(responseMessage.content) || "Ada yang bisa saya bantu?";
-        if (!isRetry && basicContent) {
-            const inspectorResult = await _runInspectorValidation(basicContent, kind);
-            if (!inspectorResult.valid) {
-                logger.warn(`[Inspector] Rekap ditolak: ${inspectorResult.missing}. Retrying...`);
-                const retryHistory = [...history];
-                retryHistory.push({ role: 'assistant', body: basicContent, is_from_me: true });
-                retryHistory.push({ 
-                    role: 'user', 
-                    body: `[SISTEM INSPECTOR]: Draf rekap DITOLAK karena data kurang: ${inspectorResult.missing}. Tanyakan kekurangan data ini ke pelanggan dengan bahasa natural. JANGAN kirim form rekap ke pelanggan!` 
-                });
-                const retryResult = await _processAIResponse("", retryHistory, store, agent, customerMediaContext, conversationSummary, interactionCount, customerPhone, true);
-                
-                // FIX: Jika retry tidak menghasilkan teks, paksa tanya data yang kurang
-                if (!retryResult?.content || retryResult.content.trim() === '' || retryResult.content === 'Ada yang bisa saya bantu?') {
-                    const missingFields = inspectorResult.missing || 'data yang diperlukan';
-                    logger.warn(`[Inspector] Retry tidak menghasilkan teks — pakai fallback tanya data kurang: ${missingFields}`);
-                    return {
-                        type: RESPONSE_TYPE.TEXT,
-                        content: `Sebentar ya bun 😊 Sebelum kami buatkan rekap, boleh tahu ${missingFields.split(',')[0].trim().toLowerCase()}nya dulu?`,
-                    };
-                }
-                return retryResult;
-            }
-        }
-
-        return {
-            type: RESPONSE_TYPE.TEXT,
-            content: basicContent,
-            tool_calls: responseMessage.tool_calls || []
-        };
-
-    } catch (error) {
-        logger.error(`Kesalahan AI: ${error.message}`);
-        return { type: RESPONSE_TYPE.TEXT, content: ERRORS.AI_FALLBACK };
+          parameters: {
+            type: "object",
+            properties: {
+              customer_name: {
+                type: "string",
+                description: "Nama penerima (sesuai rekap pesanan)",
+              },
+              customer_phone: {
+                type: "string",
+                description:
+                  "Nomor HP penerima (format: 081234567890 atau 6281234567890)",
+              },
+              customer_address: {
+                type: "string",
+                description: "Alamat lengkap penerima dari rekap pesanan",
+              },
+              destination_keyword: {
+                type: "string",
+                description:
+                  "Nama Kecamatan dan Kota/Kabupaten tujuan. Contoh: 'Loceret, Nganjuk'",
+              },
+              parcel_content: {
+                type: "string",
+                description:
+                  "Isi paket / nama produk. Contoh: 'Label Nama DTF 30pcs'",
+              },
+              weight: {
+                type: "number",
+                description: "Berat paket dalam kg (default 1)",
+              },
+              quantity: {
+                type: "integer",
+                description: "Jumlah item (default 1)",
+              },
+              goods_value: {
+                type: "integer",
+                description:
+                  "Nilai barang dalam Rupiah (untuk asuransi). Ambil dari total pesanan.",
+              },
+              courier: {
+                type: "string",
+                enum: [
+                  "JT",
+                  "JNE",
+                  "Sap",
+                  "SiCepat",
+                  "Ninja",
+                  "iDexpress",
+                  "lion",
+                  "anteraja",
+                ],
+                description: "Kurir pengiriman (default: JT).",
+              },
+              contact_id: {
+                type: "string",
+                description:
+                  "ID kontak WhatsApp customer untuk kirim notif resi",
+              },
+              store_wa_id: {
+                type: "string",
+                description: "ID store WA bot yang dipakai",
+              },
+              custom_products: {
+                type: "array",
+                description: "Detail produk (opsional)",
+                items: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string" },
+                    variant: { type: "string" },
+                    qty: { type: "integer" },
+                    price: { type: "integer" },
+                  },
+                },
+              },
+            },
+            required: [
+              "customer_name",
+              "customer_address",
+              "destination_keyword",
+              "parcel_content",
+              "contact_id",
+              "store_wa_id",
+            ],
+          },
+        },
+      });
     }
+
+    if (configuredLabels.length > 0) {
+      tools.push({
+        type: "function",
+        function: {
+          name: "tambahkan_label_chat",
+          description:
+            "Menambahkan label khusus ke kontak WhatsApp pelanggan. Gunakan HANYA label yang tersedia dari konfigurasi agen.",
+          parameters: {
+            type: "object",
+            properties: {
+              label_names: {
+                type: "array",
+                items: {
+                  type: "string",
+                  enum: configuredLabels,
+                },
+                description:
+                  "Daftar nama label persis dari konfigurasi agen (bisa lebih dari satu).",
+              },
+            },
+            required: ["label_names"],
+          },
+        },
+      });
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // BUILD MESSAGES — FIX TIMESTAMP HALLUCINATION
+    // Timestamp HANYA diberikan untuk role 'user', TIDAK untuk 'assistant'
+    // ══════════════════════════════════════════════════════════════════
+    let userContent = userMessage;
+    if (customerMediaContext) {
+      userContent = `[SISTEM: Pelanggan baru saja mengirim MEDIA/FOTO. Berikut adalah deskripsi visualnya untuk panduanmu: ${customerMediaContext}]\n\nPESAN PELANGGAN: ${userMessage || "(Hanya mengirim foto)"}`;
+    }
+
+    const filteredHistory =
+      history.length > 0 ? history.slice(0, history.length - 1) : [];
+
+    // Build messages — conversation summary is handled by conversationBlock in fullSystemInstruction
+    let messages = [
+      { role: "system", content: fullSystemInstruction },
+      ...filteredHistory.map((h) => {
+        if (h.is_from_me) {
+          return {
+            role: "assistant",
+            content: h.body || h.content || "",
+          };
+        } else {
+          const dayStr = h.timestamp
+            ? moment(h.timestamp).format("DD MMM HH:mm")
+            : "";
+          return {
+            role: "user",
+            content: dayStr
+              ? `(Dikirim ${dayStr})\n${h.body || h.content || ""}`
+              : h.body || h.content || "",
+          };
+        }
+      }),
+      { role: "user", content: userContent },
+    ];
+
+    // === FIRST AI CALL (with timeout) ===
+    const response = await openai.chat.completions.create(
+      {
+        model: modelName,
+        messages,
+        tools,
+        tool_choice: "auto",
+        temperature: 0.55,
+      },
+      { timeout: AI_CHAT_TIMEOUT_MS },
+    );
+
+    // Track cost for this request
+    if (response && response.usage) {
+      logRequest({
+        model: modelName,
+        promptTokens: response.usage.prompt_tokens,
+        completionTokens: response.usage.completion_tokens,
+        endpoint: "chat",
+        functionName: "getAIResponse",
+        storeWaId: store?.wa_id || null,
+        contactPhone: customerPhone || null,
+      }).catch(() => {});
+    }
+
+    let responseMessage = response.choices[0].message;
+
+    // ══════════════════════════════════════════════════════════════════
+    // 🔧 DSML TOOL CALL PARSER FALLBACK
+    // Beberapa model (terutama via fallback/Gemini) membocorkan format DSML
+    // ke dalam content alih-alih diparse jadi tool_calls JSON oleh SDK.
+    // Kita intercept dan konversi ke standar format OpenAI tool_calls.
+    // ══════════════════════════════════════════════════════════════════
+    if (
+      responseMessage.content &&
+      responseMessage.content.includes("< | | DSML | | tool_calls>")
+    ) {
+      const invokeRegex =
+        /< \| \| DSML \| \| invoke name="([^"]+)">([\s\S]*?)<\/ \| \| DSML \| \| invoke>/g;
+      const paramRegex =
+        /< \| \| DSML \| \| parameter name="([^"]+)"[^>]*>([\s\S]*?)<\/ \| \| DSML \| \| parameter>/g;
+
+      let invokeMatch;
+      const parsedToolCalls = [];
+      while (
+        (invokeMatch = invokeRegex.exec(responseMessage.content)) !== null
+      ) {
+        const funcName = invokeMatch[1];
+        const paramsStr = invokeMatch[2];
+        let argsObj = {};
+
+        let paramMatch;
+        while ((paramMatch = paramRegex.exec(paramsStr)) !== null) {
+          const pName = paramMatch[1];
+          const pValueRaw = paramMatch[2].trim();
+          try {
+            argsObj[pName] = JSON.parse(pValueRaw);
+          } catch (e) {
+            argsObj[pName] = pValueRaw;
+          }
+        }
+
+        parsedToolCalls.push({
+          id: "call_" + Math.random().toString(36).substr(2, 9),
+          type: "function",
+          function: {
+            name: funcName,
+            arguments: JSON.stringify(argsObj),
+          },
+        });
+      }
+
+      if (parsedToolCalls.length > 0) {
+        logger.warn(
+          `[AI] 🔧 DSML Format terdeteksi! Mem-parsing manual: ${parsedToolCalls.length} tool calls`,
+        );
+        if (!responseMessage.tool_calls) responseMessage.tool_calls = [];
+        responseMessage.tool_calls.push(...parsedToolCalls);
+
+        // Bersihkan text DSML agar tidak terkirim ke customer
+        responseMessage.content = responseMessage.content
+          .replace(
+            /< \| \| DSML \| \| tool_calls>[\s\S]*?<\/ \| \| DSML \| \| tool_calls>/g,
+            "",
+          )
+          .trim();
+      }
+    }
+
+    const downstreamToolCalls = responseMessage.tool_calls || [];
+
+    // ══════════════════════════════════════════════════════════════════
+    // 🔧 AUTO-INJECT MEDIA SAFETY NET
+    // Jika AI menulis teks yang mereferensikan video/foto/katalog TANPA
+    // memanggil tool, sistem otomatis deteksi & inject media yang relevan.
+    // Mencegah "ghost media" — bot bilang "cek videonya" tapi tidak kirim.
+    // ══════════════════════════════════════════════════════════════════
+    if (
+      (!responseMessage.tool_calls ||
+        responseMessage.tool_calls.length === 0) &&
+      responseMessage.content
+    ) {
+      const autoMedia = _autoInjectMedia(
+        responseMessage.content,
+        kind,
+        sendableMedia,
+      );
+      if (autoMedia && autoMedia.length > 0) {
+        logger.warn(
+          `[AI] 🔧 Ghost-media dicegah! AI menyebut media dalam teks tanpa call tool. Auto-inject: ${autoMedia.map((m) => m.label).join(", ")}`,
+        );
+        return {
+          type: RESPONSE_TYPE.MEDIA,
+          content: sanitizeTextOutput(responseMessage.content),
+          mediaList: autoMedia.map((m) => ({ media: m, caption: "" })),
+          tool_calls: [],
+        };
+      }
+    }
+
+    // === TOOL CALLING HANDLER ===
+    if (responseMessage.tool_calls) {
+      // 🛡️ PRE-TOOL INSPECTOR MIDDLEWARE
+      // Cegah AI mengeksekusi tool (seperti pembuat QRIS) jika rekapnya belum valid!
+      if (!isRetry && responseMessage.content) {
+        const inspectorResult = await _runInspectorValidation(
+          responseMessage.content,
+          kind,
+        );
+        if (!inspectorResult.valid) {
+          logger.warn(
+            `[Inspector] Rekap ditolak (PRE-TOOL): ${inspectorResult.missing}. Retrying...`,
+          );
+          const retryHistory = [...history];
+          retryHistory.push({
+            role: "assistant",
+            content: responseMessage.content,
+            is_from_me: true,
+          });
+          retryHistory.push({
+            role: "user",
+            content: `[SISTEM INSPECTOR]: Draf rekap DITOLAK karena data kurang: ${inspectorResult.missing}. Tanyakan kekurangan data ini ke pelanggan dengan bahasa natural. JANGAN memanggil tool buat_order_scalev sebelum rekap lengkap!`,
+          });
+          return _processAIResponse(
+            "",
+            retryHistory,
+            store,
+            agent,
+            customerMediaContext,
+            conversationSummary,
+            interactionCount,
+            customerPhone,
+            true,
+          );
+        }
+      }
+
+      messages.push(responseMessage);
+      let mediaResults = [];
+      let needsSecondCall = false;
+
+      for (const toolCall of responseMessage.tool_calls) {
+        try {
+          if (toolCall.function.name !== "kirim_media_katalog") {
+            const { executeTool } = require("./services/tool_executor");
+            const result = await executeTool(
+              toolCall,
+              store,
+              customerPhone,
+              history,
+              agent,
+            );
+            if (result) {
+              messages.push({
+                tool_call_id: toolCall.id,
+                role: "tool",
+                name: result.name,
+                content: result.content,
+              });
+              if (result.needsSecondCall) needsSecondCall = true;
+            }
+            continue;
+          }
+
+          if (toolCall.function.name === "kirim_media_katalog") {
+            const args = JSON.parse(toolCall.function.arguments);
+            const ids = args.media_ids || [];
+            const labels = args.label_names || (args.label ? [args.label] : []);
+
+            if (!agentId) {
+              messages.push({
+                tool_call_id: toolCall.id,
+                role: "tool",
+                name: "kirim_media_katalog",
+                content: "Gagal: Agent ID tidak ditemukan.",
+              });
+              needsSecondCall = true;
+              continue;
+            }
+
+            const sendableMedia = await getSendableMedia(agentId);
+            const allowedMedia = [];
+
+            // 1. Eksekusi via ID
+            if (ids.length > 0) {
+              allowedMedia.push(
+                ...sendableMedia.filter((m) => ids.includes(m.id)),
+              );
+            }
+
+            // 2. Eksekusi via Label Names
+            if (labels.length > 0) {
+              for (const qLbl of labels) {
+                const qLower = qLbl.toLowerCase().trim();
+
+                // Kumpulkan semua media yang match
+                const matchesForLabel = sendableMedia.filter((m) => {
+                  if (!m.label) return false;
+                  const mLbl = m.label.toLowerCase().trim();
+                  return (
+                    mLbl === qLower ||
+                    mLbl.includes(qLower) ||
+                    qLower.includes(mLbl)
+                  );
+                });
+
+                const videos = matchesForLabel.filter((m) =>
+                  (m.type || "").startsWith("video"),
+                );
+                const images = matchesForLabel.filter((m) =>
+                  (m.type || "").startsWith("image"),
+                );
+
+                // Inject 1 RANDOM foto/image jika ada lebih dari 1 (Fix Media Spam)
+                if (images.length > 0) {
+                  const randomImage =
+                    images[Math.floor(Math.random() * images.length)];
+                  if (!allowedMedia.find((fm) => fm.id === randomImage.id)) {
+                    allowedMedia.push(randomImage);
+                  }
+                }
+
+                // Pilih 1 video SECARA RANDOM
+                if (videos.length > 0) {
+                  const randomVideo =
+                    videos[Math.floor(Math.random() * videos.length)];
+                  if (!allowedMedia.find((fm) => fm.id === randomVideo.id)) {
+                    allowedMedia.push(randomVideo);
+                  }
+                }
+              }
+            }
+
+            if (allowedMedia.length > 0) {
+              mediaResults.push(
+                ...allowedMedia.map((m, idx) => ({
+                  media: m,
+                  caption: idx === 0 ? args.caption || "" : "",
+                })),
+              );
+              messages.push({
+                tool_call_id: toolCall.id,
+                role: "tool",
+                name: "kirim_media_katalog",
+                content: `${allowedMedia.length} media berhasil dikirim.`,
+              });
+              needsSecondCall = true;
+            } else {
+              const availableLabels = sendableMedia
+                .map((m) => m.label)
+                .filter(Boolean)
+                .join(", ");
+              messages.push({
+                tool_call_id: toolCall.id,
+                role: "tool",
+                name: "kirim_media_katalog",
+                content: `Media tidak ditemukan untuk label: ${labels.join(", ")}. Label yang tersedia: ${availableLabels || "(kosong, belum ada media)"}`,
+              });
+              needsSecondCall = true;
+            }
+          }
+
+          // ── TOOL: Buat Resi Mengantar ──
+          if (toolCall.function.name === "buat_resi_mengantar") {
+            try {
+              const args = JSON.parse(toolCall.function.arguments || "{}");
+              const contactId = args.contact_id || customerPhone || null;
+              const storeWaId = args.store_wa_id || store?.wa_id || null;
+
+              if (
+                !args.customer_name ||
+                !args.customer_address ||
+                !args.destination_keyword ||
+                !args.parcel_content
+              ) {
+                messages.push({
+                  tool_call_id: toolCall.id,
+                  role: "tool",
+                  name: "buat_resi_mengantar",
+                  content:
+                    "Gagal: Data tidak lengkap. Pastikan nama, alamat, kecamatan/kota, dan nama produk sudah diisi.",
+                });
+                needsSecondCall = true;
+                continue;
+              }
+
+              logger.info(
+                `[AI] Membuat resi Mengantar untuk ${args.customer_name}...`,
+              );
+              const resiResult = await mengantarService.createOrder({
+                customerName: args.customer_name,
+                customerPhone:
+                  args.customer_phone ||
+                  (contactId ? contactId.replace("@c.us", "") : ""),
+                customerAddress: args.customer_address,
+                destinationKeyword: args.destination_keyword,
+                parcelContent: args.parcel_content,
+                weight: args.weight || 1,
+                quantity: args.quantity || 1,
+                goodsValue: args.goods_value,
+                courier: args.courier,
+                customProducts: args.custom_products,
+                pickupType: "dropOff",
+              });
+
+              if (resiResult.success) {
+                if (storeWaId && contactId) {
+                  try {
+                    const waSvc = require("./whatsapp_service");
+                    const clients = waSvc.getClients
+                      ? waSvc.getClients()
+                      : null;
+                    const waClient = clients ? clients.get(storeWaId) : null;
+                    if (waClient) {
+                      const resiMsg =
+                        mengantarService.formatResiMessage(resiResult);
+                      const waId = contactId.includes("@c.us")
+                        ? contactId
+                        : `${contactId}@c.us`;
+                      await waClient.sendMessage(waId, resiMsg);
+                      logger.info(
+                        `[AI] ✅ Notif resi terkirim ke ${contactId}`,
+                      );
+                    }
+                  } catch (waErr) {
+                    logger.error(
+                      `[AI] Gagal kirim notif resi ke WA: ${waErr.message}`,
+                    );
+                  }
+                }
+                messages.push({
+                  tool_call_id: toolCall.id,
+                  role: "tool",
+                  name: "buat_resi_mengantar",
+                  content: [
+                    `Resi berhasil dibuat di Mengantar!`,
+                    resiResult.cnote_no
+                      ? `Nomor Resi: ${resiResult.cnote_no}`
+                      : "",
+                    `Kurir: ${resiResult.courier || "JT"}`,
+                    resiResult.destination
+                      ? `Tujuan: ${resiResult.destination}`
+                      : "",
+                    resiResult.is_unpaid
+                      ? `PERHATIAN: Saldo Mengantar kurang, resi perlu diaktivasi manual.`
+                      : `Status: Aktif & terbayar.`,
+                    `Notif resi sudah dikirim ke customer via WhatsApp.`,
+                    `Instruksi: Ucapkan terima kasih dan info paket sedang diproses.`,
+                  ]
+                    .filter(Boolean)
+                    .join(" "),
+                });
+                logger.info(
+                  `[AI] ✅ Resi Mengantar: ${resiResult.cnote_no} untuk ${args.customer_name}`,
+                );
+              } else {
+                messages.push({
+                  tool_call_id: toolCall.id,
+                  role: "tool",
+                  name: "buat_resi_mengantar",
+                  content: `Gagal membuat resi: ${resiResult.error}. Minta owner buat resi manual di aplikasi Mengantar.`,
+                });
+                logger.warn(`[AI] Resi Mengantar gagal: ${resiResult.error}`);
+              }
+              needsSecondCall = true;
+            } catch (resiErr) {
+              logger.error(
+                `[AI] buat_resi_mengantar error: ${resiErr.message}`,
+              );
+              messages.push({
+                tool_call_id: toolCall.id,
+                role: "tool",
+                name: "buat_resi_mengantar",
+                content: `Sistem Mengantar tidak tersedia. Buat resi manual di aplikasi Mengantar ya.`,
+              });
+              needsSecondCall = true;
+            }
+          }
+        } catch (toolErr) {
+          logger.error(
+            `[AI] Tool call error [${toolCall.function.name}]: ${toolErr.message}`,
+          );
+          messages.push({
+            tool_call_id: toolCall.id,
+            role: "tool",
+            name: toolCall.function.name,
+            content: `Error: ${toolErr.message}`,
+          });
+          needsSecondCall = true;
+        }
+      }
+
+      const toolNames = responseMessage.tool_calls.map(
+        (tc) => tc.function.name,
+      );
+      // Disable fast return media so AI always generates natural follow-up text after sending catalogs
+      const canFastReturnMedia = false;
+      let finalContent = sanitizeTextOutput(responseMessage.content || "");
+
+      if (needsSecondCall && !canFastReturnMedia) {
+        const secondResponse = await openai.chat.completions.create(
+          {
+            model: modelName,
+            messages: [
+              ...messages,
+              {
+                role: "system",
+                content:
+                  "PENGINGAT TEKNIS: Jangan tulis link/tag media/ID/timestamp. Untuk chat normal, pisahkan bubble dengan newline dan maksimal 10 kata per bubble. Untuk rekap/order/payment, tulis lengkap dan rapi.",
+              },
+            ],
+            temperature: 0.45,
+          },
+          { timeout: AI_SECOND_CALL_TIMEOUT_MS },
+        );
+
+        // Track cost for second call
+        if (secondResponse && secondResponse.usage) {
+          logRequest({
+            model: modelName,
+            promptTokens: secondResponse.usage.prompt_tokens,
+            completionTokens: secondResponse.usage.completion_tokens,
+            endpoint: "chat",
+            functionName: "getAIResponse_secondCall",
+            storeWaId: store?.wa_id || null,
+            contactPhone: customerPhone || null,
+          }).catch(() => {});
+        }
+
+        responseMessage = secondResponse.choices[0].message;
+        finalContent = responseMessage.content;
+      } else if (canFastReturnMedia && !finalContent) {
+        finalContent = buildFastMediaReply(
+          agent,
+          mediaResults,
+          interactionCount,
+        );
+      }
+
+      // ══════════════════════════════════════════════════════════════════
+      // 🛡️ INSPECTOR MIDDLEWARE: Cegat Rekap Pesanan yang tidak lengkap
+      // ══════════════════════════════════════════════════════════════════
+      if (!isRetry && finalContent) {
+        const inspectorResult = await _runInspectorValidation(
+          finalContent,
+          kind,
+        );
+        if (!inspectorResult.valid) {
+          logger.warn(
+            `[Inspector] Rekap ditolak: ${inspectorResult.missing}. Retrying...`,
+          );
+          const retryHistory = [...history];
+          retryHistory.push({
+            role: "assistant",
+            body: finalContent,
+            is_from_me: true,
+          });
+          retryHistory.push({
+            role: "user",
+            body: `[SISTEM INSPECTOR]: Draf rekap DITOLAK karena data kurang: ${inspectorResult.missing}. Tanyakan kekurangan data ini ke pelanggan dengan bahasa natural. JANGAN kirim form rekap ke pelanggan!`,
+          });
+
+          // Recursive call exactly 1 time
+          const retryResult = await _processAIResponse(
+            "",
+            retryHistory,
+            store,
+            agent,
+            customerMediaContext,
+            conversationSummary,
+            interactionCount,
+            customerPhone,
+            true,
+          );
+
+          // FIX: Jika retry tidak menghasilkan teks (hanya tool call), paksa tanya data yang kurang
+          if (
+            !retryResult?.content ||
+            retryResult.content.trim() === "" ||
+            retryResult.content === "Ada yang bisa saya bantu?"
+          ) {
+            const missingFields =
+              inspectorResult.missing || "data yang diperlukan";
+            logger.warn(
+              `[Inspector] Retry tidak menghasilkan teks — pakai fallback tanya data kurang: ${missingFields}`,
+            );
+            return {
+              type: RESPONSE_TYPE.TEXT,
+              content: `Sebentar ya bun 😊 Sebelum kami buatkan rekap, boleh tahu ${missingFields.split(",")[0].trim().toLowerCase()}nya dulu?`,
+            };
+          }
+          return retryResult;
+        }
+      }
+
+      if (mediaResults.length > 0) {
+        return {
+          type: RESPONSE_TYPE.MEDIA,
+          content: finalContent ? sanitizeTextOutput(finalContent) : "",
+          mediaList: mediaResults,
+          tool_calls: downstreamToolCalls,
+        };
+      }
+
+      return {
+        type: RESPONSE_TYPE.TEXT,
+        content:
+          sanitizeTextOutput(finalContent) || "Ada yang bisa saya bantu?",
+        tool_calls: downstreamToolCalls,
+      };
+    }
+
+    // 🛡️ INSPECTOR MIDDLEWARE untuk basic flow
+    let basicContent =
+      sanitizeTextOutput(responseMessage.content) ||
+      "Ada yang bisa saya bantu?";
+    if (!isRetry && basicContent) {
+      const inspectorResult = await _runInspectorValidation(basicContent, kind);
+      if (!inspectorResult.valid) {
+        logger.warn(
+          `[Inspector] Rekap ditolak: ${inspectorResult.missing}. Retrying...`,
+        );
+        const retryHistory = [...history];
+        retryHistory.push({
+          role: "assistant",
+          body: basicContent,
+          is_from_me: true,
+        });
+        retryHistory.push({
+          role: "user",
+          body: `[SISTEM INSPECTOR]: Draf rekap DITOLAK karena data kurang: ${inspectorResult.missing}. Tanyakan kekurangan data ini ke pelanggan dengan bahasa natural. JANGAN kirim form rekap ke pelanggan!`,
+        });
+        const retryResult = await _processAIResponse(
+          "",
+          retryHistory,
+          store,
+          agent,
+          customerMediaContext,
+          conversationSummary,
+          interactionCount,
+          customerPhone,
+          true,
+        );
+
+        // FIX: Jika retry tidak menghasilkan teks, paksa tanya data yang kurang
+        if (
+          !retryResult?.content ||
+          retryResult.content.trim() === "" ||
+          retryResult.content === "Ada yang bisa saya bantu?"
+        ) {
+          const missingFields =
+            inspectorResult.missing || "data yang diperlukan";
+          logger.warn(
+            `[Inspector] Retry tidak menghasilkan teks — pakai fallback tanya data kurang: ${missingFields}`,
+          );
+          return {
+            type: RESPONSE_TYPE.TEXT,
+            content: `Sebentar ya bun 😊 Sebelum kami buatkan rekap, boleh tahu ${missingFields.split(",")[0].trim().toLowerCase()}nya dulu?`,
+          };
+        }
+        return retryResult;
+      }
+    }
+
+    return {
+      type: RESPONSE_TYPE.TEXT,
+      content: basicContent,
+      tool_calls: responseMessage.tool_calls || [],
+    };
+  } catch (error) {
+    logger.error(`Kesalahan AI: ${error.message}`);
+    return { type: RESPONSE_TYPE.TEXT, content: ERRORS.AI_FALLBACK };
+  }
 }
 
 /**
@@ -1360,29 +1837,29 @@ CATATAN: Gunakan data dari rekap pesanan. Isi semua field seakurat mungkin.`,
  * sebelum pesan benar-benar sampai ke WhatsApp pelanggan.
  */
 function sanitizeTextOutput(text) {
-    if (!text) return "";
-    
-    let clean = text;
-    // 1. Hapus format Markdown Image: ![...](...) 
-    clean = clean.replace(/!\[.*?\]\(.*?\)/g, '');
-    
-    // 2. Hapus format link fiktif, tetapi jangan hapus nama brand valid seperti slaludiskon.com.
-    clean = clean.replace(/https?:\/\/\S+/gi, '');
-    clean = clean.replace(/\b(example|yourdomain|domain|website)\.com\S*/gi, '');
-    
-    // 3. Hapus tag internal jika bocor: [MEDIA:...] atau [VIDEO:...]
-    clean = clean.replace(/\[MEDIA:.*?\]/g, '');
-    clean = clean.replace(/\[VIDEO:.*?\]/g, '');
-    
-    // 4. Hapus ID sistem jika bocor (misal: ID: 2)
-    clean = clean.replace(/ID:\s*\d+/gi, '');
+  if (!text) return "";
 
-    // 5. Hapus timestamp yang bocor: [WAKTU: ...] atau (Dikirim ...)
-    clean = clean.replace(/\[WAKTU:.*?\]/gi, '');
-    clean = clean.replace(/\(Dikirim \d{2} \w{3} \d{2}:\d{2}\)/gi, '');
+  let clean = text;
+  // 1. Hapus format Markdown Image: ![...](...)
+  clean = clean.replace(/!\[.*?\]\(.*?\)/g, "");
 
-    // 6. Normalisasi spasi dan baris kosong berlebih
-    return clean.trim().replace(/\n{3,}/g, '\n\n');
+  // 2. Hapus format link fiktif, tetapi jangan hapus nama brand valid seperti slaludiskon.com.
+  clean = clean.replace(/https?:\/\/\S+/gi, "");
+  clean = clean.replace(/\b(example|yourdomain|domain|website)\.com\S*/gi, "");
+
+  // 3. Hapus tag internal jika bocor: [MEDIA:...] atau [VIDEO:...]
+  clean = clean.replace(/\[MEDIA:.*?\]/g, "");
+  clean = clean.replace(/\[VIDEO:.*?\]/g, "");
+
+  // 4. Hapus ID sistem jika bocor (misal: ID: 2)
+  clean = clean.replace(/ID:\s*\d+/gi, "");
+
+  // 5. Hapus timestamp yang bocor: [WAKTU: ...] atau (Dikirim ...)
+  clean = clean.replace(/\[WAKTU:.*?\]/gi, "");
+  clean = clean.replace(/\(Dikirim \d{2} \w{3} \d{2}:\d{2}\)/gi, "");
+
+  // 6. Normalisasi spasi dan baris kosong berlebih
+  return clean.trim().replace(/\n{3,}/g, "\n\n");
 }
 
 /**
@@ -1390,17 +1867,24 @@ function sanitizeTextOutput(text) {
  * Mengubah chat menjadi rekap operasional yang cukup detail untuk CS.
  */
 async function generateChatSummary(history = []) {
-    if (history.length < 3) return "Percakapan baru saja dimulai. Belum ada rekapan.";
-    
-    try {
-        const historyText = history.map(h => 
-            `${h.is_from_me ? 'Admin' : 'Pelanggan'}: ${h.body || h.content}`
-        ).join('\n');
+  if (history.length < 3)
+    return "Percakapan baru saja dimulai. Belum ada rekapan.";
 
-        const response = await openai.chat.completions.create({
-            model: config.MODEL_NAME,
-            messages: [
-                { role: "system", content: `Tugasmu membuat REKAP DATA CUSTOMER dalam format KEY-VALUE yang terstruktur.
+  try {
+    const historyText = history
+      .map(
+        (h) =>
+          `${h.is_from_me ? "Admin" : "Pelanggan"}: ${h.body || h.content}`,
+      )
+      .join("\n");
+
+    const response = await openai.chat.completions.create(
+      {
+        model: config.MODEL_NAME,
+        messages: [
+          {
+            role: "system",
+            content: `Tugasmu membuat REKAP DATA CUSTOMER dalam format KEY-VALUE yang terstruktur.
 Ekstrak SEMUA informasi yang sudah disebutkan customer dari riwayat chat.
 Gunakan format PERSIS seperti ini (isi setiap field, tulis "belum" jika belum diketahui):
 
@@ -1449,28 +1933,34 @@ Jika SATU SAJA syarat di atas belum terpenuhi → tulis status yang paling akura
 
 ATURAN UPSELLING_TERKIRIM:
 - Tulis "ya" jika dalam chat terlihat bot sudah menawarkan paket bundling/back to school kepada customer.
-- Tulis "tidak" jika belum pernah ditawarkan.` },
-                { role: "user", content: `Berikut riwayat chatnya, buatkan rekapannya:\n\n${historyText}` }
-            ],
-            temperature: 0.2 // Lebih stabil dan konsisten untuk format terstruktur
-        }, { timeout: AI_CHAT_TIMEOUT_MS });
+- Tulis "tidak" jika belum pernah ditawarkan.`,
+          },
+          {
+            role: "user",
+            content: `Berikut riwayat chatnya, buatkan rekapannya:\n\n${historyText}`,
+          },
+        ],
+        temperature: 0.2, // Lebih stabil dan konsisten untuk format terstruktur
+      },
+      { timeout: AI_CHAT_TIMEOUT_MS },
+    );
 
-        // Track cost for summary
-        if (response && response.usage) {
-            logRequest({
-                model: config.MODEL_NAME,
-                promptTokens: response.usage.prompt_tokens,
-                completionTokens: response.usage.completion_tokens,
-                endpoint: 'chat',
-                functionName: 'generateChatSummary'
-            }).catch(() => {});
-        }
-
-        return response.choices[0].message.content.trim();
-    } catch (e) {
-        logger.error(`Gagal generate summary: ${e.message}`);
-        return "Gagal memperbarui rekapan.";
+    // Track cost for summary
+    if (response && response.usage) {
+      logRequest({
+        model: config.MODEL_NAME,
+        promptTokens: response.usage.prompt_tokens,
+        completionTokens: response.usage.completion_tokens,
+        endpoint: "chat",
+        functionName: "generateChatSummary",
+      }).catch(() => {});
     }
+
+    return response.choices[0].message.content.trim();
+  } catch (e) {
+    logger.error(`Gagal generate summary: ${e.message}`);
+    return "Gagal memperbarui rekapan.";
+  }
 }
 
 /**
@@ -1478,54 +1968,61 @@ ATURAN UPSELLING_TERKIRIM:
  * Mengubah pesan suara (VN) menjadi teks agar AI bisa "mendengar".
  */
 async function transcribeAudio(audioPath) {
-    if (!fs.existsSync(audioPath)) return null;
-    try {
-        // Gunakan client OpenAI asli khusus untuk Whisper, JANGAN pakai client DeepSeek
-        const nativeOpenAI = new OpenAI({ apiKey: config.OPENAI_API_KEY });
-        const response = await nativeOpenAI.audio.transcriptions.create({
-            file: fs.createReadStream(audioPath),
-            model: "whisper-1",
-            language: "id" // Fokus ke Bahasa Indonesia
-        });
-        // Track cost for transcription (audio duration not available, use flat rate)
-        logRequest({
-            model: "whisper-1",
-            promptTokens: 0,
-            completionTokens: 0,
-            endpoint: 'audio',
-            functionName: 'transcribeAudio'
-        }).catch(() => {});
+  if (!fs.existsSync(audioPath)) return null;
+  try {
+    // Gunakan client OpenAI asli khusus untuk Whisper, JANGAN pakai client DeepSeek
+    const nativeOpenAI = new OpenAI({ apiKey: config.OPENAI_API_KEY });
+    const response = await nativeOpenAI.audio.transcriptions.create({
+      file: fs.createReadStream(audioPath),
+      model: "whisper-1",
+      language: "id", // Fokus ke Bahasa Indonesia
+    });
+    // Track cost for transcription (audio duration not available, use flat rate)
+    logRequest({
+      model: "whisper-1",
+      promptTokens: 0,
+      completionTokens: 0,
+      endpoint: "audio",
+      functionName: "transcribeAudio",
+    }).catch(() => {});
 
-        return response.text;
-    } catch (e) {
-        logger.error(`Gagal transkripsi VN: ${e.message}`);
-        return null;
-    }
+    return response.text;
+  } catch (e) {
+    logger.error(`Gagal transkripsi VN: ${e.message}`);
+    return null;
+  }
 }
 
 /**
  * Menghitung jeda mengetik yang realistis (Natural Human Typing).
  */
 function calculateTypingDelay(text, minCharDelay = 12, maxDelay = 300) {
-    if (!text) return 150;
-    const randomSpeed = Math.floor(Math.random() * (22 - minCharDelay + 1)) + minCharDelay;
-    const baseDelay = text.length * randomSpeed;
-    const humanOffset = Math.floor(Math.random() * (100 - 50 + 1)) + 50;
-    return Math.min(baseDelay + humanOffset, maxDelay);
+  if (!text) return 150;
+  const randomSpeed =
+    Math.floor(Math.random() * (22 - minCharDelay + 1)) + minCharDelay;
+  const baseDelay = text.length * randomSpeed;
+  const humanOffset = Math.floor(Math.random() * (100 - 50 + 1)) + 50;
+  return Math.min(baseDelay + humanOffset, maxDelay);
 }
 
 /**
  * Generate Follow-Up Message secara Organik (Anti-Banned)
  * Menggunakan AI untuk memastikan setiap pesan unik, tidak ada template kaku.
  */
-async function generateOrganicFollowUp(customerName, chatContext, stageInstruction, productKnowledge) {
-    try {
-        const response = await openai.chat.completions.create({
-            model: config.MODEL_NAME, // Cepat dan murah untuk tugas teks pendek
-            messages: [
-                { 
-                    role: "system", 
-                    content: `Kamu adalah asisten jualan WhatsApp yang sangat natural, ramah, dan tidak terlihat seperti robot.
+async function generateOrganicFollowUp(
+  customerName,
+  chatContext,
+  stageInstruction,
+  productKnowledge,
+) {
+  try {
+    const response = await openai.chat.completions.create(
+      {
+        model: config.MODEL_NAME, // Cepat dan murah untuk tugas teks pendek
+        messages: [
+          {
+            role: "system",
+            content: `Kamu adalah asisten jualan WhatsApp yang sangat natural, ramah, dan tidak terlihat seperti robot.
 Tugasmu adalah membuat PESAN FOLLOW-UP (tindak lanjut) ke customer yang sempat menghilang (belum membalas/belum bayar).
 
 INSTRUKSI FOLLOW-UP:
@@ -1540,43 +2037,45 @@ ATURAN ANTI-BANNED WA (SANGAT KRITIKAL):
 3. Buat variasi kalimat yang sangat natural seperti ketikan jari manusia biasa.
 4. Gunakan emoji secukupnya (maksimal 1 atau 2).
 5. Jangan terlalu memaksa/menjual keras, gunakan pendekatan empati/halus.
-6. JANGAN gunakan salam pembuka kaku seperti "Halo Bapak/Ibu". Gunakan nama customer langsung.` 
-                },
-                { 
-                    role: "user", 
-                    content: `Nama Customer: ${customerName}\nKonteks Percakapan Terakhir: ${chatContext || 'Belum ada konteks jelas'}\n\nTolong buatkan pesan follow up yang unik sekarang.` 
-                }
-            ],
-            temperature: 0.7 // Cukup kreatif agar menghasilkan variasi teks organik
-        }, { timeout: 10000 });
+6. JANGAN gunakan salam pembuka kaku seperti "Halo Bapak/Ibu". Gunakan nama customer langsung.`,
+          },
+          {
+            role: "user",
+            content: `Nama Customer: ${customerName}\nKonteks Percakapan Terakhir: ${chatContext || "Belum ada konteks jelas"}\n\nTolong buatkan pesan follow up yang unik sekarang.`,
+          },
+        ],
+        temperature: 0.7, // Cukup kreatif agar menghasilkan variasi teks organik
+      },
+      { timeout: 10000 },
+    );
 
-        // Track cost for follow-up
-        if (response && response.usage) {
-            logRequest({
-                model: config.MODEL_NAME,
-                promptTokens: response.usage.prompt_tokens,
-                completionTokens: response.usage.completion_tokens,
-                endpoint: 'chat',
-                functionName: 'generateOrganicFollowUp'
-            }).catch(() => {});
-        }
-
-        return response.choices[0].message.content.trim();
-    } catch (e) {
-        logger.error(`[AI] Gagal generate organic follow-up: ${e.message}`);
-        // Fallback organik darurat
-        return `Ka ${customerName} 😊\nMasih ada yang mau ditanyakan kak tentang pesanannya?`;
+    // Track cost for follow-up
+    if (response && response.usage) {
+      logRequest({
+        model: config.MODEL_NAME,
+        promptTokens: response.usage.prompt_tokens,
+        completionTokens: response.usage.completion_tokens,
+        endpoint: "chat",
+        functionName: "generateOrganicFollowUp",
+      }).catch(() => {});
     }
+
+    return response.choices[0].message.content.trim();
+  } catch (e) {
+    logger.error(`[AI] Gagal generate organic follow-up: ${e.message}`);
+    // Fallback organik darurat
+    return `Ka ${customerName} 😊\nMasih ada yang mau ditanyakan kak tentang pesanannya?`;
+  }
 }
 
 module.exports = {
-    getAIResponse,
-    generateChatSummary,
-    transcribeAudio,
-    calculateTypingDelay,
-    prepareOutboundBubbles,
-    sanitizeTextOutput,
-    parseAutoLabels,
-    RESPONSE_TYPE,
-    generateOrganicFollowUp
+  getAIResponse,
+  generateChatSummary,
+  transcribeAudio,
+  calculateTypingDelay,
+  prepareOutboundBubbles,
+  sanitizeTextOutput,
+  parseAutoLabels,
+  RESPONSE_TYPE,
+  generateOrganicFollowUp,
 };
