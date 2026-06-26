@@ -1,3 +1,5 @@
+require('dotenv').config({ path: __dirname + '/../../../.env' });
+require('dotenv').config(); // Fallback to current dir
 const { ChatSummary } = require("../models/index");
 const { Op } = require("sequelize");
 
