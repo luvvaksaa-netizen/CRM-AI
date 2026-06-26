@@ -569,19 +569,44 @@ async function _runInspectorValidation(content, kind) {
         },
       ],
       temperature: 0.0, // Deterministik, bukan kreatif
-      max_tokens: 200,
+      max_tokens: 600, // Dinaikkan dari 200 — JSON bisa terpotong dan throw "Unexpected end of JSON"
     });
 
     const raw = inspectorResponse.choices[0].message.content;
+
+    // Step 1: Clean markdown wrappers
     const cleanRaw = raw
       .replace(/```json/gi, "")
       .replace(/```/g, "")
       .trim();
-    const result = JSON.parse(cleanRaw);
-    return {
-      valid: result.valid !== false,
-      missing: result.missing || "",
-    };
+
+    // Step 2: Handle incomplete JSON by finding last closing brace (lastIndexOf trick)
+    // This solves issues where response is truncated mid-JSON
+    const lastBrace = cleanRaw.lastIndexOf("}");
+    const safeRaw =
+      lastBrace > 0 ? cleanRaw.substring(0, lastBrace + 1) : cleanRaw;
+
+    // Step 3: Parse dengan error handling yang detail
+    try {
+      const result = JSON.parse(safeRaw);
+      return {
+        valid: result.valid !== false,
+        missing: result.missing || "",
+      };
+    } catch (parseErr) {
+      // JSON still invalid after trimming — log detail untuk debugging
+      const isIncompleteJson = lastBrace > 0 && safeRaw !== cleanRaw;
+      const errorType = isIncompleteJson ? "incomplete" : "malformed";
+
+      logger.warn(
+        `[Inspector] JSON parse failed (${errorType}): ` +
+          `original_len=${cleanRaw.length}, safe_len=${safeRaw.length}, ` +
+          `error="${parseErr.message}"`,
+      );
+
+      // Non-fatal fallback: jangan block customer
+      return { valid: true };
+    }
   } catch (err) {
     // Non-fatal: jika inspector error, loloskan saja (jangan block customer)
     logger.error(`[Inspector] Validation error (non-fatal): ${err.message}`);
@@ -1269,14 +1294,13 @@ CATATAN: Gunakan data dari rekap pesanan. Isi semua field seakurat mungkin.`,
     // ke dalam content alih-alih diparse jadi tool_calls JSON oleh SDK.
     // Kita intercept dan konversi ke standar format OpenAI tool_calls.
     // ══════════════════════════════════════════════════════════════════
-    if (
-      responseMessage.content &&
-      responseMessage.content.includes("< | | DSML | | tool_calls>")
-    ) {
+    // DSML_RE: tangkap format fullwidth pipe ｜｜ (U+FF5C) DAN ASCII pipe || — DeepSeek kadang pakai salah satunya
+    const DSML_RE = /<[|\uFF5C]{2}DSML[|\uFF5C]{2}tool_calls>/i;
+    if (responseMessage.content && DSML_RE.test(responseMessage.content)) {
       const invokeRegex =
-        /< \| \| DSML \| \| invoke name="([^"]+)">([\s\S]*?)<\/ \| \| DSML \| \| invoke>/g;
+        /<[|\uFF5C]{2}DSML[|\uFF5C]{2}invoke name="([^"]+)">([\s\S]*?)<\/[|\uFF5C]{2}DSML[|\uFF5C]{2}invoke>/gi;
       const paramRegex =
-        /< \| \| DSML \| \| parameter name="([^"]+)"[^>]*>([\s\S]*?)<\/ \| \| DSML \| \| parameter>/g;
+        /<[|\uFF5C]{2}DSML[|\uFF5C]{2}parameter name="([^"]+)"[^>]*>([\s\S]*?)<\/[|\uFF5C]{2}DSML[|\uFF5C]{2}parameter>/gi;
 
       let invokeMatch;
       const parsedToolCalls = [];
@@ -1315,10 +1339,10 @@ CATATAN: Gunakan data dari rekap pesanan. Isi semua field seakurat mungkin.`,
         if (!responseMessage.tool_calls) responseMessage.tool_calls = [];
         responseMessage.tool_calls.push(...parsedToolCalls);
 
-        // Bersihkan text DSML agar tidak terkirim ke customer
+        // Bersihkan text DSML agar tidak terkirim ke customer (semua varian pipe)
         responseMessage.content = responseMessage.content
           .replace(
-            /< \| \| DSML \| \| tool_calls>[\s\S]*?<\/ \| \| DSML \| \| tool_calls>/g,
+            /<[|\uFF5C]{2}DSML[|\uFF5C]{2}tool_calls>[\s\S]*?<\/[|\uFF5C]{2}DSML[|\uFF5C]{2}tool_calls>/gi,
             "",
           )
           .trim();
@@ -1832,6 +1856,29 @@ CATATAN: Gunakan data dari rekap pesanan. Isi semua field seakurat mungkin.`,
 }
 
 /**
+ * Validation function untuk memastikan DSML tags sudah benar-benar dihapus
+ * @param {string} content - Content yang akan divalidasi
+ * @returns {boolean} - True jika tidak ada DSML tags, false jika masih ada
+ */
+function validateDSMLRemoved(content) {
+  if (!content) return true;
+
+  const hasDSML = /<[|\uFF5C]{2}DSML[|\uFF5C]{2}/gi.test(content);
+  const hasClosingDSML = /<\/[|\uFF5C]{2}DSML[|\uFF5C]{2}/gi.test(content);
+
+  if (hasDSML || hasClosingDSML) {
+    const contentSample = content.substring(0, 200).replace(/\n/g, " ");
+    logger.warn(
+      "[AI] ⚠️ DSML tags detected after cleanup! Content sample: " +
+        contentSample,
+    );
+    return false;
+  }
+
+  return true;
+}
+
+/**
  * MASTER SANITIZER (Guard Level Production)
  * Menghapus segala bentuk link fiktif, format markdown gambar, atau tag media manual
  * sebelum pesan benar-benar sampai ke WhatsApp pelanggan.
@@ -1858,8 +1905,33 @@ function sanitizeTextOutput(text) {
   clean = clean.replace(/\[WAKTU:.*?\]/gi, "");
   clean = clean.replace(/\(Dikirim \d{2} \w{3} \d{2}:\d{2}\)/gi, "");
 
-  // 6. Normalisasi spasi dan baris kosong berlebih
-  return clean.trim().replace(/\n{3,}/g, "\n\n");
+  // 6. Safety net: hapus DSML tags yang lolos parser (fullwidth ｜ maupun ASCII |)
+  // BUG FIX: Implementasi 3-step cleanup untuk handle nested DSML tags
+
+  // Step 1: Remove complete DSML blocks dengan greedy match untuk nested tags
+  // Menghapus dari opening tag sampai closing tag paling akhir
+  clean = clean.replace(
+    /<[|\uFF5C]{2}DSML[|\uFF5C]{2}[\s\S]+?<\/[|\uFF5C]{2}DSML[|\uFF5C]{2}[^>]*>/gi,
+    "",
+  );
+
+  // Step 2: Cleanup sisa tag yang mungkin tertinggal (orphaned opening tags)
+  clean = clean.replace(/<[|\uFF5C]{2}DSML[|\uFF5C]{2}[^>]*>/gi, "");
+
+  // Step 3: Cleanup sisa closing tag tanpa opening (safety net)
+  clean = clean.replace(/<\/[|\uFF5C]{2}DSML[|\uFF5C]{2}[^>]*>/gi, "");
+
+  // 7. Normalisasi spasi dan baris kosong berlebih
+  const finalClean = clean.trim().replace(/\n{3,}/g, "\n\n");
+
+  // 8. Validasi: pastikan DSML tags sudah benar-benar dihapus
+  if (!validateDSMLRemoved(finalClean)) {
+    logger.warn(
+      "[AI] DSML validation failed but continuing (non-blocking warning)",
+    );
+  }
+
+  return finalClean;
 }
 
 /**

@@ -1272,6 +1272,30 @@ function initHealthCheck(storeWaId) {
                 return;
             }
 
+            // P1 FIX: Silent Disconnect Watchdog
+            // Mengecek langsung state Socket internal dari browser Puppeteer.
+            // Seringkali client.getState() melapor 'CONNECTED' karena cache, 
+            // padahal WA Web sedang stuck di 'SYNCING' atau jaringan terputus.
+            try {
+                if (client.pupPage && !client.pupPage.isClosed()) {
+                    const internalState = await client.pupPage.evaluate(() => {
+                        return window.Store && window.Store.State && window.Store.State.Socket 
+                            ? window.Store.State.Socket.state 
+                            : null;
+                    });
+                    
+                    if (internalState && internalState !== 'CONNECTED') {
+                        logger.error(`[${storeWaId}] Health Check: Silent Disconnect Terdeteksi! Internal State = ${internalState}. Restarting...`);
+                        await restartClientRuntime(storeWaId, 'health-check');
+                        return;
+                    }
+                }
+            } catch (evalErr) {
+                logger.error(`[${storeWaId}] Health Check: Puppeteer page hang/unresponsive. Restarting...`);
+                await restartClientRuntime(storeWaId, 'health-check');
+                return;
+            }
+
             // logger.info(`[${storeWaId}] Health Check: OK ✅ (state=${state})`);
         } catch (e) {
             logger.error(`[${storeWaId}] Health Check GAGAL (Browser Hang/Macet). Restarting...`);

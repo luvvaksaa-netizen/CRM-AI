@@ -1,19 +1,25 @@
-import express from 'express';
+import express from "express";
 import {
   getAddresses,
   getOrders,
   createOrder,
   getConfig,
-  updateConfig
-} from '../controllers/mengantar.controller';
-import { authorize } from '../middlewares/auth.middleware';
+  updateConfig,
+  auditOrders,
+  getAddressFixReport,
+  fixOrderAddresses,
+} from "../controllers/mengantar.controller";
+import { authorize } from "../middlewares/auth.middleware";
 
 const router = express.Router();
 
-router.get('/addresses', authorize(), getAddresses);
-router.get('/orders', authorize(), getOrders);
-router.post('/create-order', authorize(), createOrder);
-router.get('/config', authorize('admin'), getConfig);
-router.put('/config', authorize('admin'), updateConfig);
+router.get("/addresses", authorize(), getAddresses);
+router.get("/orders", authorize(), getOrders);
+router.post("/create-order", authorize(), createOrder);
+router.get("/config", authorize("admin"), getConfig);
+router.put("/config", authorize("admin"), updateConfig);
+router.get("/audit", authorize("admin"), auditOrders);
+router.get("/fix-addresses/report", authorize("admin"), getAddressFixReport);
+router.post("/fix-addresses", authorize("admin"), fixOrderAddresses);
 
 export default router;

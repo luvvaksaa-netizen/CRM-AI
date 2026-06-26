@@ -1,4 +1,4 @@
-import { Server } from 'socket.io';
+import { Server } from "socket.io";
 
 /**
  * SocketService — SINGLE SOURCE OF TRUTH for all Socket.IO emissions.
@@ -7,6 +7,11 @@ import { Server } from 'socket.io';
  *   import { socketService } from './services/socket.service';
  *   socketService.init(io);           // called once from app.ts
  *   socketService.emitNewMessage(...); // called from controllers/services
+ *
+ * Events:
+ *   - 'ready': Bot successfully connected and ready
+ *   - 'wa-reconnect': Bot reconnected (explicit event for reconnect warning)
+ *   - 'disconnected': Bot disconnected
  *
  * For legacy JS services that receive `io` as a parameter:
  *   const io = socketService.getIO();
@@ -19,7 +24,7 @@ class SocketService {
   /** Called once from app.ts after Socket.IO server is created */
   init(io: Server): void {
     this.io = io;
-    console.log('[SocketService] Initialized');
+    console.log("[SocketService] Initialized");
   }
 
   /** For legacy JS services that need the raw Server instance */
@@ -40,39 +45,55 @@ class SocketService {
   // ═══════════════════════════════════════════════
 
   emitNewMessage(storeId: string, msg: any): void {
-    this.io?.emit('newMessage', { storeId, msg });
+    this.io?.emit("newMessage", { storeId, msg });
   }
 
   emitChatRead(storeId: string, contactId: string): void {
-    this.io?.emit('chatRead', { storeId, contactId });
+    this.io?.emit("chatRead", { storeId, contactId });
   }
 
   emitChatCleared(storeId: string, contactId: string): void {
-    this.io?.emit('chatCleared', { storeId, contactId });
+    this.io?.emit("chatCleared", { storeId, contactId });
   }
 
-  emitTypingStatus(storeId: string, contactId: string, isTyping: boolean): void {
-    this.io?.emit('typingStatus', { storeId, contactId, isTyping });
+  emitTypingStatus(
+    storeId: string,
+    contactId: string,
+    isTyping: boolean,
+  ): void {
+    this.io?.emit("typingStatus", { storeId, contactId, isTyping });
   }
 
-  emitMessageRevoked(storeId: string, waMessageId: string, contactId: string): void {
-    this.io?.emit('messageRevoked', { storeId, waMessageId, contactId });
+  emitMessageRevoked(
+    storeId: string,
+    waMessageId: string,
+    contactId: string,
+  ): void {
+    this.io?.emit("messageRevoked", { storeId, waMessageId, contactId });
   }
 
   // ═══════════════════════════════════════════════
   // Label Events
   // ═══════════════════════════════════════════════
 
-  emitLabelsUpdated(storeId: string, contactId: string, labels: string[]): void {
-    this.io?.emit('labelsUpdated', { storeId, contactId, labels });
+  emitLabelsUpdated(
+    storeId: string,
+    contactId: string,
+    labels: string[],
+  ): void {
+    this.io?.emit("labelsUpdated", { storeId, contactId, labels });
   }
 
   // ═══════════════════════════════════════════════
   // Contact Identity Events
   // ═══════════════════════════════════════════════
 
-  emitContactIdentityUpdated(storeId: string, contactId: string, identity: any): void {
-    this.io?.emit('contactIdentityUpdated', { storeId, contactId, identity });
+  emitContactIdentityUpdated(
+    storeId: string,
+    contactId: string,
+    identity: any,
+  ): void {
+    this.io?.emit("contactIdentityUpdated", { storeId, contactId, identity });
   }
 
   // ═══════════════════════════════════════════════
@@ -81,24 +102,37 @@ class SocketService {
 
   emitQR(storeId: string, qr: string): void {
     this.qrCodes[storeId] = qr;
-    this.io?.emit('qr', { storeId, qr });
+    this.io?.emit("qr", { storeId, qr });
   }
 
   /** Emitted when a temporary scan session starts */
-  emitTempScanReady(storeId: string, qr: string, data?: { isTemp?: boolean; tempSessionId?: string; wa_id?: string; name?: string }): void {
-    this.io?.emit('temp_scan_ready', { storeId, qr, ...data });
+  emitTempScanReady(
+    storeId: string,
+    qr: string,
+    data?: {
+      isTemp?: boolean;
+      tempSessionId?: string;
+      wa_id?: string;
+      name?: string;
+    },
+  ): void {
+    this.io?.emit("temp_scan_ready", { storeId, qr, ...data });
   }
 
   emitReady(storeId: string): void {
-    this.io?.emit('ready', { storeId });
+    this.io?.emit("ready", { storeId });
+  }
+
+  emitBotReconnect(storeId: string): void {
+    this.io?.emit("wa-reconnect", { storeId });
   }
 
   emitDisconnected(storeId: string): void {
-    this.io?.emit('disconnected', { storeId });
+    this.io?.emit("disconnected", { storeId });
   }
 
   emitQRUpdate(storeId: string, qr: string): void {
-    this.io?.emit('qrUpdate', { storeId, qr });
+    this.io?.emit("qrUpdate", { storeId, qr });
   }
 
   // ═══════════════════════════════════════════════
@@ -106,11 +140,11 @@ class SocketService {
   // ═══════════════════════════════════════════════
 
   emitStatusUpdate(storeId: string, status: string): void {
-    this.io?.emit('statusUpdate', { storeId, status });
+    this.io?.emit("statusUpdate", { storeId, status });
   }
 
   emitStoreUpdated(storeId: string): void {
-    this.io?.emit('storeUpdated', { storeId });
+    this.io?.emit("storeUpdated", { storeId });
   }
 
   // ═══════════════════════════════════════════════
@@ -118,7 +152,7 @@ class SocketService {
   // ═══════════════════════════════════════════════
 
   emitFollowUpUpdated(storeWaId: string): void {
-    this.io?.emit('followUpUpdated', { storeWaId });
+    this.io?.emit("followUpUpdated", { storeWaId });
   }
 
   // ═══════════════════════════════════════════════
@@ -126,11 +160,14 @@ class SocketService {
   // ═══════════════════════════════════════════════
 
   emitMediaUpdated(agentId: number | string): void {
-    this.io?.emit('mediaUpdated', { agentId });
+    this.io?.emit("mediaUpdated", { agentId });
   }
 
-  emitMediaAnalysisReady(agentId: number | string, assetId: number | string): void {
-    this.io?.emit('mediaAnalysisReady', { agentId, assetId });
+  emitMediaAnalysisReady(
+    agentId: number | string,
+    assetId: number | string,
+  ): void {
+    this.io?.emit("mediaAnalysisReady", { agentId, assetId });
   }
 
   // ═══════════════════════════════════════════════
@@ -138,19 +175,19 @@ class SocketService {
   // ═══════════════════════════════════════════════
 
   emitDashboardUpdate(): void {
-    this.io?.emit('dashboardUpdate');
+    this.io?.emit("dashboardUpdate");
   }
 
   emitSysStats(stats: { ram: any; cpu: any; uptime: any }): void {
-    this.io?.emit('sysStats', stats);
+    this.io?.emit("sysStats", stats);
   }
 
   emitSysLog(log: { type: string; msg: string; time: string }): void {
-    this.io?.emit('sysLog', log);
+    this.io?.emit("sysLog", log);
   }
 
   emitSyncProgress(storeId: string, payload: any): void {
-    this.io?.emit('sync_progress', { storeId, ...payload });
+    this.io?.emit("sync_progress", { storeId, ...payload });
   }
 }
 

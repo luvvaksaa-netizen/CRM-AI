@@ -1,4 +1,4 @@
-import { create } from 'zustand';
+import { create } from "zustand";
 
 export interface ChatContact {
   contact_id: string;
@@ -36,16 +36,29 @@ interface ChatState {
   loadingMessages: boolean;
   hasMoreMessages: boolean;
   typingContact: string | null;
+  lastReconnectTime: Date | null;
 
   // Actions
   setSelectedStore: (storeId: string) => void;
-  setContacts: (contacts: ChatContact[] | ((prev: ChatContact[]) => ChatContact[])) => void;
-  setActiveContact: (contact: ChatContact | null | ((prev: ChatContact | null) => ChatContact | null)) => void;
-  setMessages: (messages: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => void;
+  setContacts: (
+    contacts: ChatContact[] | ((prev: ChatContact[]) => ChatContact[]),
+  ) => void;
+  setActiveContact: (
+    contact:
+      | ChatContact
+      | null
+      | ((prev: ChatContact | null) => ChatContact | null),
+  ) => void;
+  setMessages: (
+    messages: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[]),
+  ) => void;
   setLoadingContacts: (loading: boolean) => void;
   setLoadingMessages: (loading: boolean) => void;
   setHasMoreMessages: (hasMore: boolean) => void;
-  setTypingContact: (contactId: string | null | ((prev: string | null) => string | null)) => void;
+  setTypingContact: (
+    contactId: string | null | ((prev: string | null) => string | null),
+  ) => void;
+  setLastReconnectTime: (time: Date | null) => void;
 
   // Specific Actions
   addMessage: (msg: ChatMessage) => void;
@@ -54,7 +67,7 @@ interface ChatState {
 }
 
 export const useChatStore = create<ChatState>((set) => ({
-  selectedStore: '',
+  selectedStore: "",
   contacts: [],
   activeContact: null,
   messages: [],
@@ -62,48 +75,64 @@ export const useChatStore = create<ChatState>((set) => ({
   loadingMessages: false,
   hasMoreMessages: false,
   typingContact: null,
+  lastReconnectTime: null,
 
   setSelectedStore: (storeId) => set({ selectedStore: storeId }),
-  
-  setContacts: (updater) => set((state) => ({
-    contacts: typeof updater === 'function' ? updater(state.contacts) : updater
-  })),
 
-  setActiveContact: (updater) => set((state) => ({
-    activeContact: typeof updater === 'function' ? updater(state.activeContact) : updater
-  })),
+  setContacts: (updater) =>
+    set((state) => ({
+      contacts:
+        typeof updater === "function" ? updater(state.contacts) : updater,
+    })),
 
-  setMessages: (updater) => set((state) => ({
-    messages: typeof updater === 'function' ? updater(state.messages) : updater
-  })),
+  setActiveContact: (updater) =>
+    set((state) => ({
+      activeContact:
+        typeof updater === "function" ? updater(state.activeContact) : updater,
+    })),
+
+  setMessages: (updater) =>
+    set((state) => ({
+      messages:
+        typeof updater === "function" ? updater(state.messages) : updater,
+    })),
 
   setLoadingContacts: (loading) => set({ loadingContacts: loading }),
   setLoadingMessages: (loading) => set({ loadingMessages: loading }),
   setHasMoreMessages: (hasMore) => set({ hasMoreMessages: hasMore }),
-  
-  setTypingContact: (updater) => set((state) => ({
-    typingContact: typeof updater === 'function' ? updater(state.typingContact) : updater
-  })),
+  setLastReconnectTime: (time) => set({ lastReconnectTime: time }),
 
-  addMessage: (msg) => set((state) => {
-    const exists = state.messages.some(m => m.id === msg.id || m.wa_message_id === msg.wa_message_id);
-    if (exists) return state; // Don't add duplicate
-    return { messages: [...state.messages, msg] };
-  }),
+  setTypingContact: (updater) =>
+    set((state) => ({
+      typingContact:
+        typeof updater === "function" ? updater(state.typingContact) : updater,
+    })),
 
-  updateContactLabels: (contactId, labels) => set((state) => {
-    const newContacts = state.contacts.map(c => 
-      c.contact_id === contactId ? { ...c, labels } : c
-    );
-    const newActive = state.activeContact?.contact_id === contactId 
-      ? { ...state.activeContact, labels } 
-      : state.activeContact;
-    return { contacts: newContacts, activeContact: newActive };
-  }),
+  addMessage: (msg) =>
+    set((state) => {
+      const exists = state.messages.some(
+        (m) => m.id === msg.id || m.wa_message_id === msg.wa_message_id,
+      );
+      if (exists) return state; // Don't add duplicate
+      return { messages: [...state.messages, msg] };
+    }),
 
-  updateContactUnread: (contactId, unreadCount) => set((state) => ({
-    contacts: state.contacts.map(c => 
-      c.contact_id === contactId ? { ...c, unread_count: unreadCount } : c
-    )
-  }))
+  updateContactLabels: (contactId, labels) =>
+    set((state) => {
+      const newContacts = state.contacts.map((c) =>
+        c.contact_id === contactId ? { ...c, labels } : c,
+      );
+      const newActive =
+        state.activeContact?.contact_id === contactId
+          ? { ...state.activeContact, labels }
+          : state.activeContact;
+      return { contacts: newContacts, activeContact: newActive };
+    }),
+
+  updateContactUnread: (contactId, unreadCount) =>
+    set((state) => ({
+      contacts: state.contacts.map((c) =>
+        c.contact_id === contactId ? { ...c, unread_count: unreadCount } : c,
+      ),
+    })),
 }));
