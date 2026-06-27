@@ -74,13 +74,11 @@ export const getContacts = async (req: Request, res: Response, next: NextFunctio
         m.body           AS last_message,
         m.timestamp      AS last_seen,
         CASE WHEN m.is_from_me = 1 THEN 0 ELSE COALESCE(u.unread_count, 0) END AS unread_count
-      FROM ${tableName} m
-      INNER JOIN (
-        SELECT contact_id, MAX(id) AS max_id
+      FROM (
+        SELECT *, ROW_NUMBER() OVER(PARTITION BY contact_id ORDER BY timestamp DESC, id DESC) as rn
         FROM ${tableName}
         WHERE store_wa_id = :storeId
-        GROUP BY contact_id
-      ) latest ON m.id = latest.max_id
+      ) m
       LEFT JOIN (
         SELECT contact_id, COUNT(*) AS unread_count
         FROM ${tableName}
@@ -89,7 +87,7 @@ export const getContacts = async (req: Request, res: Response, next: NextFunctio
           AND is_from_me = 0
         GROUP BY contact_id
       ) u ON m.contact_id = u.contact_id
-      WHERE m.store_wa_id = :storeId
+      WHERE m.rn = 1
       ${searchFilter}
       ORDER BY m.timestamp DESC
       LIMIT :limit OFFSET :offset

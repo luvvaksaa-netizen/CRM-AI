@@ -171,9 +171,10 @@ export const getConnectionStatus = async (
     // Try to get client status from whatsapp service
     let isConnected = false;
     let clientState = null;
+    let health = null;
     try {
-      const { getClients } = require("../whatsapp_service");
-      const clients = getClients();
+      const whatsappService = require("../whatsapp_service");
+      const clients = whatsappService.getClients();
       const client = clients.get(store_wa_id);
       if (client) {
         try {
@@ -183,10 +184,15 @@ export const getConnectionStatus = async (
               setTimeout(() => reject(new Error("timeout")), 2000),
             ),
           ]);
-          isConnected = clientState?.toUpperCase() === "READY";
+          const normalized = String(clientState || "").toUpperCase();
+          isConnected = normalized === "CONNECTED" || normalized === "READY";
         } catch (e) {
           isConnected = false;
         }
+      }
+      if (whatsappService.getSessionHealth) {
+        health = whatsappService.getSessionHealth(store_wa_id);
+        if (health?.isHealthy) isConnected = true;
       }
     } catch (e) {
       // whatsapp_service not available in test mode, default to false
@@ -197,6 +203,7 @@ export const getConnectionStatus = async (
       client_state: clientState,
       is_bot_active: (store as any).is_bot_active,
       last_active: (store as any).last_active,
+      health,
       timestamp: new Date().toISOString(),
     });
   } catch (e) {

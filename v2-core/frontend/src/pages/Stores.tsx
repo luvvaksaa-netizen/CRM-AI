@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Store as StoreIcon, Smartphone, Trash2, Plus, RefreshCw, QrCode, Bot, CheckCircle, ArrowRight, ArrowLeft, Loader2, LogOut, Wifi, WifiOff } from 'lucide-react';
+import { Store as StoreIcon, Smartphone, Trash2, Plus, RefreshCw, QrCode, Bot, CheckCircle, ArrowRight, ArrowLeft, Loader2, LogOut, Wifi, WifiOff, AlertTriangle } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import toast from 'react-hot-toast';
 import api from '../services/api';
@@ -28,6 +28,7 @@ const Stores = () => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [qrCodes, setQrCodes] = useState<Record<string, string>>({});
   const [clientStatuses, setClientStatuses] = useState<Record<string, string>>({});
+  const [sessionHealth, setSessionHealth] = useState<Record<string, any>>({});
   
   const [agents, setAgents] = useState<Agent[]>([]);
   const [editingStoreId, setEditingStoreId] = useState<number | null>(null);
@@ -116,7 +117,13 @@ const Stores = () => {
   const fetchWAStatus = async () => {
     try {
       const res = await api.get('/stores/status');
-      setClientStatuses(res.data);
+      const data = res.data;
+      if (data?.statuses) {
+        setClientStatuses(data.statuses);
+        setSessionHealth(data.health || {});
+      } else {
+        setClientStatuses(data);
+      }
     } catch {}
   };
 
@@ -171,7 +178,10 @@ const Stores = () => {
     // Now connect — all handlers are already registered
     socketService.connect();
 
+    const statusPoll = setInterval(fetchWAStatus, 30_000);
+
     return () => {
+      clearInterval(statusPoll);
       socketService.off('qr');
       socketService.off('temp_scan_ready');
       socketService.off('ready');
@@ -286,7 +296,11 @@ const Stores = () => {
           // Status koneksi real-time dari socket. Fallback: 'unknown' bukan 'active'
 // agar tidak menampilkan "Terhubung" sebelum WA benar-benar siap
 const status = clientStatuses[store.wa_id] || 'unknown';
+          const health = sessionHealth[store.wa_id];
           const qr = qrCodes[store.wa_id];
+          const isHealthyReady = status === 'ready' || status === 'active';
+          const isDegraded = status === 'degraded';
+          const isReconnecting = status === 'reconnecting';
 
           return (
             <motion.div 
@@ -297,7 +311,7 @@ const status = clientStatuses[store.wa_id] || 'unknown';
             >
               <div className="flex justify-between items-start mb-4">
                 <div className="flex items-center gap-3">
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 border ${status === 'ready' || status === 'active' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-slate-800 dark:bg-slate-100 text-slate-400 dark:text-slate-500 border-slate-700 dark:border-slate-300'}`}>
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center shrink-0 border ${isHealthyReady ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : isDegraded ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' : isReconnecting ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' : 'bg-slate-800 dark:bg-slate-100 text-slate-400 dark:text-slate-500 border-slate-700 dark:border-slate-300'}`}>
                     <Smartphone className="w-6 h-6" />
                   </div>
                   <div>
@@ -306,7 +320,7 @@ const status = clientStatuses[store.wa_id] || 'unknown';
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
-                  {(status === 'ready' || status === 'active') && (
+                  {(isHealthyReady || isDegraded) && (
                     <button 
                       onClick={() => handleLogoutStore(store.id, store.wa_id)}
                       className="text-slate-500 dark:text-slate-400 hover:text-orange-400 transition-colors p-2"
@@ -315,11 +329,11 @@ const status = clientStatuses[store.wa_id] || 'unknown';
                       <LogOut className="w-4 h-4" />
                     </button>
                   )}
-                  {status === 'disconnected' && (
+                  {(status === 'disconnected' || isDegraded || isReconnecting) && (
                     <button 
                       onClick={() => handleReconnectStore(store.id, store.wa_id)}
                       className="text-slate-500 dark:text-slate-400 hover:text-blue-400 transition-colors p-2"
-                      title="Reconnect WA"
+                      title={isDegraded ? 'Reconnect — sesi bermasalah' : 'Reconnect WA'}
                     >
                       <Wifi className="w-4 h-4" />
                     </button>
@@ -413,6 +427,24 @@ const status = clientStatuses[store.wa_id] || 'unknown';
                     </div>
                     <p className="font-medium">Terautentikasi</p>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Sedang menghubungkan ke server...</p>
+                  </div>
+                ) : isDegraded ? (
+                  <div className="flex flex-col items-center text-amber-400">
+                    <div className="w-16 h-16 bg-amber-500/20 rounded-full flex items-center justify-center mb-3">
+                      <AlertTriangle className="w-8 h-8" />
+                    </div>
+                    <p className="font-medium">Sesi Bermasalah</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 text-center px-2">
+                      {health?.lastFailureReason || 'Pesan mungkin tidak tersinkron. Klik WiFi untuk reconnect.'}
+                    </p>
+                  </div>
+                ) : isReconnecting ? (
+                  <div className="flex flex-col items-center text-blue-400">
+                    <div className="w-16 h-16 bg-blue-500/20 rounded-full flex items-center justify-center mb-3">
+                      <RefreshCw className="w-8 h-8 animate-spin" />
+                    </div>
+                    <p className="font-medium">Reconnecting...</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Auto-recovery sedang berjalan</p>
                   </div>
                 ) : status === 'ready' || status === 'active' ? (
                   <div className="flex flex-col items-center text-emerald-400">

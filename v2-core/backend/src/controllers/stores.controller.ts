@@ -239,7 +239,7 @@ export const reconnectStore = async (req: Request, res: Response, next: NextFunc
 
       // Coba restart client runtime dulu
       try {
-        await whatsappService.restartClientRuntime(store.wa_id);
+        await whatsappService.restartClientRuntime(store.wa_id, 'user-reconnect', true);
         console.log(`[WA] Client restart untuk ${store.wa_id}`);
       } catch (_) {
         // Jika restart gagal, buat client baru
@@ -247,6 +247,7 @@ export const reconnectStore = async (req: Request, res: Response, next: NextFunc
         const client = whatsappService.createWhatsAppClient(store.wa_id);
         whatsappService.setupEventListeners(client, store.wa_id, io);
         await client.initialize();
+        whatsappService.beginClientSession(store.wa_id);
       }
 
       console.log(`[WA] Reconnect berhasil untuk ${store.wa_id}`);
@@ -266,36 +267,34 @@ export const reconnectStore = async (req: Request, res: Response, next: NextFunc
 export const getWAStatus = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const stores = await Store.findAll({ attributes: ['wa_id', 'name'] });
-    const statusMap: Record<string, string> = {};
-    
-    // Check active WA clients
+    const waIds = stores.map((s: any) => s.wa_id);
+
     try {
       const whatsappService = require('../whatsapp_service');
-      const clients = whatsappService.getClients ? whatsappService.getClients() : new Map();
       const { socketService } = require('../services/socket.service');
       const qrCodes = socketService.getQRCodes();
-      
-      for (const store of stores) {
-        const waId = (store as any).wa_id;
+
+      if (whatsappService.buildSessionStatusMap) {
+        const { statuses, health } = await whatsappService.buildSessionStatusMap(waIds, { qrCodes });
+        return res.json({ statuses, health });
+      }
+
+      // Fallback lama
+      const statusMap: Record<string, string> = {};
+      const clients = whatsappService.getClients ? whatsappService.getClients() : new Map();
+      for (const waId of waIds) {
         if (clients.has(waId)) {
-          // Client exists — check if it has QR pending or is ready
-          if (qrCodes[waId]) {
-            statusMap[waId] = 'needs_scan';
-          } else {
-            statusMap[waId] = 'ready';
-          }
+          statusMap[waId] = qrCodes[waId] ? 'needs_scan' : 'ready';
         } else {
           statusMap[waId] = 'disconnected';
         }
       }
+      return res.json({ statuses: statusMap, health: {} });
     } catch (e: any) {
-      // WA service not available — all stores disconnected
-      for (const store of stores) {
-        statusMap[(store as any).wa_id] = 'disconnected';
-      }
+      const statusMap: Record<string, string> = {};
+      for (const waId of waIds) statusMap[waId] = 'disconnected';
+      return res.json({ statuses: statusMap, health: {} });
     }
-    
-    res.json(statusMap);
   } catch (e) {
     next(e);
   }

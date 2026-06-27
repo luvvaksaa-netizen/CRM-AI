@@ -6,8 +6,13 @@ const { handleMessage } = require('./events/message_handler');
 const { assertWaChatId } = require('./utils/wa_id');
 const { shouldIgnoreIncomingChat } = require('./utils/contact_identity');
 const wajsBridge = require('./services/wajs_bridge');
+const waSessionMonitor = require('./services/wa_session_monitor.service');
 const path = require('path');
 const fs = require('fs');
+
+const CHROMIUM_HEAP_MB = Number(process.env.WA_CHROMIUM_HEAP_MB || 512);
+const RECENT_SYNC_CHAT_LIMIT = Number(process.env.WA_RECENT_SYNC_CHATS || 15);
+const RECENT_SYNC_MSG_LIMIT = Number(process.env.WA_RECENT_SYNC_MESSAGES || 20);
 
 // MULTI-CLIENT STORAGE
 const clients = new Map();
@@ -230,6 +235,101 @@ async function getChatsWithRetry(client, attempts = 3, delayMs = 5000) {
 }
 
 /**
+ * Tarik pesan terbaru dari N chat aktif ke database (anti-duplikat).
+ * Dipakai saat ready, background scheduler, dan recovery.
+ */
+async function syncRecentChatsFromWa(storeWaId, options = {}) {
+    const client = clients.get(storeWaId);
+    if (!client || !readyClients.has(storeWaId)) {
+        throw new Error(`Client [${storeWaId}] belum siap untuk sync`);
+    }
+
+    const source = options.source || 'manual';
+    const skipDebounce = options.skipDebounce === true;
+
+    if (!skipDebounce) {
+        const now = Date.now();
+        const lastSync = readySyncLock.get(storeWaId) || 0;
+        if (now - lastSync < 30000) {
+            logger.info(`[${storeWaId}] Sync ${source} dilewati (debounce 30s)`);
+            return { synced: 0, skipped: true };
+        }
+        readySyncLock.set(storeWaId, now);
+    }
+
+    if (!client.__wajsReady) {
+        await wajsBridge.injectWajs(client, storeWaId);
+        await sleep(2000);
+    }
+
+    const { ChatMessage } = require('./models/index');
+    const chats = await getChatsWithRetry(client);
+    const recentChats = chats
+        .filter(c => !shouldIgnoreIncomingChat(c.id._serialized))
+        .slice(0, RECENT_SYNC_CHAT_LIMIT);
+
+    let totalSynced = 0;
+    for (const chat of recentChats) {
+        try {
+            let messages = [];
+            const chatId = chat.id._serialized || chat.id;
+
+            if (client.__wajsReady) {
+                try {
+                    messages = await wajsBridge.getMessages(client, chatId, RECENT_SYNC_MSG_LIMIT, storeWaId);
+                } catch (wajsErr) {
+                    logger.info(`[${storeWaId}] WA-JS getMessages fallback untuk ${chatId}: ${cleanErrorMessage(wajsErr)}`);
+                }
+            }
+
+            if (!messages || messages.length === 0) {
+                if (typeof chat.fetchMessages === 'function') {
+                    messages = await chat.fetchMessages({ limit: RECENT_SYNC_MSG_LIMIT });
+                }
+            }
+
+            if (!messages || messages.length === 0) continue;
+
+            for (const msg of messages) {
+                const msgId = msg.id?._serialized || msg.id?.id;
+                if (!msgId) continue;
+
+                const exists = await ChatMessage.findOne({ where: { wa_message_id: msgId } });
+                if (exists) continue;
+
+                await handleMessage(msg, storeWaId, false);
+                totalSynced++;
+                waSessionMonitor.recordActivity(storeWaId, 'sync');
+            }
+
+            if (chat.unreadCount > 0 && typeof chat.sendSeen === 'function') {
+                await chat.sendSeen();
+            }
+        } catch (chatErr) {
+            logger.info(`[${storeWaId}] Skip sync chat [${chat.id._serialized}]: ${cleanErrorMessage(chatErr)}`);
+        }
+    }
+
+    if (totalSynced > 0) {
+        logger.success(`[${storeWaId}] Sync ${source}: ${totalSynced} pesan baru`);
+    }
+
+    return { synced: totalSynced, skipped: false };
+}
+
+function beginClientSession(storeWaId) {
+    waSessionMonitor.startMonitoring(storeWaId);
+}
+
+function stopClientSession(storeWaId) {
+    waSessionMonitor.stopMonitoring(storeWaId);
+}
+
+function stopAllSessionMonitoring() {
+    waSessionMonitor.stopAllMonitoring();
+}
+
+/**
  * Membersihkan semua Singleton Lock Files per-ClientId.
  * Mencegah error "profile already in use" saat container restart di Railway.
  */
@@ -313,6 +413,7 @@ function createWhatsAppClient(storeWaId) {
     cleanupSessionLocks(storeWaId);
     
     logger.info(`[${storeWaId}] Menyiapkan Browser & Sesi...`);
+    waSessionMonitor.markStatus(storeWaId, "initializing");
     dashboard.updateWAStatus(storeWaId, "initializing");
 
     const client = new Client({
@@ -336,7 +437,7 @@ function createWhatsAppClient(storeWaId) {
                 '--no-first-run',
                 '--disable-renderer-backgrounding',  // Hemat CPU saat tab tidak aktif
                 '--disable-backgrounding-occluded-windows',
-                '--js-flags=--max-old-space-size=1024' // Naikkan limit memori tiap browser agar WA tidak crash internal
+                `--js-flags=--max-old-space-size=${CHROMIUM_HEAP_MB}` // Per-browser heap (multi-session: jangan terlalu besar)
             ],
             headless: true,
             handleSIGINT: false,
@@ -394,106 +495,44 @@ function setupEventListeners(client, storeWaId, io) {
     client.on('ready', async () => {
         logger.success(`[${storeWaId}] WhatsApp SIAP DIGUNAKAN! ✅`);
         readyClients.add(storeWaId);
+        waSessionMonitor.recordActivity(storeWaId, 'ready');
+        waSessionMonitor.markStatus(storeWaId, 'ready');
+
+        const { socketService } = require('./services/socket.service');
         if (io) {
             io.emit('ready', { storeId: storeWaId });
         }
+        socketService.emitReady(storeWaId);
         dashboard.updateWAStatus(storeWaId, "ready");
+        
+        const now = Date.now();
+        const lastReady = readySyncLock.get(storeWaId) || 0;
+        const isFirstReadyInWindow = now - lastReady >= 30000;
+        if (isFirstReadyInWindow) {
+            readySyncLock.set(storeWaId, now);
+            socketService.emitBotReconnect(storeWaId);
+        }
         
         // Simpan nomor bot secara persisten agar muncul di UI
         if (client.info && client.info.wid && client.info.wid.user) {
             dashboard.updateStorePhone(storeWaId, client.info.wid.user).catch(()=>{});
         }
 
-        // ══ FIX: DEBOUNCE SYNC — Cegah triple 'ready' event ══
-        // Saat temp→permanent promotion, 'ready' bisa fire 3x dalam <1 detik.
-        // Sync hanya dijalankan 1x per 30 detik untuk mencegah WhatsApp LOGOUT karena rate limit.
-        const now = Date.now();
-        const lastSync = readySyncLock.get(storeWaId) || 0;
-        if (now - lastSync < 30000) {
-            logger.warn(`[${storeWaId}] 'ready' duplikat dilewati (sync sudah berjalan ${Math.round((now - lastSync) / 1000)}s lalu)`);
-            return;
-        }
-        readySyncLock.set(storeWaId, now);
+        beginClientSession(storeWaId);
 
-        await wajsBridge.injectWajs(client, storeWaId);
-        
-        // ══ FIX: Tunggu 2 detik agar WA-JS benar-benar siap sebelum sync ══
-        // Tanpa delay ini, wajsBridge.getMessages gagal dengan 'me is undefined'
-        // karena WA internal store belum ter-inisialisasi penuh.
-        await sleep(2000);
-        
-        // ══════════════════════════════════════════════════════════════════
-        // SINKRONISASI PESAN SAAT STARTUP
-        // Tarik 20 pesan terakhir dari 15 chat terbaru (bukan hanya unread).
-        // Ini memastikan percakapan yang sudah dibaca di HP tetap tersimpan di CRM.
-        // Pesan yang sudah ada di DB (berdasarkan wa_message_id) di-skip agar tidak duplikat.
-        // ══════════════════════════════════════════════════════════════════
-        try {
-            logger.info(`[${storeWaId}] Memulai sinkronisasi chat terbaru (20 pesan × 15 chat)...`);
-            const { ChatMessage } = require('./models/index');
-            const chats = await getChatsWithRetry(client);
-            // Ambil 15 chat terbaru (diurutkan dari yang paling aktif)
-            const recentChats = chats
-                .filter(c => !shouldIgnoreIncomingChat(c.id._serialized))
-                .slice(0, 15);
-
-            let totalSynced = 0;
-            for (const chat of recentChats) {
-                try {
-                    let messages = [];
-                    const chatId = chat.id._serialized || chat.id;
-
-                    // 1. Coba pakai WA-JS API
-                    if (client.__wajsReady) {
-                        try {
-                            messages = await wajsBridge.getMessages(client, chatId, 20, storeWaId);
-                        } catch (wajsErr) {
-                            // Fallback ke WWebJS adalah behavior normal — log sebagai info bukan warn
-                            logger.info(`[${storeWaId}] WA-JS getMessages fallback untuk ${chatId}: ${cleanErrorMessage(wajsErr)}`);
-                        }
-                    }
-
-                    // 2. Jika WA-JS kosong/gagal, fallback ke WWebJS fetchMessages
-                    if (!messages || messages.length === 0) {
-                        if (typeof chat.fetchMessages === 'function') {
-                            messages = await chat.fetchMessages({ limit: 20 });
-                        }
-                    }
-
-                    if (!messages || messages.length === 0) continue;
-
-                    for (const msg of messages) {
-                        const msgId = msg.id?._serialized || msg.id?.id;
-                        if (!msgId) continue;
-
-                        // Skip jika sudah ada di database (anti-duplikat)
-                        const exists = await ChatMessage.findOne({ where: { wa_message_id: msgId } });
-                        if (exists) continue;
-
-                        // Proses tapi jangan trigger AI reply (shouldAIReply = false)
-                        await handleMessage(msg, storeWaId, false);
-                        totalSynced++;
-                    }
-                    // Tandai sebagai terbaca jika memang ada unread
-                    if (chat.unreadCount > 0) await chat.sendSeen();
-                } catch (chatErr) {
-                    // Error sinkronisasi per-chat adalah normal (misal reply tidak tersedia) — log info
-                    logger.info(`[${storeWaId}] Skip sync chat [${chat.id._serialized}]: ${cleanErrorMessage(chatErr)}`);
-                }
+        if (isFirstReadyInWindow) {
+            try {
+                await syncRecentChatsFromWa(storeWaId, { source: 'ready', skipDebounce: true });
+            } catch (e) {
+                logger.warn(`[${storeWaId}] Sinkronisasi chat dilewati: ${cleanErrorMessage(e)}`);
             }
-            if (totalSynced > 0) {
-                logger.success(`[${storeWaId}] ✅ Sinkronisasi selesai: ${totalSynced} pesan baru berhasil diimpor.`);
-            } else {
-                logger.info(`[${storeWaId}] Database sudah up-to-date, tidak ada pesan baru.`);
-            }
-        } catch (e) {
-            logger.warn(`[${storeWaId}] Sinkronisasi chat dilewati: ${cleanErrorMessage(e)}`);
         }
     });
 
     // Pesan MASUK dari customer
     client.on('message', async (message) => {
         if (message.isStatus || shouldIgnoreIncomingChat(message.from)) return;
+        waSessionMonitor.recordActivity(storeWaId, 'message');
         await handleMessage(message, storeWaId);
     });
 
@@ -619,9 +658,14 @@ function setupEventListeners(client, storeWaId, io) {
     // Kalau semua gagal, baru cleanup + notifikasi kritis ke admin.
     client.on('disconnected', async (reason) => {
         logger.error(`[${storeWaId}] WhatsApp Terputus: ${reason}`);
+        waSessionMonitor.markStatus(storeWaId, 'disconnected');
         if (io) {
             io.emit('disconnected', { storeId: storeWaId });
         }
+        try {
+            const { socketService } = require('./services/socket.service');
+            socketService.emitDisconnected(storeWaId);
+        } catch (_) {}
         dashboard.updateWAStatus(storeWaId, "disconnected");
         readyClients.delete(storeWaId);
 
@@ -1146,6 +1190,7 @@ async function syncAllChatsFromWa(storeWaId) {
 async function logoutClient(storeWaId) {
     const client = clients.get(storeWaId);
     readyClients.delete(storeWaId);
+    stopClientSession(storeWaId);
     
     // 1. Matikan Client secara aman
     if (client) {
@@ -1185,6 +1230,7 @@ async function restartClientRuntime(storeWaId, reason = 'health-check', awaitRes
 
     restartingClients.add(storeWaId);
     readyClients.delete(storeWaId);
+    waSessionMonitor.markStatus(storeWaId, 'reconnecting');
     dashboard.updateWAStatus(storeWaId, "initializing");
 
     const client = clients.get(storeWaId);
@@ -1205,13 +1251,17 @@ async function restartClientRuntime(storeWaId, reason = 'health-check', awaitRes
     await sleep(2000); // Pastikan OS sync selesai sebelum launch baru
 
     const newClient = createWhatsAppClient(storeWaId);
-    setupEventListeners(newClient, storeWaId);
+    const { socketService } = require('./services/socket.service');
+    setupEventListeners(newClient, storeWaId, socketService.getIO());
 
     const initPromise = newClient.initialize()
+        .then(() => {
+            beginClientSession(storeWaId);
+        })
         .catch(error => {
             logger.error(`[${storeWaId}] Restart runtime gagal: ${cleanErrorMessage(error)}`);
             cleanupFailedClient(storeWaId);
-            throw error; // Re-throw agar caller bisa tangkap failure
+            throw error;
         })
         .finally(() => restartingClients.delete(storeWaId));
 
@@ -1222,91 +1272,6 @@ async function restartClientRuntime(storeWaId, reason = 'health-check', awaitRes
 }
 
 /**
- * HEALTH CHECK & AUTO-RECOVERY (Production Grade)
- * Memastikan koneksi tidak 'Gantung' secara diam-diam.
- * Jika client tidak merespon/terdeteksi macet, bot akan restart otomatis.
- */
-function initHealthCheck(storeWaId) {
-    const CHECK_INTERVAL = 2 * 60 * 1000; // Cek tiap 2 menit untuk deteksi hang lebih responsif
-    const HANG_TIMEOUT_MS = 10000; // 10 detik — jika browser tidak respon, anggap hang
-    
-    const intervalId = setInterval(async () => {
-        const client = clients.get(storeWaId);
-        if (!client) {
-            clearInterval(intervalId);
-            return;
-        }
-
-        // SAFETY: Jangan restart jika bot sedang aktif membalas pesan customer
-        // Import late untuk menghindari circular dependency
-        try {
-            const { getActiveAIRepliesCount } = require('./events/message_handler');
-            const activeCount = getActiveAIRepliesCount ? getActiveAIRepliesCount() : 0;
-            if (activeCount > 0) {
-                logger.info(`[${storeWaId}] Health Check: Ditunda — ${activeCount} AI reply sedang berjalan.`);
-                return;
-            }
-        } catch (_) { /* non-critical */ }
-
-        try {
-            // P0 FIX: Cek apakah client disconnected (state check)
-            // Jika disconnected, trigger reconnect instead of waiting for hang detection
-            let state;
-            try {
-                const statePromise = client.getState();
-                const timeoutPromise = new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Health check timeout')), HANG_TIMEOUT_MS)
-                );
-                state = await Promise.race([statePromise, timeoutPromise]);
-            } catch (stateErr) {
-                // getState() gagal — anggap disconnected atau hang
-                logger.error(`[${storeWaId}] Health Check: Client disconnected/hang. Triggering reconnect...`);
-                await restartClientRuntime(storeWaId, 'health-check');
-                return;
-            }
-
-            // Kalau state === null atau 'DISCONNECTED', trigger reconnect
-            if (!state || String(state).toUpperCase() === 'DISCONNECTED') {
-                logger.warn(`[${storeWaId}] Health Check: Client state = ${state || 'null'} (disconnected). Triggering reconnect...`);
-                await restartClientRuntime(storeWaId, 'health-check');
-                return;
-            }
-
-            // P1 FIX: Silent Disconnect Watchdog
-            // Mengecek langsung state Socket internal dari browser Puppeteer.
-            // Seringkali client.getState() melapor 'CONNECTED' karena cache, 
-            // padahal WA Web sedang stuck di 'SYNCING' atau jaringan terputus.
-            try {
-                if (client.pupPage && !client.pupPage.isClosed()) {
-                    const internalState = await client.pupPage.evaluate(() => {
-                        return window.Store && window.Store.State && window.Store.State.Socket 
-                            ? window.Store.State.Socket.state 
-                            : null;
-                    });
-                    
-                    if (internalState && internalState !== 'CONNECTED') {
-                        logger.error(`[${storeWaId}] Health Check: Silent Disconnect Terdeteksi! Internal State = ${internalState}. Restarting...`);
-                        await restartClientRuntime(storeWaId, 'health-check');
-                        return;
-                    }
-                }
-            } catch (evalErr) {
-                logger.error(`[${storeWaId}] Health Check: Puppeteer page hang/unresponsive. Restarting...`);
-                await restartClientRuntime(storeWaId, 'health-check');
-                return;
-            }
-
-            // logger.info(`[${storeWaId}] Health Check: OK ✅ (state=${state})`);
-        } catch (e) {
-            logger.error(`[${storeWaId}] Health Check GAGAL (Browser Hang/Macet). Restarting...`);
-            await restartClientRuntime(storeWaId, 'health-check');
-        }
-    }, CHECK_INTERVAL);
-
-    return intervalId;
-}
-
-/**
  * Membersihkan state internal saat launch gagal.
  * Dipanggil dari index.js saat client.initialize() crash/timeout.
  */
@@ -1314,7 +1279,44 @@ function cleanupFailedClient(storeWaId) {
     readyClients.delete(storeWaId);
     clients.delete(storeWaId);
     initializedClients.delete(storeWaId);
+    waSessionMonitor.markStatus(storeWaId, 'disconnected');
 }
+
+
+/**
+ * Wire monitor & scheduler dependencies (called once at module load).
+ */
+function initWaRuntime() {
+    waSessionMonitor.configure({
+        getClient: (storeWaId) => clients.get(storeWaId),
+        isRestarting: (storeWaId) => restartingClients.has(storeWaId),
+        isReady: (storeWaId) => readyClients.has(storeWaId),
+        restartClient: (storeWaId, reason) => restartClientRuntime(storeWaId, reason, true),
+        syncRecentChats: (storeWaId) => syncRecentChatsFromWa(storeWaId, { source: 'health-recovery' }),
+        getActiveAIRepliesCount: () => {
+            try {
+                const { getActiveAIRepliesCount } = require('./events/message_handler');
+                return getActiveAIRepliesCount?.() || 0;
+            } catch (_) {
+                return 0;
+            }
+        },
+    });
+
+    const waSyncScheduler = require('./services/wa_sync_scheduler.service');
+    waSyncScheduler.configure({
+        getActiveStoreIds: async () => {
+            const { Store } = require('./models');
+            const stores = await Store.findAll({ where: { is_bot_active: true }, attributes: ['wa_id'] });
+            return stores.map((s) => s.wa_id);
+        },
+        syncRecentChats: (storeWaId) => syncRecentChatsFromWa(storeWaId, { source: 'background-scheduler' }),
+        isRestarting: (storeWaId) => restartingClients.has(storeWaId),
+        isReady: (storeWaId) => readyClients.has(storeWaId),
+    });
+}
+
+initWaRuntime();
 
 
 /**
@@ -1515,8 +1517,8 @@ async function promoteTempClient(tempId, waId, io) {
         // Client mungkin tetap bisa dipakai meski initialize gagal (retry nanti)
     }
 
-    // Init health check
-    initHealthCheck(waId);
+    // Init health check — ready event juga memanggil beginClientSession
+    beginClientSession(waId);
 
     logger.success(`[${waId}] Temp client berhasil dipromosikan jadi permanent ✅`);
     return newClient;
@@ -1590,7 +1592,13 @@ module.exports = {
     logoutClient,
     restartClientRuntime,
     cleanupFailedClient,
-    initHealthCheck,
+    beginClientSession,
+    stopClientSession,
+    stopAllSessionMonitoring,
+    syncRecentChatsFromWa,
+    getSessionHealth: (storeWaId) => waSessionMonitor.getHealthSnapshot(storeWaId),
+    getAllSessionsHealth: () => waSessionMonitor.getAllHealthSnapshots(),
+    buildSessionStatusMap: (storeWaIds, options) => waSessionMonitor.buildStatusMap(storeWaIds, options),
     getClientWajsStatus: wajsBridge.getClientWajsStatus,
     waitForActiveClient,
     isCurrentClient,

@@ -248,26 +248,31 @@ export const getWAStatus = async (_req: Request, res: Response, next: NextFuncti
 
 export const restartWA = async (_req: Request, res: Response, next: NextFunction) => {
   try {
-    let restarted = false;
+    let restarted = 0;
     try {
       const whatsappService = require('../whatsapp_service');
       const { Store: StoreModel } = require('../models');
 
       if (whatsappService.restartClientRuntime) {
         const stores = await StoreModel.findAll({ where: { is_bot_active: true } });
-        for (const store of stores) {
+        for (let i = 0; i < stores.length; i++) {
+          const store = stores[i];
           try {
-            await whatsappService.restartClientRuntime(store.wa_id, 'user-request');
+            await whatsappService.restartClientRuntime(store.wa_id, 'user-request', true);
+            restarted++;
           } catch (_) {}
+          // Stagger antar restart agar tidak spike RAM/CPU
+          if (i < stores.length - 1) {
+            await new Promise((r) => setTimeout(r, 15000));
+          }
         }
-        restarted = true;
       }
     } catch (e: any) {
       // WA service might not be running
     }
 
-    if (restarted) {
-      res.json({ success: true, message: 'WA Engine restart dimulai.' });
+    if (restarted > 0) {
+      res.json({ success: true, message: `WA Engine restart: ${restarted} store(s) diproses.` });
     } else {
       res.json({ success: false, message: 'WA Engine tidak berjalan — tidak ada yang direstart.' });
     }

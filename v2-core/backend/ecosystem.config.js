@@ -31,8 +31,8 @@ module.exports = {
       min_uptime: '15s',
       restart_delay: 3000,
 
-      // ─── Memory Guard ────────────────────────────────────────────────
-      max_memory_restart: '1500M',
+      // ─── Memory Guard (8× Chromium — butuh RAM besar) ───────────────
+      max_memory_restart: process.env.PM2_MAX_MEMORY || '6000M',
 
       // ─── Logging ─────────────────────────────────────────────────────
       merge_logs: true,

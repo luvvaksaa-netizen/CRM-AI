@@ -311,7 +311,15 @@ const gracefulShutdown = async (signal: string) => {
 
   // 3. Disconnect all WA clients
   try {
+    const waSyncScheduler = require('./services/wa_sync_scheduler.service');
+    waSyncScheduler.stopScheduler();
+  } catch (_) {}
+
+  try {
     const whatsappService = require('./whatsapp_service');
+    if (typeof whatsappService.stopAllSessionMonitoring === 'function') {
+      whatsappService.stopAllSessionMonitoring();
+    }
     if (typeof whatsappService.getClients === 'function') {
       const clients = whatsappService.getClients();
       for (const [storeId, client] of clients) {
@@ -408,6 +416,14 @@ export const startServer = async () => {
 
     // Init WA setelah server berjalan
     await initWhatsApp();
+
+    // Background sync scheduler (staggered per-store)
+    try {
+      const waSyncScheduler = require('./services/wa_sync_scheduler.service');
+      waSyncScheduler.startScheduler();
+    } catch (e: any) {
+      console.warn('[WaSyncScheduler] Failed to start:', e.message);
+    }
   });
 };
 
