@@ -329,7 +329,7 @@ const status = clientStatuses[store.wa_id] || 'unknown';
                       <LogOut className="w-4 h-4" />
                     </button>
                   )}
-                  {(status === 'disconnected' || isDegraded || isReconnecting) && (
+                  {(status === 'disconnected' || status === 'unknown' || isDegraded || isReconnecting) && (
                     <button 
                       onClick={() => handleReconnectStore(store.id, store.wa_id)}
                       className="text-slate-500 dark:text-slate-400 hover:text-blue-400 transition-colors p-2"
