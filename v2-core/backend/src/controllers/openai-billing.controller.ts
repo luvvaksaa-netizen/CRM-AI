@@ -76,13 +76,17 @@ export const testTelegram = async (_req: Request, res: Response, next: NextFunct
   }
 };
 
-// ─── GET /api/openai/billing/actual-costs?days=30 ───
+// ─── GET /api/openai/billing/actual-costs ───
 export const getActualCosts = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { getCostSummary } = require('../services/costTracker');
     const { fetchDeepSeekBalance } = require('../services/openaiBilling.service');
-    const days = parseInt(req.query.days as string) || 30;
-    const summary = await getCostSummary(days);
+    
+    const sDateMs = parseInt(req.query.sDateMs as string) || 0;
+    const eDateMs = parseInt(req.query.eDateMs as string) || Infinity;
+    const store_wa_id = (req.query.store_wa_id as string) || null;
+    
+    const summary = await getCostSummary({ sDateMs, eDateMs, store_wa_id });
     
     // Inject real-time deepseek balance
     const dsBalance = await fetchDeepSeekBalance();

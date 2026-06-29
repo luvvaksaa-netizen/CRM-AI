@@ -118,16 +118,23 @@ async function logRequest({ model, promptTokens, completionTokens, endpoint, fun
  * @param {number} days - Jumlah hari ke belakang (default 30)
  * @returns {Promise<object>}
  */
-async function getCostSummary(days = 30) {
-  const since = new Date();
-  since.setDate(since.getDate() - days);
-
+async function getCostSummary({ sDateMs = 0, eDateMs = Infinity, store_wa_id = null } = {}) {
   const { Op } = require('sequelize');
 
+  const whereClause = {};
+  
+  if (sDateMs > 0 || eDateMs < Infinity) {
+    whereClause.created_at = {};
+    if (sDateMs > 0) whereClause.created_at[Op.gte] = new Date(sDateMs);
+    if (eDateMs < Infinity) whereClause.created_at[Op.lte] = new Date(eDateMs);
+  }
+
+  if (store_wa_id) {
+    whereClause.store_wa_id = store_wa_id;
+  }
+
   const rows = await OpenAICostLog.findAll({
-    where: {
-      created_at: { [Op.gte]: since }, // Sequelize v6: gunakan Op.gte bukan $gte
-    },
+    where: whereClause,
     order: [['created_at', 'DESC']],
   });
 

@@ -150,13 +150,19 @@ const Dashboard = () => {
     }
   }, [getDateParams, selectedStore]);
 
-  const fetchBillingData = async () => {
+  const fetchBillingData = useCallback(async () => {
     setBillingLoading(true);
     try {
       const configRes = await api.get('/openai/billing/config').catch(() => null);
       if (configRes) setBillingConfig(configRes.data);
       try {
-        const costsRes = await api.get('/openai/billing/actual-costs?days=30');
+        const dateParams: any = getDateParams();
+        const sDateMs = dateParams.startDate ? new Date(dateParams.startDate).getTime() : 0;
+        const eDateMs = dateParams.endDate ? new Date(dateParams.endDate).getTime() : Infinity;
+        const params: any = { sDateMs, eDateMs };
+        if (selectedStore) params.store_wa_id = selectedStore;
+
+        const costsRes = await api.get('/openai/billing/actual-costs', { params });
         setBillingActualCosts(costsRes.data);
       } catch (_) {}
     } catch (e) {
@@ -164,13 +170,19 @@ const Dashboard = () => {
     } finally {
       setBillingLoading(false);
     }
-  };
+  }, [getDateParams, selectedStore]);
 
   const handleFetchBillingNow = async () => {
     setBillingFetching(true);
     try {
+      const dateParams: any = getDateParams();
+      const sDateMs = dateParams.startDate ? new Date(dateParams.startDate).getTime() : 0;
+      const eDateMs = dateParams.endDate ? new Date(dateParams.endDate).getTime() : Infinity;
+      const params: any = { sDateMs, eDateMs };
+      if (selectedStore) params.store_wa_id = selectedStore;
+
       const [costsRes, configRes] = await Promise.all([
-        api.get('/openai/billing/actual-costs?days=30').catch(() => null),
+        api.get('/openai/billing/actual-costs', { params }).catch(() => null),
         api.get('/openai/billing/config').catch(() => null),
       ]);
       if (costsRes) setBillingActualCosts(costsRes.data);

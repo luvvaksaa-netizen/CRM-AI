@@ -4,30 +4,23 @@ import { ChatSummary, ChatMessage, Store, FollowUp, ClosingAnalytic } from '../m
 
 const LABEL_NAMES: Record<string, string> = {
   closing: 'Closing', 
-  menunggu_transfer: 'Menunggu Transfer',
-  menunggu_rekap: 'Menunggu Rekap', 
-  menunggu_alamat: 'Menunggu Alamat',
-  negosiasi: 'Hot Lead', 
-  gali_kebutuhan: 'AI Lead Aktif', 
-  opening: 'AI Lead Baru'
+  transfer: 'Transfer',
+  cod: 'COD',
 };
 
 const STATUS_REGEX_FALLBACK: Record<string, RegExp> = {
   closing:           /status:\s*(closing|selesai)/i,
-  menunggu_transfer: /status:\s*menunggu\s*transfer/i,
-  menunggu_rekap:    /status:\s*menunggu\s*rekap/i,
-  menunggu_alamat:   /status:\s*menunggu\s*alamat/i,
-  negosiasi:         /status:\s*negosiasi/i,
-  gali_kebutuhan:    /status:\s*gali\s*kebutuhan/i,
-  opening:           /status:\s*opening/i,
+  transfer:          /status:\s*transfer/i,
+  cod:               /status:\s*cod/i,
 };
 
 function detectStatus(record: any): string | null {
   let labels: string[] = [];
   try { labels = JSON.parse(record.wa_labels || '[]'); } catch(_){}
   if (labels.length > 0) {
+    const lowerLabels = labels.map(l => l.toLowerCase());
     for (const [key, labelName] of Object.entries(LABEL_NAMES)) {
-      if (labels.includes(labelName)) return key;
+      if (lowerLabels.includes(labelName.toLowerCase())) return key;
     }
   }
   const txt = record.summary || '';
@@ -97,14 +90,22 @@ export const getOverview = async (req: Request, res: Response, next: NextFunctio
         totalLeads++;
       }
 
-      let ts: any = {};
+      let ts: Record<string, number> = {};
       try { ts = JSON.parse(s.label_timestamps || '{}'); } catch(_){}
+      
+      // Normalize keys to lowercase to handle "CLOSING" vs "Closing"
+      const normalizedTs: Record<string, number> = {};
+      for (const [k, v] of Object.entries(ts)) {
+        normalizedTs[k.toLowerCase()] = v;
+      }
+
       let hasLabelTimestamp = false;
       
       for (const [key, labelName] of Object.entries(LABEL_NAMES)) {
-        if (ts[labelName]) {
+        const tsValue = normalizedTs[labelName.toLowerCase()];
+        if (tsValue) {
           hasLabelTimestamp = true;
-          if (ts[labelName] >= sDateMs && ts[labelName] <= eDateMs) {
+          if (tsValue >= sDateMs && tsValue <= eDateMs) {
             statusCounts[key]++;
           }
         }
@@ -113,7 +114,7 @@ export const getOverview = async (req: Request, res: Response, next: NextFunctio
       if (!hasLabelTimestamp) {
         const status = detectStatus(s);
         if (status) {
-          const fallbackTime = new Date(s.last_updated || s.createdAt).getTime();
+          const fallbackTime = new Date(s.createdAt).getTime(); // strict idempotency
           if (fallbackTime >= sDateMs && fallbackTime <= eDateMs) {
             statusCounts[status]++;
           }
@@ -134,18 +135,32 @@ export const getOverview = async (req: Request, res: Response, next: NextFunctio
 
     // Trend chart — respek date filter
     const trendMap = buildTrendMap(sDateMs, eDateMs);
+    
+    // Helper to get local YYYY-MM-DD from timestamp assuming +07:00 (or server timezone)
+    // To make it perfectly align with milliseconds bounds, we just create a Date object and format it locally
+    const getLocalYYYYMMDD = (ms: number) => {
+        const d = new Date(ms);
+        // Using Swedish locale (sv-SE) produces YYYY-MM-DD locally
+        return d.toLocaleDateString('sv-SE');
+    };
+
     for (const s of allSummaries) {
-      const dayKey = new Date(s.createdAt).toISOString().slice(0, 10);
+      const dayKey = getLocalYYYYMMDD(new Date(s.createdAt).getTime());
       if (trendMap[dayKey]) trendMap[dayKey].leads++;
       
-      let ts: any = {};
+      let ts: Record<string, number> = {};
       try { ts = JSON.parse(s.label_timestamps || '{}'); } catch(_){}
-      if (ts['Closing']) {
-          const closeKey = new Date(ts['Closing']).toISOString().slice(0, 10);
+      const normalizedTs: Record<string, number> = {};
+      for (const [k, v] of Object.entries(ts)) {
+        normalizedTs[k.toLowerCase()] = v;
+      }
+
+      if (normalizedTs['closing']) {
+          const closeKey = getLocalYYYYMMDD(normalizedTs['closing']);
           if (trendMap[closeKey]) trendMap[closeKey].closing++;
       } else {
           if (detectStatus(s) === 'closing') {
-              const closeKey = new Date(s.last_updated || s.createdAt).toISOString().slice(0, 10);
+              const closeKey = getLocalYYYYMMDD(new Date(s.createdAt).getTime());
               if (trendMap[closeKey]) trendMap[closeKey].closing++;
           }
       }
@@ -165,13 +180,18 @@ export const getOverview = async (req: Request, res: Response, next: NextFunctio
         const ct = new Date(s.createdAt).getTime();
         if (ct >= sDateMs && ct <= eDateMs) storeTotalLeads++;
         
-        let ts: any = {};
+        let ts: Record<string, number> = {};
         try { ts = JSON.parse(s.label_timestamps || '{}'); } catch(_){}
-        if (ts['Closing']) {
-          if (ts['Closing'] >= sDateMs && ts['Closing'] <= eDateMs) storeClosing++;
+        const normalizedTs: Record<string, number> = {};
+        for (const [k, v] of Object.entries(ts)) {
+          normalizedTs[k.toLowerCase()] = v;
+        }
+
+        if (normalizedTs['closing']) {
+          if (normalizedTs['closing'] >= sDateMs && normalizedTs['closing'] <= eDateMs) storeClosing++;
         } else {
           if (detectStatus(s) === 'closing') {
-            const labelTime = new Date(s.last_updated || s.createdAt).getTime();
+            const labelTime = new Date(s.createdAt).getTime();
             if (labelTime >= sDateMs && labelTime <= eDateMs) storeClosing++;
           }
         }
