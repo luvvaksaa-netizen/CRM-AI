@@ -24,7 +24,7 @@ router.get('/logs', downloadLogs);
 router.get('/backups', getBackups);
 router.post('/backups', authorize('admin'), createBackup);
 router.delete('/backups/:name', authorize('admin'), deleteBackup);
-router.get('/backups/:name/download', downloadBackup);
+router.get('/backups/:name/download', authorize('admin'), downloadBackup);
 
 // ─── WA Engine ───
 router.get('/wa-status', getWAStatus);

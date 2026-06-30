@@ -530,21 +530,48 @@ const Settings = () => {
     const token = sessionStorage.getItem('crm_token');
     const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:3002/api';
     const url = `${baseUrl}/settings/backups/${encodeURIComponent(name)}/download`;
-    // Create hidden anchor to trigger download with auth
-    fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+    
+    console.log('[BackupDownload] Starting download for:', name);
+    console.log('[BackupDownload] URL:', url);
+    
+    fetch(url, { 
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 300000 
+    })
       .then(res => {
-        if (!res.ok) throw new Error('Download failed');
+        console.log('[BackupDownload] Response:', res.status, res.statusText);
+        console.log('[BackupDownload] Headers:', {
+          contentType: res.headers.get('content-type'),
+          contentDisposition: res.headers.get('content-disposition'),
+        });
+        
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
         return res.blob();
       })
       .then(blob => {
+        console.log('[BackupDownload] Blob received, size:', blob.size, 'bytes');
+        
+        if (blob.size === 0) {
+          throw new Error('Downloaded file is empty');
+        }
+        
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = name;
+        document.body.appendChild(a);
         a.click();
+        document.body.removeChild(a);
         URL.revokeObjectURL(a.href);
-        toast.success(`Download ${name} dimulai.`);
+        
+        console.log('[BackupDownload] Download triggered successfully');
+        toast.success(`✅ Download ${name} dimulai.`);
       })
-      .catch(() => toast.error('Gagal mendownload backup.'));
+      .catch((err) => {
+        console.error('[BackupDownload] Error:', err);
+        toast.error(`❌ Gagal download: ${err.message}`);
+      });
   };
 
   const handleDownloadLogs = () => {

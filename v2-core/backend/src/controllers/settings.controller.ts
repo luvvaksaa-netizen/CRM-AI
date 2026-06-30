@@ -206,6 +206,14 @@ export const downloadBackup = async (req: Request, res: Response, next: NextFunc
     if (!fs.existsSync(backupPath)) {
       return res.status(404).json({ error: 'Backup tidak ditemukan.' });
     }
+    
+    // Set headers untuk proper download response
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    
     res.download(backupPath, safeName);
   } catch (e) {
     next(e);
