@@ -502,7 +502,9 @@ const ChatManagement = () => {
     socket?.emit("joinStore", selectedStore);
 
     const onNewMessage = (data: any) => {
-      if (data.storeId !== selectedStore) return;
+      // 🔧 Baca selectedStore TERBARU dari Zustand (bukan closure stale)
+      const currentStore = useChatStore.getState().selectedStore;
+      if (data.storeId !== currentStore) return;
       debouncedFetchContacts();
       const currentContact = useChatStore.getState().activeContact;
       if (
@@ -516,7 +518,7 @@ const ChatManagement = () => {
           const active = useChatStore.getState().activeContact;
           if (active && active.contact_id === data.msg.contact_id) {
             api
-              .get(`/chat/${selectedStore}`, {
+              .get(`/chat/${currentStore}`, {
                 params: {
                   contactId: active.contact_id,
                   limit: 50,
@@ -524,8 +526,7 @@ const ChatManagement = () => {
                 },
               })
               .then((res) => {
-                const newMessages = res.data.messages;
-                useChatStore.getState().setMessages(newMessages);
+                useChatStore.getState().mergeMessages(res.data.messages);
               })
               .catch(() => {});
           }
@@ -533,20 +534,20 @@ const ChatManagement = () => {
 
         if (!data.msg.is_from_me) {
           api
-            .post(`/chat/${selectedStore}/${currentContact.contact_id}/read`)
+            .post(`/chat/${currentStore}/${currentContact.contact_id}/read`)
             .catch(() => {});
         }
       }
     };
 
     const onChatRead = (data: any) => {
-      if (data.storeId === selectedStore) {
+      if (data.storeId === useChatStore.getState().selectedStore) {
         useChatStore.getState().updateContactUnread(data.contactId, 0);
       }
     };
 
     const onLabelsUpdated = (data: any) => {
-      if (data.storeId !== selectedStore) return;
+      if (data.storeId !== useChatStore.getState().selectedStore) return;
       useChatStore.getState().updateContactLabels(data.contactId, data.labels);
       if (
         useChatStore.getState().activeContact?.contact_id === data.contactId
@@ -558,7 +559,7 @@ const ChatManagement = () => {
     };
 
     const onChatCleared = (data: any) => {
-      if (data.storeId !== selectedStore) return;
+      if (data.storeId !== useChatStore.getState().selectedStore) return;
       debouncedFetchContacts();
       if (
         useChatStore.getState().activeContact?.contact_id === data.contactId
@@ -570,7 +571,7 @@ const ChatManagement = () => {
     };
 
     const onIdentityUpdated = (data: any) => {
-      if (data.storeId !== selectedStore) return;
+      if (data.storeId !== useChatStore.getState().selectedStore) return;
       if (data.identity?.contact_phone)
         setResolvedPhone(data.identity.contact_phone);
       debouncedFetchContacts();
@@ -583,7 +584,7 @@ const ChatManagement = () => {
     socket?.on("contactIdentityUpdated", onIdentityUpdated);
 
     const onTypingStatus = (data: any) => {
-      if (data.storeId !== selectedStore) return;
+      if (data.storeId !== useChatStore.getState().selectedStore) return;
       if (data.isTyping) {
         setTypingContact(data.contactId);
         setTimeout(() => {
@@ -599,7 +600,7 @@ const ChatManagement = () => {
     };
 
     const onMessageRevoked = (data: any) => {
-      if (data.storeId !== selectedStore) return;
+      if (data.storeId !== useChatStore.getState().selectedStore) return;
       useChatStore
         .getState()
         .setMessages((prev) =>
@@ -615,7 +616,7 @@ const ChatManagement = () => {
     socket?.on("messageRevoked", onMessageRevoked);
 
     const onSyncProgress = (data: any) => {
-      if (data.storeId !== selectedStore) return;
+      if (data.storeId !== useChatStore.getState().selectedStore) return;
       setGlobalSyncProgress(data);
       if (data.status === "completed" || data.status === "error") {
         setTimeout(() => setGlobalSyncProgress(null), 5000);
@@ -623,6 +624,11 @@ const ChatManagement = () => {
       }
     };
     socket?.on("sync_progress", onSyncProgress);
+
+    // 🔧 Re-emit joinStore on reconnect
+    socket?.on("connect", () => {
+      socket?.emit("joinStore", useChatStore.getState().selectedStore);
+    });
 
     return () => {
       socket?.off("newMessage", onNewMessage);
@@ -633,7 +639,7 @@ const ChatManagement = () => {
       socket?.off("typingStatus", onTypingStatus);
       socket?.off("messageRevoked", onMessageRevoked);
       socket?.off("sync_progress", onSyncProgress);
-      socket?.emit("leaveStore", selectedStore);
+      socket?.emit("leaveStore", useChatStore.getState().selectedStore);
     };
   }, [
     fetchContacts,

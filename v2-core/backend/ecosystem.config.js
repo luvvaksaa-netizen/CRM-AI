@@ -4,53 +4,62 @@
  * V2-Core berjalan di PORT 3002 (berbeda dari legacy port 3001)
  * sehingga keduanya bisa berjalan PARALEL tanpa konflik.
  *
- * Cara pakai:
- *   pm2 start ecosystem.config.js       (pertama kali)
- *   pm2 reload ecosystem.config.js      (update tanpa downtime)
- *   pm2 restart ecosystem.config.js     (restart)
+ * Cara deploy (zero-risk, bukan zero-downtime):
+ *   pm2 stop v2-core/backend/ecosystem.config.js
+ *   taskkill /F /IM chrome.exe /T 2>nul
+ *   cd v2-core && git pull origin main
+ *   cd backend && npm run build && cd ../frontend && npm run build && cd ../..
+ *   pm2 start v2-core/backend/ecosystem.config.js
+ *
+ * JANGAN pakai pm2 reload/restart untuk deploy!
+ * WA session + Chromium browser tidak kompatibel dengan rolling restart.
  */
 
 module.exports = {
   apps: [
     {
-      name: 'wa-crm-v2',
-      script: 'dist/app.js',   // compiled TypeScript output
-      // cwd: pakai path absolut agar dotenv selalu menemukan .env di folder ini
+      name: "wa-crm-v2",
+      script: "dist/app.js",
       cwd: __dirname,
-      instances: 1,            // HARUS 1 — SQLite tidak mendukung multi-instance
-      exec_mode: 'fork',       // HARUS fork — bukan cluster
+      instances: 1, // HARUS 1 — SQLite tidak mendukung multi-instance
+      exec_mode: "fork", // HARUS fork — bukan cluster
 
-      // ─── Graceful Shutdown ───────────────────────────────────────────
+      // ─── Startup ──────────────────────────────────────────────────────
+      // Tunggu app signal 'ready' (wait_ready) + Chromium launch time
       wait_ready: true,
-      listen_timeout: 90000,
-      kill_timeout: 15000,
+      listen_timeout: 120000, // 2 menit — cukup untuk Chromium x N session
 
-      // ─── Auto-Restart Policy ─────────────────────────────────────────
+      // ─── Graceful Shutdown (KRITIS — jangan diubah sembarangan) ───────
+      // kill_timeout HARUS > total waktu destroy semua Chromium (5-8 detik/session)
+      kill_timeout: 90000, // 90 detik — cukup untuk gracefulShutdown
+      kill_retry_time: 500, // Cek tiap 500ms apakah proses sudah mati
+
+      // ─── Auto-Restart Policy (ketat — hanya untuk crash recovery) ─────
       autorestart: true,
-      max_restarts: 10,
-      min_uptime: '15s',
-      restart_delay: 3000,
+      max_restarts: 3, // Maksimum 3x restart per window — cegah loop
+      min_uptime: "60s", // Harus hidup minimal 60 detik (jangan restart prematur)
+      restart_delay: 10000, // Jeda 10 detik antar restart (tunggu OS cleanup)
+      max_restarts_expo: 30000, // Exponential backoff: max 30s delay antar restart
 
-      // ─── Memory Guard (8× Chromium — butuh RAM besar) ───────────────
-      max_memory_restart: process.env.PM2_MAX_MEMORY || '6000M',
+      // ─── Memory Guard ─────────────────────────────────────────────────
+      // 4GB = aman untuk Node.js + 3-5 Chromium (masing-masing ~400MB heap)
+      max_memory_restart: "4000M",
 
       // ─── Logging ─────────────────────────────────────────────────────
       merge_logs: true,
-      log_date_format: 'YYYY-MM-DD HH:mm:ss',
-      error_file: './logs/pm2-error.log',
-      out_file: './logs/pm2-out.log',
+      log_date_format: "YYYY-MM-DD HH:mm:ss",
+      error_file: "./logs/pm2-error.log",
+      out_file: "./logs/pm2-out.log",
+      max_size: "10M", // Rotate log jika > 10MB
 
-      // ─── Environment (fallback — .env adalah sumber utama) ───────────
-      // Variabel ini sebagai fallback jika .env tidak terbaca.
-      // Sumber utama tetap file .env di folder ini.
+      // ─── Environment ──────────────────────────────────────────────────
+      // .env adalah sumber utama. Variabel di sini sebagai fallback darurat.
       env: {
-        NODE_ENV: 'production',
-        PORT: '3002',
-        DATA_DIR: 'D:\\CRM-AI\\data',
-        ADMIN_USER: 'admin',
-        ADMIN_PASS: 'KirimFotoSecure99!',
-        JWT_SECRET: 'v2core-crm-jwt-secret-lenovo-desktop-2024-xK9mP',
-        CORS_ORIGINS: 'http://localhost:5173,http://localhost:3002',
+        NODE_ENV: "production",
+        PORT: "3002",
+        DATA_DIR: "D:\\CRM-AI\\data",
+        WA_CHROMIUM_HEAP_MB: "384",
+        PM2_MAX_MEMORY: "4000",
       },
     },
   ],

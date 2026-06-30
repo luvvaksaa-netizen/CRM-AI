@@ -45,9 +45,7 @@ interface ChatState {
   ) => void;
   setActiveContact: (
     contact:
-      | ChatContact
-      | null
-      | ((prev: ChatContact | null) => ChatContact | null),
+      ChatContact | null | ((prev: ChatContact | null) => ChatContact | null),
   ) => void;
   setMessages: (
     messages: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[]),
@@ -62,6 +60,7 @@ interface ChatState {
 
   // Specific Actions
   addMessage: (msg: ChatMessage) => void;
+  mergeMessages: (serverMessages: ChatMessage[]) => void;
   updateContactLabels: (contactId: string, labels: string[]) => void;
   updateContactUnread: (contactId: string, unreadCount: number) => void;
 }
@@ -115,6 +114,35 @@ export const useChatStore = create<ChatState>((set) => ({
       );
       if (exists) return state; // Don't add duplicate
       return { messages: [...state.messages, msg] };
+    }),
+
+  // Merge server messages dengan existing (preserve optimistic + socket-added messages)
+  mergeMessages: (serverMessages: any[]) =>
+    set((state) => {
+      const serverIds = new Set(
+        serverMessages.map((m: any) => m.id).filter(Boolean),
+      );
+      const serverWaIds = new Set(
+        serverMessages.map((m: any) => m.wa_message_id).filter(Boolean),
+      );
+      const merged = [...serverMessages];
+      let added = 0;
+      for (const m of state.messages) {
+        const isServer =
+          serverIds.has(m.id) || serverWaIds.has(m.wa_message_id);
+        if (!isServer) {
+          merged.push(m);
+          added++;
+        }
+      }
+      if (added > 0) {
+        merged.sort(
+          (a, b) =>
+            new Date(a.timestamp || 0).getTime() -
+            new Date(b.timestamp || 0).getTime(),
+        );
+      }
+      return { messages: merged };
     }),
 
   updateContactLabels: (contactId, labels) =>
