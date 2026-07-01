@@ -1490,24 +1490,37 @@ async function _updateConversationSummary(storeWaId, contactId, senderName) {
     // Deteksi apakah contact_id ini adalah LID format
     const stableLid = contactId.endsWith("@lid") ? contactId : null;
 
-    const [summary, created] = await ChatSummary.findOrCreate({
-      where: { store_wa_id: storeWaId, contact_id: contactId },
-      defaults: {
-        summary: summaryText,
-        contact_name: name,
-        contact_phone: stablePhone,
-        contact_lid: stableLid,
-        last_updated: new Date(),
-      },
-    });
+    // 🔧 SQLite retry — hindari SQLITE_BUSY saat traffic tinggi
+    let summary, created;
+    for (let retry = 0; retry < 3; retry++) {
+      try {
+        [summary, created] = await ChatSummary.findOrCreate({
+          where: { store_wa_id: storeWaId, contact_id: contactId },
+          defaults: {
+            summary: summaryText,
+            contact_name: name,
+            contact_phone: stablePhone,
+            contact_lid: stableLid,
+            last_updated: new Date(),
+          },
+        });
 
-    if (!created) {
-      summary.summary = summaryText;
-      summary.contact_name = name;
-      if (stablePhone) summary.contact_phone = stablePhone; // Update hanya jika ada
-      if (stableLid) summary.contact_lid = stableLid;
-      summary.last_updated = new Date();
-      await summary.save();
+        if (!created) {
+          summary.summary = summaryText;
+          summary.contact_name = name;
+          if (stablePhone) summary.contact_phone = stablePhone;
+          if (stableLid) summary.contact_lid = stableLid;
+          summary.last_updated = new Date();
+          await summary.save();
+        }
+        break; // sukses
+      } catch (dbErr) {
+        const isBusy =
+          dbErr?.message?.includes("SQLITE_BUSY") ||
+          dbErr?.parent?.message?.includes("SQLITE_BUSY");
+        if (!isBusy || retry === 2) throw dbErr;
+        await new Promise((r) => setTimeout(r, 100 * Math.pow(2, retry)));
+      }
     }
 
     logger.info(
