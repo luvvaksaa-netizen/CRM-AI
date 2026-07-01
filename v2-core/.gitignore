@@ -14,6 +14,7 @@ nul
 
 # Reports
 report.*.json
+snapshot-*.sqlite
 
 # Editor
 .vscode/
