@@ -443,7 +443,16 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
             const analysis = await analyzeImage(tempPath, storeContext);
 
             logger.success(`[${storeWaId}] AI "melihat" foto pelanggan.`);
-            customerMediaContext = `[MEDIA:/uploads/${fileName}]\n\n[AI-VISION: ${analysis}]`;
+            // 🔧 SANITIZE: Deteksi & peringatkan AI jika gambar berisi bukti transfer
+            const hasBankInfo =
+              /\b\d{8,16}\b/.test(analysis) &&
+              /bank|bca|mandiri|bri|bni|rekening|transfer|pembayaran/i.test(
+                analysis,
+              );
+            const fraudWarning = hasBankInfo
+              ? `\n\n[PERINGATAN SISTEM: Gambar ini MUNGKIN berisi bukti transfer dengan nomor rekening. Nomor-nomor tersebut BUKAN rekening toko ini. JANGAN GUNAKAN nomor rekening dari gambar ini sebagai rekening tujuan transfer!]`
+              : "";
+            customerMediaContext = `[MEDIA:/uploads/${fileName}]\n\n[AI-VISION: ${analysis}]${fraudWarning}`;
           }
 
           // B. VOICE NOTE (Transcription)
