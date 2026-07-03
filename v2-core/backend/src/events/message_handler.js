@@ -343,16 +343,22 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
     }
   }
 
-  // FIREWALL 0c: Tolak AI reply jika chat sudah "Closing"
-  // Cek label "Closing" di ChatSummary — jika ada, gunakan grace period.
-  // Grace period: Allow final reply dalam N menit setelah closing (untuk follow-up immediate).
-  // Setelah grace period: Skip AI, hanya simpan ke DB.
+  // FIREWALL 0c (DIHAPUS — digantikan logika "natural flow"):
+  // Label "Closing" di DB tetap ada untuk keperluan tracking & history CS,
+  // TAPI tidak lagi memblokir bot dari merespons customer.
+  //
+  // Alasan: Customer bisa kapan saja chat ulang (repeat order, tanya info,
+  // atau obrolan lanjutan). Bot harus selalu melayani secara natural.
+  // Label Closing hanya catatan bahwa SEBELUMNYA sudah pernah closing.
+  //
+  // Jika ada informasi Closing di DB, log saja untuk tracking — jangan blokir.
   const contactId = message.from;
   if (shouldAIReply) {
     try {
       const { ChatSummary } = require("../models/index");
       const summary = await ChatSummary.findOne({
         where: { store_wa_id: storeWaId, contact_id: contactId },
+        attributes: ["wa_labels", "label_timestamps", "last_updated"],
       });
 
       if (summary && summary.wa_labels) {
@@ -363,57 +369,25 @@ async function handleMessage(message, storeWaId, shouldAIReply = true) {
           );
 
           if (isClosing) {
-            // Parse label_timestamps untuk mendapatkan waktu ketika Closing label diberikan
-            let closingTimestamp = Date.now();
-            try {
-              const timestamps = JSON.parse(summary.label_timestamps || "{}");
-              // Case-insensitive lookup untuk Closing
-              const closingKey = Object.keys(timestamps).find(
-                (k) => k.toLowerCase() === "closing",
-              );
-              if (closingKey && timestamps[closingKey]) {
-                // Timestamp bisa dalam ms atau Unix timestamp
-                const ts = timestamps[closingKey];
-                closingTimestamp =
-                  typeof ts === "number" ? ts : new Date(ts).getTime();
-              }
-            } catch (_) {
-              // Gunakan last_updated sebagai fallback
-              if (summary.last_updated) {
-                closingTimestamp = new Date(summary.last_updated).getTime();
-              }
-            }
-
-            const ageMs = Date.now() - closingTimestamp;
-            const MAX_CLOSING_REPLY_MS = Number(
-              process.env.CLOSING_GRACE_PERIOD_MS || 10 * 60 * 1000,
-            ); // Default: 10 menit
-
-            if (ageMs > MAX_CLOSING_REPLY_MS) {
-              logger.info(
-                `[${storeWaId}] SKIP AI reply — chat sudah Closing sejak ` +
-                  `${Math.round(ageMs / 60000)} menit lalu (> ${Math.round(MAX_CLOSING_REPLY_MS / 60000)} min threshold).`,
-              );
-              shouldAIReply = false;
-            } else {
-              logger.info(
-                `[${storeWaId}] Chat Closing tapi masih dalam grace period ` +
-                  `(${Math.round(ageMs / 60000)}/${Math.round(MAX_CLOSING_REPLY_MS / 60000)} min), allow final reply.`,
-              );
-            }
+            // Log informatif saja — bot TETAP balas (repeat order, obrolan lanjutan)
+            logger.info(
+              `[${storeWaId}] INFO: Kontak [${contactId}] sebelumnya pernah Closing. ` +
+                `Bot tetap melayani secara natural (repeat order / obrolan lanjutan).`,
+            );
+            // shouldAIReply tetap true — tidak diblokir
           }
         } catch (parseErr) {
           logger.warn(
-            `[${storeWaId}] Gagal parse wa_labels JSON: ${parseErr.message}`,
+            `[${storeWaId}] Gagal parse wa_labels (non-fatal): ${parseErr.message}`,
           );
-          // Fall-through: jika parse error, tetap balas untuk reliability
+          // Fall-through: tetap balas
         }
       }
     } catch (err) {
       logger.warn(
-        `[${storeWaId}] Closing check error (fallback to reply): ${err.message}`,
+        `[${storeWaId}] Closing info-check error (non-fatal, tetap balas): ${err.message}`,
       );
-      // Fall-through: jika error query ChatSummary, tetap balas untuk reliability
+      // Fall-through: tetap balas
     }
   }
 

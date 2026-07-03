@@ -57,7 +57,8 @@ module.exports = {
       env: {
         NODE_ENV: "production",
         PORT: "3002",
-        DATA_DIR: "D:\\CRM-AI\\data",
+        // Hapus hardcoded DATA_DIR agar tidak menimpa .env milik server lain.
+        // Konfigurasi path utama harus selalu berasal dari file .env di masing-masing server.
         WA_CHROMIUM_HEAP_MB: "384",
         PM2_MAX_MEMORY: "4000",
       },

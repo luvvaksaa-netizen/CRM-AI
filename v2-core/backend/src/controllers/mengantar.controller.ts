@@ -35,6 +35,14 @@ export const getOrders = async (
       filters.tracking_id = req.query.tracking_id as string;
     if (req.query.order_id) filters.order_id = req.query.order_id as string;
 
+    // Date range filter — dikirim dari frontend sebagai date_from & date_to (format: YYYY-MM-DD)
+    if (req.query.date_from && req.query.date_to) {
+      filters.dateRange = {
+        startDate: req.query.date_from as string,
+        endDate: req.query.date_to as string,
+      };
+    }
+
     const dbAddressId = await AppConfig.findOne({
       where: { key: "mengantar_address_id" },
     });
@@ -479,6 +487,114 @@ export const fixOrderAddresses = async (
       message: dryRun
         ? `[DRY RUN] Would fix ${result.successful}/${result.totalProcessed} orders`
         : `Fixed ${result.successful}/${result.totalProcessed} orders successfully`,
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
+/**
+ * POST /api/mengantar/send-resi-wa
+ * Kirim ulang notifikasi resi ke WhatsApp customer.
+ * Digunakan dari detail modal di halaman Orders ketika user klik "Kirim Resi ke WA".
+ *
+ * Body: {
+ *   cnote_no: string,       // nomor resi
+ *   customer_name: string,  // nama penerima
+ *   destination: string,    // kota tujuan
+ *   courier: string,        // nama kurir
+ *   customer_phone?: string, // nomor HP customer (untuk lookup)
+ *   store_wa_id?: string,   // ID WA toko yang melayani (opsional, jika sudah tahu)
+ *   contact_id?: string,    // contact_id WA customer (opsional, jika sudah tahu)
+ * }
+ */
+export const sendResiToWA = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    const {
+      cnote_no,
+      customer_name,
+      destination,
+      courier,
+      customer_phone,
+      store_wa_id,
+      contact_id,
+    } = req.body;
+
+    if (!cnote_no) {
+      return res.status(400).json({
+        success: false,
+        error: "cnote_no wajib diisi",
+      });
+    }
+
+    const { sendManualMessage } = require("../whatsapp_service");
+    const { formatResiMessage } = require("../services/mengantar.service");
+
+    // Buat pesan resi dari data yang diberikan
+    const fakeOrderResult = {
+      success: true,
+      cnote_no,
+      customer: customer_name || "Customer",
+      destination: destination || "-",
+      courier: courier || "J&T Express",
+    };
+    const resiMsg = formatResiMessage(fakeOrderResult);
+
+    // Jika store_wa_id dan contact_id sudah disediakan, langsung kirim
+    if (store_wa_id && contact_id) {
+      await sendManualMessage(store_wa_id, contact_id, resiMsg);
+      return res.json({
+        success: true,
+        message: `Resi berhasil dikirim ke ${contact_id} via ${store_wa_id}`,
+      });
+    }
+
+    // Fallback: cari customer di DB berdasarkan nomor HP
+    if (!customer_phone) {
+      return res.status(400).json({
+        success: false,
+        error: "Diperlukan store_wa_id + contact_id, atau customer_phone untuk lookup",
+      });
+    }
+
+    const cPhone = String(customer_phone).replace(/\D/g, "");
+    const summaries = await ChatSummary.findAll({
+      attributes: ["contact_phone", "store_wa_id", "contact_id"],
+    });
+
+    let matchedSummary: any = null;
+    for (const s of summaries) {
+      const norm = ((s as any).contact_phone || "").replace(/\D/g, "");
+      if (
+        norm === cPhone ||
+        (norm.startsWith("0") ? "62" + norm.slice(1) : norm) === cPhone ||
+        (norm.startsWith("62") ? "0" + norm.slice(2) : norm) === cPhone
+      ) {
+        matchedSummary = s;
+        break;
+      }
+    }
+
+    if (!matchedSummary) {
+      return res.status(404).json({
+        success: false,
+        error: `Nomor ${customer_phone} tidak ditemukan di database CRM`,
+      });
+    }
+
+    await sendManualMessage(
+      (matchedSummary as any).store_wa_id,
+      (matchedSummary as any).contact_id,
+      resiMsg,
+    );
+
+    return res.json({
+      success: true,
+      message: `Resi berhasil dikirim ke ${customer_phone} via ${(matchedSummary as any).store_wa_id}`,
     });
   } catch (e) {
     next(e);

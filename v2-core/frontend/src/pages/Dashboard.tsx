@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
+import { useNavigate } from 'react-router-dom';
 import { Users, TrendingUp, Target, BarChart3, MessageSquare, Brain, Calendar, ChevronDown, RefreshCw, DollarSign, AlertTriangle, CheckCircle2, XCircle, Filter } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend } from 'recharts';
 import api from '../services/api';
@@ -10,7 +11,7 @@ const StatCard = ({ title, value, icon: Icon, sub, delay, color = 'blue' }: any)
     initial={{ opacity: 0, y: 20 }}
     animate={{ opacity: 1, y: 0 }}
     transition={{ delay, duration: 0.5 }}
-    className="bg-slate-900/40 dark:bg-white border border-slate-800/50 dark:border-slate-200 p-4 rounded-2xl backdrop-blur-xl hover:bg-slate-900/60 transition-all group relative overflow-hidden"
+    className={`bg-slate-900/40 dark:bg-white border border-slate-800/50 dark:border-slate-200 p-4 rounded-2xl backdrop-blur-xl hover:bg-slate-900/60 transition-all group relative overflow-hidden`}
   >
     <div className={`absolute top-0 right-0 w-32 h-32 bg-${color}-500/5 rounded-full blur-3xl group-hover:bg-${color}-500/10 transition-colors`} />
     <div className="flex justify-between items-start relative z-10">
@@ -57,6 +58,7 @@ interface Store {
 }
 
 const Dashboard = () => {
+  const navigate = useNavigate();
   const [stats, setStats] = useState<any>({ 
     totalLeads: 0, closingRate: 0, aiHandlingRate: 0,
     aiReplyCount: 0, csManualCount: 0,
@@ -84,6 +86,12 @@ const Dashboard = () => {
   const [billingLoading, setBillingLoading] = useState(false);
   const [billingFetching, setBillingFetching] = useState(false);
   const [billingActualCosts, setBillingActualCosts] = useState<any>(null);
+
+  const handleChatRedirect = (storeWaId: string, contactId: string) => {
+    if (!storeWaId || !contactId) return;
+    sessionStorage.setItem("chatTarget", JSON.stringify({ storeWaId, contactId }));
+    navigate("/chat");
+  };
 
   useEffect(() => {
     api.get('/stores').then(res => {
@@ -628,7 +636,11 @@ const Dashboard = () => {
           ) : drillData.length > 0 ? (
             <div className="space-y-2">
               {activeDrillTab === 'leads' && drillData.map((lead: any, i: number) => (
-                <div key={i} className="flex items-center justify-between bg-slate-950/50 dark:bg-slate-50 rounded-xl p-3 hover:bg-slate-800/60 transition-colors">
+                <div 
+                  key={i} 
+                  onClick={() => handleChatRedirect(lead.store_wa_id, lead.contact_id)}
+                  className="flex items-center justify-between bg-slate-950/50 dark:bg-slate-50 rounded-xl p-3 hover:bg-slate-800/60 transition-colors cursor-pointer group"
+                >
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 font-bold text-sm shrink-0">
                       {(lead.contact_name || lead.contact_phone || '?').charAt(0).toUpperCase()}
@@ -643,7 +655,11 @@ const Dashboard = () => {
                 </div>
               ))}
               {activeDrillTab === 'closing' && drillData.map((item: any, i: number) => (
-                <div key={i} className="flex items-center justify-between bg-emerald-950/20 dark:bg-emerald-50 border border-emerald-800/20 rounded-xl p-3 hover:bg-emerald-900/20 transition-colors">
+                <div 
+                  key={i} 
+                  onClick={() => handleChatRedirect(item.store_wa_id, item.contact_id)}
+                  className="flex items-center justify-between bg-emerald-950/20 dark:bg-emerald-50 border border-emerald-800/20 rounded-xl p-3 hover:bg-emerald-900/20 transition-colors cursor-pointer group"
+                >
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400 font-bold text-sm shrink-0">
                       {(item.contact_name || item.contact_phone || '?').charAt(0).toUpperCase()}

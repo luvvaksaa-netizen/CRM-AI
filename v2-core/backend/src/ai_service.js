@@ -804,6 +804,7 @@ async function _processAIResponse(
             `17. INTEGRASI SCALEV AKTIF: Jika customer sepakat untuk melakukan pembayaran via Transfer atau DP, kamu WAJIB memanggil tool 'buat_order_scalev' untuk membuat pesanan dan menerbitkan QRIS dinamis. SEKALIGUS di pesan yang sama, kamu WAJIB memberikan nomor rekening manual (dari Product Knowledge) sebagai opsi alternatif. Contoh: "Bund, ini QRIS-nya ya, atau kalau mau manual bisa transfer ke rekening BCA 123xxxx. Silakan dipilih bund."`,
           ]
         : []),
+      `18. DILARANG KERAS MENGARANG NOMOR REKENING / PEMBAYARAN (ANTI-FRAUD). Kamu HANYA boleh memberikan nomor rekening, nomor telepon untuk transfer (Dana, OVO, GOPAY, dll), atau QR code yang TERTULIS di Product Knowledge Agent. Jika customer bertanya metode pembayaran yang TIDAK ADA di Product Knowledge, jawab: "Maaf kak, untuk saat ini hanya tersedia [sebutkan metode yang ada]." Mengarang nomor rekening atau nomor transfer adalah KESALAHAN FATAL yang bisa merugikan customer.`,
     ].join("\n");
 
     // ── Bagian 8: Agent Prompt dari DB (product-specific knowledge) ──
@@ -1226,35 +1227,77 @@ CATATAN: Gunakan data dari rekap pesanan. Isi semua field seakurat mungkin.`,
     }
 
     // ══════════════════════════════════════════════════════════════════
-    // BUILD MESSAGES — FIX TIMESTAMP HALLUCINATION
+    // BUILD MESSAGES — TOKEN EFFICIENCY + TIMESTAMP HALLUCINATION FIX
+    //
+    // Strategi efisiensi token (hemat DeepSeek & OpenAI tanpa regresi):
+    //  1. Batasi history: hanya N pesan terakhir (context cukup dari summary)
+    //  2. Trim whitespace berlebihan di setiap pesan
+    //  3. Replace konten gambar/media lama (base64 dll) dengan placeholder teks
+    //
     // Timestamp HANYA diberikan untuk role 'user', TIDAK untuk 'assistant'
     // ══════════════════════════════════════════════════════════════════
+
+    // Batas maksimal pesan history yang dikirim ke API (configurable via ENV)
+    // Default 20 = cukup konteks tanpa waste token. Conversation summary sudah di system prompt.
+    const MAX_HISTORY_MESSAGES = Number(
+      process.env.AI_MAX_HISTORY_MESSAGES || 20,
+    );
+
+    /**
+     * Trim dan efisienkan konten pesan sebelum dikirim ke API.
+     * - Normalisasi whitespace berlebihan
+     * - Potong pesan sangat panjang (lebih dari 1500 karakter) dengan ellipsis
+     * - Replace placeholder/konteks gambar lama dengan teks pendek
+     */
+    function _trimMessageContent(content) {
+      if (!content || typeof content !== "string") return content || "";
+      // Trim dan normalisasi multiple whitespace/newlines
+      let trimmed = content.replace(/\n{4,}/g, "\n\n\n").trim();
+      // Ganti data base64 yang mungkin bocor dengan placeholder
+      trimmed = trimmed.replace(
+        /data:image\/[^;]+;base64,[A-Za-z0-9+/=]{100,}/g,
+        "[gambar]",
+      );
+      // Potong pesan sangat panjang (>1500 karakter) — biasanya pesan lama yang tidak relevan
+      if (trimmed.length > 1500) {
+        trimmed = trimmed.slice(0, 1500) + "...[dipotong]";
+      }
+      return trimmed;
+    }
+
     let userContent = userMessage;
     if (customerMediaContext) {
       userContent = `[SISTEM: Pelanggan baru saja mengirim MEDIA/FOTO. Berikut adalah deskripsi visualnya untuk panduanmu: ${customerMediaContext}]\n\nPESAN PELANGGAN: ${userMessage || "(Hanya mengirim foto)"}`;
     }
 
-    const filteredHistory =
+    // Ambil semua history kecuali pesan terakhir (yang sudah ada di userContent)
+    const rawHistory =
       history.length > 0 ? history.slice(0, history.length - 1) : [];
+
+    // Slice ke N pesan terakhir untuk efisiensi token
+    // Context percakapan yang lebih tua sudah di-cover oleh conversationSummary di system prompt
+    const cappedHistory =
+      rawHistory.length > MAX_HISTORY_MESSAGES
+        ? rawHistory.slice(rawHistory.length - MAX_HISTORY_MESSAGES)
+        : rawHistory;
 
     // Build messages — conversation summary is handled by conversationBlock in fullSystemInstruction
     let messages = [
       { role: "system", content: fullSystemInstruction },
-      ...filteredHistory.map((h) => {
+      ...cappedHistory.map((h) => {
         if (h.is_from_me) {
           return {
             role: "assistant",
-            content: h.body || h.content || "",
+            content: _trimMessageContent(h.body || h.content || ""),
           };
         } else {
           const dayStr = h.timestamp
             ? moment(h.timestamp).format("DD MMM HH:mm")
             : "";
+          const body = _trimMessageContent(h.body || h.content || "");
           return {
             role: "user",
-            content: dayStr
-              ? `(Dikirim ${dayStr})\n${h.body || h.content || ""}`
-              : h.body || h.content || "",
+            content: dayStr ? `(Dikirim ${dayStr})\n${body}` : body,
           };
         }
       }),
