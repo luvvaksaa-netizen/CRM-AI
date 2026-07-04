@@ -48,7 +48,7 @@ export const initDB = async () => {
       await sequelize.query("PRAGMA journal_mode=WAL;");
 
       // 2. Busy timeout 30 detik — tunggu lock dilepas, jangan langsung error
-      await sequelize.query("PRAGMA busy_timeout=30000;");
+      await sequelize.query("PRAGMA busy_timeout=120000;"); // 2 menit — tahan SQLITE_BUSY di traffic tinggi
 
       // 3. NORMAL sync — aman untuk WAL, lebih cepat dari FULL
       await sequelize.query("PRAGMA synchronous=NORMAL;");

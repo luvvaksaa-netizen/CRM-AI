@@ -735,10 +735,13 @@ function setupEventListeners(client, storeWaId, io) {
       // Update is_read di database
       const { ChatMessage } = require("./models/index");
       if (ack >= 2) {
-        await ChatMessage.update(
-          { is_read: ack >= 3 },
-          { where: { wa_message_id: msgId } },
-        );
+        const { enqueueWrite } = require("./services/dbWriteQueue");
+        enqueueWrite(() =>
+          ChatMessage.update(
+            { is_read: ack >= 3 },
+            { where: { wa_message_id: msgId } },
+          ),
+        ).catch(() => {});
         // Emit chatRead ke frontend agar centang update real-time
         const contactId = msg?.to || msg?.from || "";
         if (io && contactId) {
@@ -838,9 +841,12 @@ function setupEventListeners(client, storeWaId, io) {
     if (!msgId) return;
     try {
       const { ChatMessage } = require("./models/index");
-      const deleted = await ChatMessage.destroy({
-        where: { wa_message_id: msgId },
-      });
+      const { enqueueWrite } = require("./services/dbWriteQueue");
+      const deleted = await enqueueWrite(() =>
+        ChatMessage.destroy({
+          where: { wa_message_id: msgId },
+        }),
+      );
       if (deleted > 0) {
         // Beritahu frontend via Socket.IO agar UI langsung update
         dashboard.emitMessageRevoked(
