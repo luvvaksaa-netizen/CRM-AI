@@ -502,10 +502,19 @@ const ChatManagement = () => {
     socket?.emit("joinStore", selectedStore);
 
     const onNewMessage = (data: any) => {
-      // 🔧 Baca selectedStore TERBARU dari Zustand (bukan closure stale)
       const currentStore = useChatStore.getState().selectedStore;
       if (data.storeId !== currentStore) return;
-      debouncedFetchContacts();
+
+      // 🔧 Cuma refresh sidebar untuk pesan MASUK (customer), bukan pesan CS sendiri
+      // Refresh sidebar untuk pesan sendiri bikin kedip-kedip tidak perlu
+      if (!data.msg?.is_from_me) {
+        debouncedFetchContacts();
+      } else {
+        // CS kirim pesan: update last_message sidebar langsung tanpa refetch
+        useChatStore
+          .getState()
+          .updateContactLastMessage(data.msg?.contact_id, data.msg?.body);
+      }
       const currentContact = useChatStore.getState().activeContact;
       if (
         currentContact &&

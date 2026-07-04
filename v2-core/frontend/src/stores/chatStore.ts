@@ -63,6 +63,7 @@ interface ChatState {
   mergeMessages: (serverMessages: ChatMessage[]) => void;
   updateContactLabels: (contactId: string, labels: string[]) => void;
   updateContactUnread: (contactId: string, unreadCount: number) => void;
+  updateContactLastMessage: (contactId: string, lastMessage: string) => void;
 }
 
 export const useChatStore = create<ChatState>((set) => ({
@@ -161,6 +162,18 @@ export const useChatStore = create<ChatState>((set) => ({
     set((state) => ({
       contacts: state.contacts.map((c) =>
         c.contact_id === contactId ? { ...c, unread_count: unreadCount } : c,
+      ),
+    })),
+  updateContactLastMessage: (contactId, lastMessage) =>
+    set((state) => ({
+      contacts: state.contacts.map((c) =>
+        c.contact_id === contactId
+          ? {
+              ...c,
+              last_message: lastMessage,
+              last_seen: new Date().toISOString(),
+            }
+          : c,
       ),
     })),
 }));
