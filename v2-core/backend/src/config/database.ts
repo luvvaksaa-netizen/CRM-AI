@@ -26,13 +26,13 @@ export const sequelize = USE_PG
       storage: getDbPath(),
       logging: false,
       dialectOptions: {
-        busyTimeout: 30000,
+        busyTimeout: 120000, // 2 menit — diterapkan ke SEMUA koneksi baru oleh Sequelize
       },
       pool: {
         max: 1,
-        min: 0,
+        min: 1, // 🔧 JANGAN 0 — koneksi harus tetap hidup, PRAGMA persist
         acquire: 60000,
-        idle: 10000,
+        idle: 300000, // 5 menit idle sebelum disconnect (was 10s)
       },
     });
 
