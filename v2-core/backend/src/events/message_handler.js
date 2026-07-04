@@ -1475,6 +1475,7 @@ async function _updateConversationSummary(storeWaId, contactId, senderName) {
 
     // 🔧 WRITE QUEUE: Antri via dbWriteQueue untuk eliminasi SQLITE_BUSY
     const { enqueueWrite } = require("../services/dbWriteQueue");
+    let summary, created;
     await enqueueWrite(async () => {
       [summary, created] = await ChatSummary.findOrCreate({
         where: { store_wa_id: storeWaId, contact_id: contactId },
