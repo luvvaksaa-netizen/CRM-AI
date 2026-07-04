@@ -192,16 +192,20 @@ if (process.env.ENABLE_LEGACY_XENDIT === "true") {
 app.get("/health", async (req, res) => {
   try {
     await sequelize.authenticate();
-    res.json({ status: "ok", version: "2.0.0", database: "connected" });
+    const { getQueueLength } = require("./services/dbWriteQueue");
+    res.json({
+      status: "ok",
+      version: "2.0.0",
+      database: "connected",
+      dbWriteQueue: getQueueLength(),
+    });
   } catch (e: any) {
-    res
-      .status(503)
-      .json({
-        status: "error",
-        version: "2.0.0",
-        database: "disconnected",
-        error: e.message,
-      });
+    res.status(503).json({
+      status: "error",
+      version: "2.0.0",
+      database: "disconnected",
+      error: e.message,
+    });
   }
 });
 

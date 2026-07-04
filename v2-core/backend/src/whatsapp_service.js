@@ -511,7 +511,7 @@ function createWhatsAppClient(storeWaId) {
       clientId: storeWaId,
     }),
     puppeteer: {
-      protocolTimeout: 120000,
+      protocolTimeout: 300000,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -531,8 +531,8 @@ function createWhatsAppClient(storeWaId) {
       ],
       headless: true,
       handleSIGINT: false,
-      timeout: 90000, // 90 detik timeout launch
-      protocolTimeout: 1200000, // 20 menit (naik dari 10 menit untuk hindari callFunctionOn timeout)
+      timeout: 120000, // 120 detik timeout launch
+      protocolTimeout: 1800000, // 30 menit — traffic tinggi
     },
   });
 
