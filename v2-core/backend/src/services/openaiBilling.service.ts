@@ -1,12 +1,19 @@
-import logger from '../utils/logger';
-import axios from 'axios';
-import { OpenAIUsageLog, AppConfig } from '../models';
-import { sendDailyBillingReport, sendThresholdAlert, sendTelegramMessage } from './telegramNotifier.service';
+import logger from "../utils/logger";
+import axios from "axios";
+import { OpenAIUsageLog, AppConfig } from "../models";
+import {
+  sendDailyBillingReport,
+  sendThresholdAlert,
+  sendTelegramMessage,
+} from "./telegramNotifier.service";
 
 // ─── Types ───
 interface BillingUsageResponse {
   object: string;
-  daily_costs: { timestamp: number; line_items: { name: string; cost: number }[] }[];
+  daily_costs: {
+    timestamp: number;
+    line_items: { name: string; cost: number }[];
+  }[];
   total_usage: number | null;
 }
 
@@ -24,7 +31,7 @@ let dailyReportInterval: ReturnType<typeof setInterval> | null = null;
 // ─── Config helper ───
 async function getConfig(key: string, defaultVal: string): Promise<string> {
   const rec = await AppConfig.findOne({ where: { key } });
-  return rec?.getDataValue('value') || defaultVal;
+  return rec?.getDataValue("value") || defaultVal;
 }
 
 async function setConfig(key: string, value: string): Promise<void> {
@@ -34,26 +41,39 @@ async function setConfig(key: string, value: string): Promise<void> {
 // ─── Get OpenAI API Key ───
 function getApiKey(): string {
   // Use billing-specific key if available, otherwise fall back to main API key
-  return process.env.OPENAI_ORG_API_KEY || process.env.OPENAI_API_KEY || '';
+  return process.env.OPENAI_ORG_API_KEY || process.env.OPENAI_API_KEY || "";
 }
 
 function getOrgId(): string {
-  return process.env.OPENAI_ORG_ID || '';
+  return process.env.OPENAI_ORG_ID || "";
 }
 
 function getUsageDate(): string {
   // OpenAI billing API uses UTC dates
   const now = new Date();
-  return now.toISOString().split('T')[0];
+  return now.toISOString().split("T")[0];
 }
 
 // ─── Fetch usage from OpenAI API ───
-export async function fetchBillingUsage(): Promise<{ total_usage: number; total_balance: number } | null> {
-  // API /dashboard/billing/usage dan /credit_grants sudah DEPRECATED oleh OpenAI (selalu 403).
-  // Data biaya kini diambil dari CostTracker internal (logRequest) yang akurat per-request.
-  // Fungsi ini dipertahankan untuk backward-compat tapi tidak melakukan external call.
-  logger.info('[OpenAI Billing] External API deprecated. Menggunakan CostTracker internal.');
-  return null;
+export async function fetchBillingUsage(): Promise<{
+  total_usage: number;
+  total_balance: number;
+} | null> {
+  // 🔧 Gunakan CostTracker internal untuk data akurat per-request
+  try {
+    const { getCostSummary } = require("./costTracker");
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const cost = await getCostSummary({ sDateMs: today.getTime() });
+    const deepseekBalance = await fetchDeepSeekBalance();
+    return {
+      total_usage: parseFloat((cost?.total_cost || 0).toFixed(4)),
+      total_balance: deepseekBalance ?? 0,
+    };
+  } catch (e: any) {
+    logger.error("[OpenAI Billing] CostTracker failed:", e.message);
+    return null;
+  }
 }
 
 // ─── Fetch DeepSeek Balance ───
@@ -62,14 +82,14 @@ export async function fetchDeepSeekBalance(): Promise<number | null> {
   if (!apiKey) return null;
 
   try {
-    const res = await axios.get('https://api.deepseek.com/user/balance', {
+    const res = await axios.get("https://api.deepseek.com/user/balance", {
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Accept': 'application/json'
+        Authorization: `Bearer ${apiKey}`,
+        Accept: "application/json",
       },
-      timeout: 10000
+      timeout: 10000,
     });
-    
+
     // DeepSeek returns: { is_available: true, balance_infos: [{ currency: "CNY", total_balance: "10.00" }] }
     // Asumsikan kita ambil balance USD atau yang pertama jika tidak ada keterangan spesifik
     if (res.data && res.data.is_available) {
@@ -77,8 +97,9 @@ export async function fetchDeepSeekBalance(): Promise<number | null> {
       const infos = res.data.balance_infos || [];
       if (infos.length > 0) {
         // DeepSeek bisa USD atau CNY. Biasanya USD untuk internasional.
-        const balanceInfo = infos.find((i: any) => i.currency === 'USD') || infos[0];
-        return parseFloat(balanceInfo.total_balance || '0');
+        const balanceInfo =
+          infos.find((i: any) => i.currency === "USD") || infos[0];
+        return parseFloat(balanceInfo.total_balance || "0");
       }
     }
     return null;
@@ -91,52 +112,60 @@ export async function fetchDeepSeekBalance(): Promise<number | null> {
 // ─── Get recent usage history ───
 export async function getUsageHistory(days: number = 30) {
   const records = await OpenAIUsageLog.findAll({
-    order: [['date', 'DESC']],
+    order: [["date", "DESC"]],
     limit: Math.min(days, 365),
   });
-  return records.map(r => r.toJSON()).reverse();
+  return records.map((r) => r.toJSON()).reverse();
 }
 
 // ─── Get latest usage + balance ───
 export async function getLatestBilling() {
   const latest = await OpenAIUsageLog.findOne({
-    order: [['date', 'DESC']],
+    order: [["date", "DESC"]],
   });
   if (!latest) {
-    return { total_usage: 0, total_balance: 0, date: getUsageDate(), fetched_at: null };
+    return {
+      total_usage: 0,
+      total_balance: 0,
+      date: getUsageDate(),
+      fetched_at: null,
+    };
   }
   return latest.toJSON();
 }
 
 // ─── Get billing config ───
 export async function getBillingConfig() {
-  const enabled = await getConfig('openai_billing_enabled', 'false');
-  const interval = await getConfig('openai_billing_interval_min', '360');
-  const threshold = await getConfig('openai_billing_daily_threshold', '10');
-  const telegramToken = await getConfig('openai_billing_telegram_token', '');
-  const telegramChatId = await getConfig('openai_billing_telegram_chat_id', '');
-  const telegramEnabled = await getConfig('openai_billing_telegram_enabled', 'false');
+  const enabled = await getConfig("openai_billing_enabled", "false");
+  const interval = await getConfig("openai_billing_interval_min", "360");
+  const threshold = await getConfig("openai_billing_daily_threshold", "10");
+  const telegramToken = await getConfig("openai_billing_telegram_token", "");
+  const telegramChatId = await getConfig("openai_billing_telegram_chat_id", "");
+  const telegramEnabled = await getConfig(
+    "openai_billing_telegram_enabled",
+    "false",
+  );
 
   return {
-    enabled: enabled === 'true',
+    enabled: enabled === "true",
     interval_min: parseInt(interval) || 360,
     daily_threshold: parseFloat(threshold) || 10,
-    telegram_token: telegramToken ? '••••••' + telegramToken.slice(-4) : '',
+    telegram_token: telegramToken ? "••••••" + telegramToken.slice(-4) : "",
     telegram_token_raw: telegramToken,
     telegram_chat_id: telegramChatId,
-    telegram_enabled: telegramEnabled === 'true',
+    telegram_enabled: telegramEnabled === "true",
   };
 }
 
 // ─── Update billing config ───
 export async function updateBillingConfig(data: Record<string, string>) {
   const validKeys = [
-    'openai_billing_enabled',
-    'openai_billing_interval_min',
-    'openai_billing_daily_threshold',
-    'openai_billing_telegram_token',
-    'openai_billing_telegram_chat_id',
-    'openai_billing_telegram_enabled',
+    "openai_billing_enabled",
+    "openai_billing_interval_min",
+    "openai_billing_daily_threshold",
+    "openai_billing_telegram_token",
+    "openai_billing_telegram_chat_id",
+    "openai_billing_telegram_enabled",
   ];
 
   for (const [key, value] of Object.entries(data)) {
@@ -146,7 +175,7 @@ export async function updateBillingConfig(data: Record<string, string>) {
   }
 
   // If interval changed, restart scheduler
-  if ('openai_billing_interval_min' in data) {
+  if ("openai_billing_interval_min" in data) {
     restartScheduler();
   }
 
@@ -155,27 +184,29 @@ export async function updateBillingConfig(data: Record<string, string>) {
 
 // ─── Scheduler ───
 export async function startScheduler() {
-  const enabled = await getConfig('openai_billing_enabled', 'false');
-  if (enabled !== 'true') {
-    logger.info('[OpenAI Billing] Scheduler disabled by config.');
+  const enabled = await getConfig("openai_billing_enabled", "false");
+  if (enabled !== "true") {
+    logger.info("[OpenAI Billing] Scheduler disabled by config.");
     return;
   }
 
-  const intervalMinStr = await getConfig('openai_billing_interval_min', '360');
+  const intervalMinStr = await getConfig("openai_billing_interval_min", "360");
   const intervalMs = (parseInt(intervalMinStr) || 360) * 60 * 1000;
 
   // Run immediately on start
-  logger.info('[OpenAI Billing] Initial fetch on startup...');
+  logger.info("[OpenAI Billing] Initial fetch on startup...");
   await fetchBillingUsage();
 
   // Schedule periodic fetch
   if (billingInterval) clearInterval(billingInterval);
   billingInterval = setInterval(async () => {
-    logger.info('[OpenAI Billing] Scheduled fetch...');
+    logger.info("[OpenAI Billing] Scheduled fetch...");
     await fetchBillingUsage();
   }, intervalMs);
 
-  logger.info(`[OpenAI Billing] Scheduler started (interval: ${intervalMinStr} menit).`);
+  logger.info(
+    `[OpenAI Billing] Scheduler started (interval: ${intervalMinStr} menit).`,
+  );
 
   // Schedule daily report via Telegram (check every minute, send at 08:00 WIB)
   dailyReportInterval = setInterval(async () => {
@@ -194,20 +225,21 @@ export async function startScheduler() {
         await sendDailyBillingReport(
           latest.total_usage,
           dsBalance !== null ? dsBalance : latest.total_balance,
-          latest.date || getUsageDate()
+          latest.date || getUsageDate(),
         );
       }
 
       // Check Low Balance Alert (Setiap jam pada menit 0)
       if (minutes === 0) {
-         const dsBalance = await fetchDeepSeekBalance();
-         if (dsBalance !== null && dsBalance <= 2.00) {
-            await sendTelegramMessage(`⚠️ SALDO DEEPSEEK MENIPIS! Sisa saldo saat ini: $${dsBalance.toFixed(2)}. Segera top-up agar AI tidak mati.`);
-         }
+        const dsBalance = await fetchDeepSeekBalance();
+        if (dsBalance !== null && dsBalance <= 2.0) {
+          await sendTelegramMessage(
+            `⚠️ SALDO DEEPSEEK MENIPIS! Sisa saldo saat ini: $${dsBalance.toFixed(2)}. Segera top-up agar AI tidak mati.`,
+          );
+        }
       }
-
     } catch (e: any) {
-      logger.error('[OpenAI Billing] Daily report error:', e.message);
+      logger.error("[OpenAI Billing] Daily report error:", e.message);
     }
   }, 60000); // Check every minute for daily report timing
 }
@@ -221,7 +253,7 @@ export function stopScheduler() {
     clearInterval(dailyReportInterval);
     dailyReportInterval = null;
   }
-  logger.info('[OpenAI Billing] Scheduler stopped.');
+  logger.info("[OpenAI Billing] Scheduler stopped.");
 }
 
 export function restartScheduler() {

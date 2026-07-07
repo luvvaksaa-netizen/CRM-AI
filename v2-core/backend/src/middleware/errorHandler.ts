@@ -68,13 +68,19 @@ const errorHandler = (
   const classification = classifyError(err);
   const errorMessage = err instanceof Error ? err.message : String(err);
 
-  // Log detail error ke app.log dengan klasifikasi
   logError(err);
-
-  // Log ke console dengan prefix yang mudah di-filter
   console.error(`[ErrorHandler][${classification}]`, errorMessage);
 
-  // Kalau SQLITE_NOMEM, tambahkan hint di log (tapi jangan expose ke client)
+  // 🔧 Kirim error kritis ke Telegram (SQLITE_BUSY, CHROMIUM_LOCK, dll)
+  if (classification !== "GENERIC" && classification !== "TYPE_ERROR") {
+    try {
+      const {
+        sendErrorAlert,
+      } = require("../services/telegramNotifier.service");
+      sendErrorAlert(`Error: ${classification}`, errorMessage);
+    } catch (_) {}
+  }
+
   if (classification === "SQLITE_NOMEM") {
     console.error(
       "[ErrorHandler] ⚠️ SQLite kehabisan memori. Cek RAM server dan orphan Chrome.",

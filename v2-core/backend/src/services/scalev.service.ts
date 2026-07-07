@@ -1,7 +1,7 @@
-import logger from '../utils/logger';
-import axios from 'axios';
-import * as QRCode from 'qrcode';
-import { sendTelegramMessage } from './telegramNotifier.service';
+import logger from "../utils/logger";
+import axios from "axios";
+import * as QRCode from "qrcode";
+import { sendTelegramMessage } from "./telegramNotifier.service";
 
 // ═══════════════════════════════════════════════════════════════
 // TYPES
@@ -19,7 +19,7 @@ export interface ScalevOrderParams {
   /** Ongkos kirim dalam Rupiah */
   shipping_cost?: number;
   /** Metode pembayaran: 'qris' | 'bank_transfer' | 'cod' */
-  payment_method?: 'qris' | 'bank_transfer' | 'cod' | 'va' | 'invoice';
+  payment_method?: "qris" | "bank_transfer" | "cod" | "va" | "invoice";
   /**
    * Nominal tagihan dalam Rupiah (dipakai untuk dynamic pricing via Rp1 variant).
    * Jika diisi, scalev_service akan menggunakan custom variant dengan qty = amount.
@@ -93,7 +93,7 @@ export interface ScalevCreateOrderAndPayResult {
 // ═══════════════════════════════════════════════════════════════
 
 export function getApiKey(): string {
-  return process.env.SCALEV_API_KEY || '';
+  return process.env.SCALEV_API_KEY || "";
 }
 
 export function hasApiKey(): boolean {
@@ -101,7 +101,7 @@ export function hasApiKey(): boolean {
 }
 
 export function getStoreUniqueId(): string {
-  return process.env.SCALEV_STORE_UNIQUE_ID || '';
+  return process.env.SCALEV_STORE_UNIQUE_ID || "";
 }
 
 /**
@@ -111,7 +111,7 @@ export function getStoreUniqueId(): string {
  * Wajib diisi di .env sebagai SCALEV_CUSTOM_VARIANT_ID.
  */
 export function getCustomVariantId(): string {
-  return process.env.SCALEV_CUSTOM_VARIANT_ID || '';
+  return process.env.SCALEV_CUSTOM_VARIANT_ID || "";
 }
 
 /** Buat axios instance dengan Bearer Auth Scalev */
@@ -119,10 +119,10 @@ function getClient() {
   const apiKey = getApiKey();
   if (!apiKey) return null;
   return axios.create({
-    baseURL: 'https://api.scalev.com',
+    baseURL: "https://api.scalev.com",
     headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
     },
     timeout: 20000,
   });
@@ -137,7 +137,7 @@ function getClient() {
  */
 function firstString(...values: any[]): string | null {
   for (const value of values) {
-    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === "string" && value.trim()) return value.trim();
   }
   return null;
 }
@@ -145,9 +145,12 @@ function firstString(...values: any[]): string | null {
 function firstActionUrl(...actionGroups: any[]): string | null {
   for (const actions of actionGroups) {
     if (!Array.isArray(actions)) continue;
-    const selected = actions.find((action: any) =>
-      ['AUTH', 'CREATE', 'PAY', 'CHECKOUT', 'OPEN'].includes(String(action?.action || action?.type || '').toUpperCase())
-    ) || actions[0];
+    const selected =
+      actions.find((action: any) =>
+        ["AUTH", "CREATE", "PAY", "CHECKOUT", "OPEN"].includes(
+          String(action?.action || action?.type || "").toUpperCase(),
+        ),
+      ) || actions[0];
     const url = firstString(selected?.url, selected?.href, selected?.link);
     if (url) return url;
   }
@@ -168,22 +171,25 @@ function extractQrString(data: any): string | null {
     data?.payment?.qr_code?.qr_string,
     data?.payment?.payment_method?.qr_code?.qr_string,
     data?.data?.qr_string,
-    data?.data?.payment_method?.qr_code?.qr_string
+    data?.data?.payment_method?.qr_code?.qr_string,
   );
 }
 
 function extractPaymentUrl(data: any): string | null {
-  return firstString(
-    data?.payment_url,
-    data?.checkout_url,
-    data?.invoice_url,
-    data?.payment?.payment_url,
-    data?.payment?.checkout_url,
-    data?.payment?.invoice_url,
-    data?.data?.payment_url,
-    data?.data?.checkout_url,
-    data?.data?.invoice_url
-  ) || firstActionUrl(data?.actions, data?.payment?.actions, data?.data?.actions);
+  return (
+    firstString(
+      data?.payment_url,
+      data?.checkout_url,
+      data?.invoice_url,
+      data?.payment?.payment_url,
+      data?.payment?.checkout_url,
+      data?.payment?.invoice_url,
+      data?.data?.payment_url,
+      data?.data?.checkout_url,
+      data?.data?.invoice_url,
+    ) ||
+    firstActionUrl(data?.actions, data?.payment?.actions, data?.data?.actions)
+  );
 }
 
 function extractPublicOrderUrl(data: any): string | null {
@@ -194,26 +200,28 @@ function extractPublicOrderUrl(data: any): string | null {
     data?.order?.public_order_url,
     data?.order?.public_url,
     data?.data?.public_order_url,
-    data?.data?.order_url
+    data?.data?.order_url,
   );
 }
 
-export async function renderQrisImage(qrString: string): Promise<Buffer | null> {
+export async function renderQrisImage(
+  qrString: string,
+): Promise<Buffer | null> {
   if (!qrString) return null;
   try {
     const buffer = await QRCode.toBuffer(qrString, {
-      errorCorrectionLevel: 'M',
-      type: 'png',
+      errorCorrectionLevel: "M",
+      type: "png",
       width: 400,
       margin: 2,
       color: {
-        dark: '#000000',
-        light: '#FFFFFF',
+        dark: "#000000",
+        light: "#FFFFFF",
       },
     });
     return buffer;
   } catch (err: any) {
-    logger.error('[Scalev] Gagal render QRIS image:', err.message);
+    logger.error("[Scalev] Gagal render QRIS image:", err.message);
     return null;
   }
 }
@@ -229,27 +237,35 @@ export async function renderQrisImage(qrString: string): Promise<Buffer | null> 
  * - Mencatat order di dashboard
  * - Mengembalikan order_id yang dipakai untuk membuat payment
  */
-export async function createOrder(params: ScalevOrderParams): Promise<ScalevOrderResult> {
+export async function createOrder(
+  params: ScalevOrderParams,
+): Promise<ScalevOrderResult> {
   const client = getClient();
   if (!client) {
-    logger.info('[Scalev] No API key — order tidak bisa dibuat. Set SCALEV_API_KEY di .env');
-    return { success: false, error: 'SCALEV_API_KEY belum dikonfigurasi' };
+    logger.info(
+      "[Scalev] No API key — order tidak bisa dibuat. Set SCALEV_API_KEY di .env",
+    );
+    return { success: false, error: "SCALEV_API_KEY belum dikonfigurasi" };
   }
 
   const storeUniqueId = params.store_unique_id || getStoreUniqueId();
   if (!storeUniqueId) {
-    return { success: false, error: 'store_unique_id tidak tersedia. Set SCALEV_STORE_UNIQUE_ID di .env' };
+    return {
+      success: false,
+      error:
+        "store_unique_id tidak tersedia. Set SCALEV_STORE_UNIQUE_ID di .env",
+    };
   }
 
   if (!params.customer_name) {
-    return { success: false, error: 'customer_name wajib diisi' };
+    return { success: false, error: "customer_name wajib diisi" };
   }
 
   try {
     const payload: Record<string, any> = {
       store_unique_id: storeUniqueId,
       customer_name: params.customer_name,
-      payment_method: params.payment_method || 'qris',
+      payment_method: params.payment_method || "qris",
     };
 
     if (params.customer_phone) payload.customer_phone = params.customer_phone;
@@ -265,44 +281,58 @@ export async function createOrder(params: ScalevOrderParams): Promise<ScalevOrde
     const amount = params.amount ? Math.round(Number(params.amount)) : 0;
 
     if (customVariantId && amount > 0) {
-      payload.ordervariants = [{
-        variant_unique_id: customVariantId,
-        quantity: amount, // qty 50000 x Rp1 = Rp 50.000
-      }];
+      payload.ordervariants = [
+        {
+          variant_unique_id: customVariantId,
+          quantity: amount, // qty 50000 x Rp1 = Rp 50.000
+        },
+      ];
 
       // Rincian produk asli masuk ke notes agar kelihatan di dashboard Scalev
       const detailLines: string[] = [];
       if (params.ordervariants && params.ordervariants.length > 0) {
         params.ordervariants.forEach((v, i) => {
-          const nama = v.product_name || 'Produk';
-          const varian = v.variant_name ? ` (${v.variant_name})` : '';
-          const qty = v.quantity ? `x${v.quantity}` : '';
-          const harga = v.price ? ` @ Rp ${Number(v.price).toLocaleString('id-ID')}` : '';
+          const nama = v.product_name || "Produk";
+          const varian = v.variant_name ? ` (${v.variant_name})` : "";
+          const qty = v.quantity ? `x${v.quantity}` : "";
+          const harga = v.price
+            ? ` @ Rp ${Number(v.price).toLocaleString("id-ID")}`
+            : "";
           detailLines.push(`${i + 1}. ${nama}${varian} ${qty}${harga}`.trim());
         });
       }
 
-      const baseNote = params.notes || '';
-      const detailNote = detailLines.length > 0 ? `\n\nRincian Pesanan:\n${detailLines.join('\n')}` : '';
+      const baseNote = params.notes || "";
+      const detailNote =
+        detailLines.length > 0
+          ? `\n\nRincian Pesanan:\n${detailLines.join("\n")}`
+          : "";
       payload.notes = (baseNote + detailNote).trim();
-
     } else if (!customVariantId) {
-      logger.warn('[Scalev] ⚠️  SCALEV_CUSTOM_VARIANT_ID tidak dikonfigurasi! Order mungkin gagal karena gross_revenue=0.');
-      if (params.ordervariants && params.ordervariants.length > 0) payload.ordervariants = params.ordervariants;
+      logger.warn(
+        "[Scalev] ⚠️  SCALEV_CUSTOM_VARIANT_ID tidak dikonfigurasi! Order mungkin gagal karena gross_revenue=0.",
+      );
+      if (params.ordervariants && params.ordervariants.length > 0)
+        payload.ordervariants = params.ordervariants;
       if (params.notes) payload.notes = params.notes;
     }
 
     // Jika tidak menggunakan customVariantId, kirim ongkir/diskon seperti biasa
     if (!customVariantId) {
-      if (params.shipping_cost != null) payload.shipping_cost = params.shipping_cost;
-      if (params.product_discount != null) payload.product_discount = params.product_discount;
-      if (params.shipping_discount != null) payload.shipping_discount = params.shipping_discount;
+      if (params.shipping_cost != null)
+        payload.shipping_cost = params.shipping_cost;
+      if (params.product_discount != null)
+        payload.product_discount = params.product_discount;
+      if (params.shipping_discount != null)
+        payload.shipping_discount = params.shipping_discount;
     }
 
-    const res = await client.post('/v3/orders', payload);
+    const res = await client.post("/v3/orders", payload);
     const order = res.data;
 
-    logger.info(`[Scalev] ✅ Order created: ${order.order_id || order.id} | customer: ${params.customer_name} | Rp ${amount}`);
+    logger.info(
+      `[Scalev] ✅ Order created: ${order.order_id || order.id} | customer: ${params.customer_name} | Rp ${amount}`,
+    );
 
     return {
       success: true,
@@ -312,13 +342,14 @@ export async function createOrder(params: ScalevOrderParams): Promise<ScalevOrde
       raw: order,
     };
   } catch (err: any) {
-    logger.error('[Scalev] Gagal create order:', err.message);
+    logger.error("[Scalev] Gagal create order:", err.message);
     if (err.response) {
-      logger.error('[Scalev] Response:', JSON.stringify(err.response.data));
+      logger.error("[Scalev] Response:", JSON.stringify(err.response.data));
     }
     return {
       success: false,
-      error: err.response?.data?.message || err.response?.data?.error || err.message,
+      error:
+        err.response?.data?.message || err.response?.data?.error || err.message,
     };
   }
 }
@@ -329,17 +360,19 @@ export async function createOrder(params: ScalevOrderParams): Promise<ScalevOrde
 
 /**
  * Membuat payment request untuk order yang sudah ada.
- * 
+ *
  * Scalev menggunakan Xendit sebagai payment gateway.
  * Struktur response payment endpoint (POST /v3/orders/:id/payment):
  *   - payment_method: object Xendit dengan type="QR_CODE"
  *   - payment_method.qr_code.qr_string: isi QR code yang bisa di-render
  *   - actions: array link aksi (checkout url)
  */
-export async function createPaymentForOrder(orderId: string): Promise<ScalevPaymentResult> {
+export async function createPaymentForOrder(
+  orderId: string,
+): Promise<ScalevPaymentResult> {
   const client = getClient();
   if (!client) {
-    return { success: false, error: 'SCALEV_API_KEY belum dikonfigurasi' };
+    return { success: false, error: "SCALEV_API_KEY belum dikonfigurasi" };
   }
 
   try {
@@ -347,17 +380,16 @@ export async function createPaymentForOrder(orderId: string): Promise<ScalevPaym
     const data = res.data;
 
     // ── Ekstrak payment_method yang bisa berupa string atau object (Xendit format) ──
-    let paymentMethodStr = 'qris';
-    if (data.payment_method && typeof data.payment_method === 'object') {
-      paymentMethodStr = (data.payment_method.type || 'QR_CODE').toLowerCase();
-    } else if (typeof data.payment_method === 'string') {
+    let paymentMethodStr = "qris";
+    if (data.payment_method && typeof data.payment_method === "object") {
+      paymentMethodStr = (data.payment_method.type || "QR_CODE").toLowerCase();
+    } else if (typeof data.payment_method === "string") {
       paymentMethodStr = data.payment_method;
     }
 
     // ── Ekstrak QR string dari Xendit response structure ──
     // Xendit format: payment_method.qr_code.qr_string
     const qrString = extractQrString(data);
-    
 
     // ── Ekstrak payment URL dari actions array (Xendit format) ──
     const paymentUrl = extractPaymentUrl(data);
@@ -369,7 +401,9 @@ export async function createPaymentForOrder(orderId: string): Promise<ScalevPaym
       if (buf) qrisImageBuffer = buf;
     }
 
-    logger.info(`[Scalev] ✅ Payment created for order ${orderId}: method=${paymentMethodStr}, qris=${!!qrString}, image=${!!qrisImageBuffer}`);
+    logger.info(
+      `[Scalev] ✅ Payment created for order ${orderId}: method=${paymentMethodStr}, qris=${!!qrString}, image=${!!qrisImageBuffer}`,
+    );
 
     return {
       success: true,
@@ -381,13 +415,14 @@ export async function createPaymentForOrder(orderId: string): Promise<ScalevPaym
       raw: data,
     };
   } catch (err: any) {
-    logger.error('[Scalev] Gagal create payment:', err.message);
+    logger.error("[Scalev] Gagal create payment:", err.message);
     if (err.response) {
-      logger.error('[Scalev] Response:', JSON.stringify(err.response.data));
+      logger.error("[Scalev] Response:", JSON.stringify(err.response.data));
     }
     return {
       success: false,
-      error: err.response?.data?.message || err.response?.data?.error || err.message,
+      error:
+        err.response?.data?.message || err.response?.data?.error || err.message,
     };
   }
 }
@@ -406,7 +441,9 @@ export async function createPaymentForOrder(orderId: string): Promise<ScalevPaym
  * 3. Render qr_string → Buffer PNG
  * 4. Return semua hasilnya
  */
-export async function createOrderAndPay(params: ScalevOrderParams): Promise<ScalevCreateOrderAndPayResult> {
+export async function createOrderAndPay(
+  params: ScalevOrderParams,
+): Promise<ScalevCreateOrderAndPayResult> {
   // Step 1: Buat order
   const orderResult = await createOrder(params);
   if (!orderResult.success || !orderResult.order_id) {
@@ -422,7 +459,9 @@ export async function createOrderAndPay(params: ScalevOrderParams): Promise<Scal
   const paymentResult = await createPaymentForOrder(orderId);
   if (!paymentResult.success) {
     // Order berhasil tapi payment gagal — kembalikan public_order_url saja
-    logger.warn(`[Scalev] Order ${orderId} berhasil tapi payment gagal: ${paymentResult.error}`);
+    logger.warn(
+      `[Scalev] Order ${orderId} berhasil tapi payment gagal: ${JSON.stringify(paymentResult.error)}`,
+    );
     return {
       success: true, // order tetap terbuat
       order_id: orderId,
@@ -441,9 +480,12 @@ export async function createOrderAndPay(params: ScalevOrderParams): Promise<Scal
     qr_string: paymentResult.qr_string,
     qrisImageBuffer: paymentResult.qrisImageBuffer,
     payment_method: paymentResult.payment_method,
-    error: (paymentResult.qrisImageBuffer || paymentResult.payment_url || paymentResult.public_order_url)
-      ? undefined
-      : 'Scalev payment response tidak berisi QRIS image, payment URL, atau public order URL.',
+    error:
+      paymentResult.qrisImageBuffer ||
+      paymentResult.payment_url ||
+      paymentResult.public_order_url
+        ? undefined
+        : "Scalev payment response tidak berisi QRIS image, payment URL, atau public order URL.",
   };
 }
 
@@ -467,18 +509,23 @@ export async function getOrder(orderId: string): Promise<any | null> {
 // CHECK PAYMENT STATUS
 // ═══════════════════════════════════════════════════════════════
 
-export async function checkPaymentStatus(orderId: string): Promise<{ paid: boolean; status: string } | null> {
+export async function checkPaymentStatus(
+  orderId: string,
+): Promise<{ paid: boolean; status: string } | null> {
   const client = getClient();
   if (!client) return null;
   try {
     const res = await client.get(`/v3/orders/${orderId}/payment-status`);
     const data = res.data;
     return {
-      paid: data.is_paid === true || data.payment_status === 'paid',
-      status: data.payment_status || 'unknown',
+      paid: data.is_paid === true || data.payment_status === "paid",
+      status: data.payment_status || "unknown",
     };
   } catch (err: any) {
-    logger.error(`[Scalev] Gagal check payment status ${orderId}:`, err.message);
+    logger.error(
+      `[Scalev] Gagal check payment status ${orderId}:`,
+      err.message,
+    );
     return null;
   }
 }
@@ -491,12 +538,15 @@ export async function listProducts(storeUniqueId?: string): Promise<any[]> {
   const client = getClient();
   if (!client) return [];
   try {
-    const res = await client.get('/v3/products', {
-      params: { limit: 100, store_unique_id: storeUniqueId || getStoreUniqueId() }
+    const res = await client.get("/v3/products", {
+      params: {
+        limit: 100,
+        store_unique_id: storeUniqueId || getStoreUniqueId(),
+      },
     });
     return res.data?.data || res.data || [];
   } catch (err: any) {
-    logger.error('[Scalev] Gagal list products:', err.message);
+    logger.error("[Scalev] Gagal list products:", err.message);
     return [];
   }
 }
@@ -515,60 +565,82 @@ export async function processWebhook(
   body: any,
   opts?: {
     /** Fungsi untuk kirim notif WA ke customer setelah PAID */
-    sendWaNotification?: (storeWaId: string, contactId: string, message: string) => Promise<void>;
+    sendWaNotification?: (
+      storeWaId: string,
+      contactId: string,
+      message: string,
+    ) => Promise<void>;
     /** Store WA ID default jika tidak ada di body */
     defaultStoreWaId?: string;
-  }
+  },
 ): Promise<{ received: boolean; status: string }> {
   try {
     // Scalev webhook fields: event, order (object), data, status
-    const event = body.event || body.type || '';
+    const event = body.event || body.type || "";
     const orderData = body.order || body.data || body;
-    const orderId = orderData.order_id || orderData.id || body.order_id || '';
-    const status = orderData.payment_status || orderData.status || body.status || '';
+    const orderId = orderData.order_id || orderData.id || body.order_id || "";
+    const status =
+      orderData.payment_status || orderData.status || body.status || "";
 
-    logger.info(`[Scalev] Webhook received: event=${event} order=${orderId} status=${status}`);
+    logger.info(
+      `[Scalev] Webhook received: event=${event} order=${orderId} status=${status}`,
+    );
 
     if (!orderId) {
-      return { received: false, status: 'invalid_payload' };
+      return { received: false, status: "invalid_payload" };
     }
 
     // Tangani event paid/lunas
-    const isPaid = status === 'paid' || status === 'completed' ||
-                   event === 'order.paid' || event === 'order.completed' ||
-                   (body.payment_status === 'paid');
+    const isPaid =
+      status === "paid" ||
+      status === "completed" ||
+      event === "order.paid" ||
+      event === "order.completed" ||
+      body.payment_status === "paid";
 
     if (isPaid) {
-      const customerPhone = orderData.customer?.phone || orderData.customer_phone || '';
-      const customerName = orderData.customer?.name || orderData.customer_name || '';
-      const totalAmount = orderData.total_price || orderData.grand_total || orderData.amount || 0;
-      const storeWaId = opts?.defaultStoreWaId || '';
+      const customerPhone =
+        orderData.customer?.phone || orderData.customer_phone || "";
+      const customerName =
+        orderData.customer?.name || orderData.customer_name || "";
+      const totalAmount =
+        orderData.total_price || orderData.grand_total || orderData.amount || 0;
+      const storeWaId = opts?.defaultStoreWaId || "";
 
-      logger.info(`[Scalev] ✅ ORDER PAID: ${orderId} customer: ${customerName} ${customerPhone} Rp ${totalAmount}`);
+      logger.info(
+        `[Scalev] ✅ ORDER PAID: ${orderId} customer: ${customerName} ${customerPhone} Rp ${totalAmount}`,
+      );
 
       // Kirim notif WA ke customer (berupa Struk Invoice)
       if (customerPhone && opts?.sendWaNotification && storeWaId) {
         try {
-          const { generateInvoiceText } = require('./invoice.service');
-          
-          let addressStr = '';
+          const { generateInvoiceText } = require("./invoice.service");
+
+          let addressStr = "";
           try {
             if (orderData.customer?.address) {
-               const addr = orderData.customer.address;
-               addressStr = `${addr.street ? addr.street + ', ' : ''}${addr.subdistrict_name ? addr.subdistrict_name + ', ' : ''}${addr.city_name ? addr.city_name : ''}`.trim();
+              const addr = orderData.customer.address;
+              addressStr =
+                `${addr.street ? addr.street + ", " : ""}${addr.subdistrict_name ? addr.subdistrict_name + ", " : ""}${addr.city_name ? addr.city_name : ""}`.trim();
             }
           } catch (_) {}
 
-          let courierName = orderData.courier?.name || orderData.shipping_method?.name || 'Reguler';
+          let courierName =
+            orderData.courier?.name ||
+            orderData.shipping_method?.name ||
+            "Reguler";
 
-          const invoiceText = await generateInvoiceText({
-             customerName: customerName,
-             customerPhone: customerPhone,
-             method: 'Otomatis / QRIS Scalev',
-             totalAmount: totalAmount,
-             courier: courierName,
-             address: addressStr
-          }, storeWaId);
+          const invoiceText = await generateInvoiceText(
+            {
+              customerName: customerName,
+              customerPhone: customerPhone,
+              method: "Otomatis / QRIS Scalev",
+              totalAmount: totalAmount,
+              courier: courierName,
+              address: addressStr,
+            },
+            storeWaId,
+          );
 
           await opts.sendWaNotification(storeWaId, customerPhone, invoiceText);
           logger.info(`[Scalev] ✅ Invoice WA terkirim ke ${customerPhone}`);
@@ -578,20 +650,20 @@ export async function processWebhook(
       }
 
       // Kirim Telegram notif
-      const telegramMsg = `💳 <b>Pembayaran Scalev Diterima!</b>\n\n📋 Order: ${orderId}\n👤 Customer: ${customerName}\n📱 HP: ${customerPhone}\n💰 Jumlah: <b>Rp ${Number(totalAmount).toLocaleString('id-ID')}</b>\n📊 Status: ✅ PAID\n⏱ Waktu: ${new Date().toLocaleString('id-ID')}`;
+      const telegramMsg = `💳 <b>Pembayaran Scalev Diterima!</b>\n\n📋 Order: ${orderId}\n👤 Customer: ${customerName}\n📱 HP: ${customerPhone}\n💰 Jumlah: <b>Rp ${Number(totalAmount).toLocaleString("id-ID")}</b>\n📊 Status: ✅ PAID\n⏱ Waktu: ${new Date().toLocaleString("id-ID")}`;
       await sendTelegramMessage(telegramMsg).catch(() => {});
 
       // Emit Socket.IO update ke dashboard
       try {
-        const { socketService } = require('./socket.service');
+        const { socketService } = require("./socket.service");
         socketService.emitDashboardUpdate();
       } catch (_) {}
     }
 
     return { received: true, status };
   } catch (err: any) {
-    logger.error('[Scalev] Webhook processing error:', err.message);
-    return { received: false, status: 'error' };
+    logger.error("[Scalev] Webhook processing error:", err.message);
+    return { received: false, status: "error" };
   }
 }
 
@@ -599,7 +671,10 @@ export async function processWebhook(
 // CANCEL ORDER
 // ═══════════════════════════════════════════════════════════════
 
-export async function cancelOrderIfManualTransfer(storeUniqueId: string, customerPhone: string): Promise<boolean> {
+export async function cancelOrderIfManualTransfer(
+  storeUniqueId: string,
+  customerPhone: string,
+): Promise<boolean> {
   const client = getClient();
   if (!client) return false;
   if (!customerPhone) return false;
@@ -607,52 +682,66 @@ export async function cancelOrderIfManualTransfer(storeUniqueId: string, custome
   try {
     // Cari order terakhir berdasarkan nomor HP
     // Scalev v3 list order endpoint: GET /v3/orders
-    const res = await client.get('/v3/orders', {
-      params: { 
-        limit: 20, 
+    const res = await client.get("/v3/orders", {
+      params: {
+        limit: 20,
         store_unique_id: storeUniqueId || getStoreUniqueId(),
-      }
+      },
     });
 
     const orders = res.data?.data || res.data || [];
-    
+
     // Normalisasi phone (hapus +62, 08, dsb agar matching lebih kebal)
-    const normalizePhone = (p: string) => (p || '').replace(/\D/g, '').replace(/^(62|0)/, '');
+    const normalizePhone = (p: string) =>
+      (p || "").replace(/\D/g, "").replace(/^(62|0)/, "");
     const targetPhone = normalizePhone(customerPhone);
 
     const pendingOrder = orders.find((o: any) => {
-       const oPhone = normalizePhone(o.customer?.phone || o.customer_phone || '');
-       const isUnpaid = o.payment_status === 'unpaid' || o.payment_status === 'pending';
-       const isNotCanceled = o.status !== 'canceled' && o.status !== 'cancelled';
-       return oPhone === targetPhone && isUnpaid && isNotCanceled;
+      const oPhone = normalizePhone(
+        o.customer?.phone || o.customer_phone || "",
+      );
+      const isUnpaid =
+        o.payment_status === "unpaid" || o.payment_status === "pending";
+      const isNotCanceled = o.status !== "canceled" && o.status !== "cancelled";
+      return oPhone === targetPhone && isUnpaid && isNotCanceled;
     });
 
     if (pendingOrder) {
-       const orderId = pendingOrder.order_id || pendingOrder.id;
-       logger.info(`[Scalev] Ditemukan order menggantung (${orderId}) untuk ${customerPhone}. Mencoba cancel...`);
-       
-       // Sesuai dokumentasi: duplicate-and-cancel
-       try {
-           await client.post(`/v3/orders/${orderId}/duplicate-and-cancel`, {});
-           logger.info(`[Scalev] ✅ Order ${orderId} berhasil di-duplicate-and-cancel (dibatalkan).`);
-           return true;
-       } catch (err1: any) {
-           // Fallback: PUT status
-           try {
-               await client.put(`/v3/orders/${orderId}`, { status: 'canceled' });
-               logger.info(`[Scalev] ✅ Order ${orderId} berhasil diubah statusnya menjadi canceled.`);
-               return true;
-           } catch (err2: any) {
-               logger.warn(`[Scalev] Gagal cancel order ${orderId}: ${err2.message}`);
-               return false;
-           }
-       }
+      const orderId = pendingOrder.order_id || pendingOrder.id;
+      logger.info(
+        `[Scalev] Ditemukan order menggantung (${orderId}) untuk ${customerPhone}. Mencoba cancel...`,
+      );
+
+      // Sesuai dokumentasi: duplicate-and-cancel
+      try {
+        await client.post(`/v3/orders/${orderId}/duplicate-and-cancel`, {});
+        logger.info(
+          `[Scalev] ✅ Order ${orderId} berhasil di-duplicate-and-cancel (dibatalkan).`,
+        );
+        return true;
+      } catch (err1: any) {
+        // Fallback: PUT status
+        try {
+          await client.put(`/v3/orders/${orderId}`, { status: "canceled" });
+          logger.info(
+            `[Scalev] ✅ Order ${orderId} berhasil diubah statusnya menjadi canceled.`,
+          );
+          return true;
+        } catch (err2: any) {
+          logger.warn(
+            `[Scalev] Gagal cancel order ${orderId}: ${err2.message}`,
+          );
+          return false;
+        }
+      }
     } else {
-       logger.info(`[Scalev] Tidak ada order pending yang cocok untuk di-cancel bagi HP ${customerPhone}.`);
-       return false;
+      logger.info(
+        `[Scalev] Tidak ada order pending yang cocok untuk di-cancel bagi HP ${customerPhone}.`,
+      );
+      return false;
     }
   } catch (err: any) {
-    logger.error('[Scalev] Error saat check/cancel order:', err.message);
+    logger.error("[Scalev] Error saat check/cancel order:", err.message);
     return false;
   }
 }
