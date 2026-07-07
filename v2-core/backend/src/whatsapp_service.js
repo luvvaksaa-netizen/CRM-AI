@@ -1499,6 +1499,16 @@ async function restartClientRuntime(
   waSessionMonitor.markStatus(storeWaId, "reconnecting");
   dashboard.updateWAStatus(storeWaId, "initializing");
 
+  // 🔧 HENTIKAN semua AI reply yang sedang berjalan untuk store ini
+  // Tanpa ini, AI reply akan coba pakai client yang udah di-destroy → "getChat undefined"
+  try {
+    const { cancelActiveAIReplies } = require("./events/message_handler");
+    if (typeof cancelActiveAIReplies === "function") {
+      cancelActiveAIReplies(storeWaId);
+      logger.info(`[${storeWaId}] AI replies dibatalkan sebelum restart`);
+    }
+  } catch (_) {}
+
   const client = clients.get(storeWaId);
   if (client) {
     try {

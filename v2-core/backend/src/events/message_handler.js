@@ -1784,4 +1784,14 @@ module.exports = {
   sweepUnansweredChats,
   pausedContacts,
   getActiveAIRepliesCount: () => activeAIReplies.size,
+  // 🔧 Hentikan semua AI reply untuk store tertentu (dipanggil saat client restart)
+  cancelActiveAIReplies: (storeWaId) => {
+    for (const key of activeAIReplies) {
+      if (key.startsWith(storeWaId + "_")) {
+        activeAIReplies.delete(key);
+        queuedAIReplyBatches.delete(key);
+        coalescedReplyLogAt.delete(key);
+      }
+    }
+  },
 };
