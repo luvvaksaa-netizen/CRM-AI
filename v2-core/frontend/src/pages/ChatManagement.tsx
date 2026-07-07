@@ -734,6 +734,31 @@ const ChatManagement = () => {
     }
   }, [activeContact?.contact_id, fetchMessages]);
 
+  // 🔧 AUTO-REFRESH: Setiap 20 detik, silent fetch messages aktual dari server
+  // Sebagai fallback kalau Socket.IO polling putus (Cloudflare Tunnel limitation)
+  useEffect(() => {
+    if (!activeContact) return;
+    const selectedStore = useChatStore.getState().selectedStore;
+    if (!selectedStore) return;
+
+    const interval = setInterval(() => {
+      api
+        .get(`/chat/${selectedStore}`, {
+          params: {
+            contactId: activeContact.contact_id,
+            limit: 50,
+            paginated: "true",
+          },
+        })
+        .then((res) => {
+          useChatStore.getState().mergeMessages(res.data.messages);
+        })
+        .catch(() => {});
+    }, 20000);
+
+    return () => clearInterval(interval);
+  }, [activeContact?.contact_id]);
+
   const updateContactPauseState = (
     contactId: string,
     paused: boolean,

@@ -1094,7 +1094,11 @@ NOMINAL: WAJIB dari rekap yang disetujui customer. DP = 50%, Lunas = 100%. JANGA
         tools.splice(deprecatedPaymentToolIndex, 1);
     }
 
-    if (process.env.MENGANTAR_API_KEY) {
+    // Auto-resi Mengantar — hanya jika API key ada DAN tidak di-disable
+    if (
+      process.env.MENGANTAR_API_KEY &&
+      process.env.DISABLE_AUTO_MENGANTAR !== "true"
+    ) {
       tools.push({
         type: "function",
         function: {
