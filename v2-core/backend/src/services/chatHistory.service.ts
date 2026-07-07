@@ -11,7 +11,7 @@ import {
   firstStableDisplayName,
 } from "./contactIdentity.service";
 import logger from "../utils/logger";
-import { enqueueWrite, getQueueLength } from "./dbWriteQueue";
+import { getQueueLength } from "./dbWriteQueue";
 
 export function clipQuotedBody(
   value: any,
@@ -53,9 +53,8 @@ export async function addToChatHistory(
   msg: any,
 ): Promise<void> {
   try {
-    // 🔧 WRITE QUEUE: Antri ke dbWriteQueue untuk serialisasi write SQLite
-    // Ini mengeliminasi SQLITE_BUSY yang terjadi karena 50+ concurrent write
-    await enqueueWrite(async () => {
+    // 🔧 Retry dengan backoff — lebih cepat dari write queue untuk traffic tinggi
+    await withSqliteRetry(async () => {
       // ═══ DEDUP GUARD ═══
       const waMessageId: string | null = msg.wa_message_id || msg.id || null;
       if (waMessageId) {

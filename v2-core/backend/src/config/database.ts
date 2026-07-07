@@ -29,10 +29,10 @@ export const sequelize = USE_PG
         busyTimeout: 120000, // 2 menit — diterapkan ke SEMUA koneksi baru oleh Sequelize
       },
       pool: {
-        max: 1,
-        min: 1, // 🔧 JANGAN 0 — koneksi harus tetap hidup, PRAGMA persist
+        max: 5, // 5 concurrent readers (WAL mode safe)
+        min: 1, // Koneksi tetap hidup, PRAGMA persist
         acquire: 60000,
-        idle: 300000, // 5 menit idle sebelum disconnect (was 10s)
+        idle: 300000, // 5 menit idle
       },
     });
 
