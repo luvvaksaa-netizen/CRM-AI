@@ -1135,8 +1135,8 @@ async function _sendActiveMessage(storeWaId, contactId, payload, options = {}) {
     try {
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(
-          () => reject(new Error("WA sendMessage timeout (60s)")),
-          60000,
+          () => reject(new Error("WA sendMessage timeout (120s)")),
+          120000, // 2 menit — cukup untuk WA sibuk seperti cs-hani
         ),
       );
       return await Promise.race([
