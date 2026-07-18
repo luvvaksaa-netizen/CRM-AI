@@ -105,6 +105,11 @@ class SocketService {
     this.io?.emit("qr", { storeId, qr });
   }
 
+  /** Hapus QR dari memory setelah client terhubung (ready) */
+  clearQR(storeId: string): void {
+    delete this.qrCodes[storeId];
+  }
+
   /** Emitted when a temporary scan session starts */
   emitTempScanReady(
     storeId: string,

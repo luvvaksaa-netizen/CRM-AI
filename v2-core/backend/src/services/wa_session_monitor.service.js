@@ -69,6 +69,7 @@ function createEmptyHealth(storeWaId) {
     lastCheckOkAt: null,
     lastFailureReason: null,
     syncingSince: null,
+    statusChangedAt: null,
     checkCount: 0,
     recoveryCount: 0,
     updatedAt: Date.now(),
@@ -134,14 +135,25 @@ async function runHealthCheck(storeWaId) {
   const client = deps.getClient(storeWaId);
   const health = getHealthSnapshot(storeWaId);
 
-  // 🔧 JANGAN jalankan health check saat client sedang menunggu QR scan
+  // 🔧 JANGAN jalankan health check saat client sedang menunggu QR scan / transisi
   // getState() return state abnormal saat unauthenticated → false positive restart loop
   const status = health.status;
-  if (status === "initializing" || status === "needs_scan") {
+  if (status === "initializing" || status === "needs_scan" || status === "authenticating") {
     // Hanya restart jika stuck > 10 menit tanpa aktivitas (fallback safety)
     const stuckMs = Date.now() - (health.lastCheckAt || health.updatedAt || Date.now());
     if (stuckMs < 600000) return; // 10 menit grace period — user sedang scan QR
-    logger.warn(`[${storeWaId}] QR scan phase stuck > 10 menit — triggering restart`);
+    logger.warn(`[${storeWaId}] Phase ${status} stuck > 10 menit — triggering restart`);
+  }
+
+  // 🔧 GRACE PERIOD: Jangan probe health check 60 detik setelah ready
+  // Puppeteer/Chrome butuh waktu untuk stabilisasi internal state setelah autentikasi
+  const msSinceStatusChange = health.statusChangedAt
+    ? (Date.now() - health.statusChangedAt)
+    : Infinity;
+  if (status === "ready" && msSinceStatusChange < 60000) {
+    // Update metadata tapi jangan probe getState/getChats yang bisa gagal
+    updateHealth(storeWaId, { lastCheckAt: Date.now() });
+    return;
   }
 
   if (!client) {
@@ -292,7 +304,13 @@ function stopAllMonitoring() {
 }
 
 function markStatus(storeWaId, status) {
-  updateHealth(storeWaId, { status });
+  const current = sessionHealth.get(storeWaId);
+  const prevStatus = current?.status;
+  updateHealth(storeWaId, {
+    status,
+    // Track kapan status terakhir berubah — untuk grace period setelah ready
+    ...(prevStatus !== status ? { statusChangedAt: Date.now() } : {}),
+  });
   emitStatus(storeWaId, status);
 }
 

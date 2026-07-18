@@ -579,9 +579,18 @@ function setupEventListeners(client, storeWaId, io) {
     dashboard.updateWAStatus(storeWaId, "needs_scan");
   });
 
+  // 🔧 IDEMPOTENT: authenticated bisa fire multiple times dari whatsapp-web.js
+  let authFiredForThisClient = false;
   client.on("authenticated", () => {
+    if (authFiredForThisClient) return;
+    authFiredForThisClient = true;
     logger.success(`[${storeWaId}] Sesi WhatsApp Terautentikasi.`);
     dashboard.updateWAStatus(storeWaId, "authenticating");
+    // Emit juga via socketService untuk real-time UI update
+    try {
+      const { socketService } = require("./services/socket.service");
+      socketService.emitStatusUpdate(storeWaId, "authenticating");
+    } catch (_) {}
   });
 
   // P0 FIX: auth_failure handler — trigger QR re-scan saat session dihapus/logout
@@ -601,6 +610,8 @@ function setupEventListeners(client, storeWaId, io) {
       io.emit("ready", { storeId: storeWaId });
     }
     socketService.emitReady(storeWaId);
+    // Bersihkan QR dari memory — sudah tidak diperlukan
+    socketService.clearQR(storeWaId);
     dashboard.updateWAStatus(storeWaId, "ready");
 
     const now = Date.now();
@@ -1525,6 +1536,19 @@ async function restartClientRuntime(
 
   restartingClients.add(storeWaId);
   readyClients.delete(storeWaId);
+
+  // 🔧 TIMEOUT SAFETY: Hapus flag restart setelah 60 detik maksimal
+  // Mencegah flag stuck permanen jika restart gagal / crash di tengah jalan
+  const safetyTimer = setTimeout(() => {
+    if (restartingClients.has(storeWaId)) {
+      logger.warn(`[${storeWaId}] ⚠️ Restart safety timeout — memaksa hapus flag restart`);
+      restartingClients.delete(storeWaId);
+      waSessionMonitor.markStatus(storeWaId, "disconnected");
+    }
+  }, 60000);
+  // Pastikan timer tidak block event loop
+  if (safetyTimer.unref) safetyTimer.unref();
+
   waSessionMonitor.markStatus(storeWaId, "reconnecting");
   dashboard.updateWAStatus(storeWaId, "initializing");
 
@@ -1573,7 +1597,10 @@ async function restartClientRuntime(
       cleanupFailedClient(storeWaId);
       throw error;
     })
-    .finally(() => restartingClients.delete(storeWaId));
+    .finally(() => {
+      clearTimeout(safetyTimer);
+      restartingClients.delete(storeWaId);
+    });
 
   // P0 FIX: awaitResult=true -> caller bisa tahu berhasil/gagal (untuk retry logic)
   if (awaitResult) {
