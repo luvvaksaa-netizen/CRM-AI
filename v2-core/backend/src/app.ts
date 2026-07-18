@@ -14,12 +14,19 @@ const allowedOrigins = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(",").map((o) => o.trim())
   : ["http://localhost:5173"];
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: {
-    origin: allowedOrigins, // Untuk tahap dev
-    methods: ["GET", "POST"],
-  },
-});
+	const io = new Server(server, {
+	  cors: {
+	    origin: allowedOrigins,
+	    methods: ["GET", "POST"],
+	  },
+	  // ─── Enterprise Stability (Polling-optimized) ───
+	  pingTimeout: 120000,      // 2 min for long-polling
+	  pingInterval: 30000,      // ping every 30s
+	  connectTimeout: 30000,    // 30s initial connection
+	  transports: ["polling"],  // Polling only — stable via nginx
+	  allowEIO3: true,
+	  maxHttpBufferSize: 1e6,
+	});
 
 // Security: Rate limiting — protect API from brute force
 let rateLimit: any;

@@ -2,7 +2,7 @@ import { create } from 'zustand';
 
 const TOKEN_KEY = 'crm_token';
 const USER_KEY = 'crm_user';
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3002/api';
+const API_BASE = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' && window.location.origin !== 'null' ? window.location.origin + '/api' : 'http://localhost:3002/api');
 
 interface AuthState {
   token: string | null;

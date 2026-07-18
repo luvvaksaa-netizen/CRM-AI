@@ -1,7 +1,11 @@
 import { io, Socket } from 'socket.io-client';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3002/api';
-const WS_URL: string = API_URL.replace(/\/api\/?$/, '');
+// Production: gunakan origin halaman (relatif), fallback ke localhost:3002 untuk dev
+const WS_URL: string = import.meta.env.VITE_API_URL
+  ? import.meta.env.VITE_API_URL.replace(/\/api\/?$/, '')
+  : typeof window !== 'undefined' && window.location.origin !== 'null'
+    ? window.location.origin
+    : 'http://localhost:3002';
 
 interface PendingHandler {
   event: string;
@@ -54,7 +58,7 @@ class SocketService {
     }
 
     this.socket = io(WS_URL, {
-      transports: ['polling'], // WebSocket dinonaktifkan — Cloudflare Tunnel blok upgrade
+      transports: ['polling'], // Polling only — nginx handles long-polling efficiently
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,

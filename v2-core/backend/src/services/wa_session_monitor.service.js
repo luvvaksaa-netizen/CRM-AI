@@ -134,6 +134,16 @@ async function runHealthCheck(storeWaId) {
   const client = deps.getClient(storeWaId);
   const health = getHealthSnapshot(storeWaId);
 
+  // 🔧 JANGAN jalankan health check saat client sedang menunggu QR scan
+  // getState() return state abnormal saat unauthenticated → false positive restart loop
+  const status = health.status;
+  if (status === "initializing" || status === "needs_scan") {
+    // Hanya restart jika stuck > 10 menit tanpa aktivitas (fallback safety)
+    const stuckMs = Date.now() - (health.lastCheckAt || health.updatedAt || Date.now());
+    if (stuckMs < 600000) return; // 10 menit grace period — user sedang scan QR
+    logger.warn(`[${storeWaId}] QR scan phase stuck > 10 menit — triggering restart`);
+  }
+
   if (!client) {
     updateHealth(storeWaId, {
       status: "disconnected",

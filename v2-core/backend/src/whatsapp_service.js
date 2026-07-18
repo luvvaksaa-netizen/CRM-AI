@@ -408,6 +408,14 @@ function cleanupStaleSessions() {
   let cleanedCount = 0;
   for (const entry of entries) {
     if (!entry.startsWith("session-")) continue;
+    
+    // 🔧 JANGAN hapus session yang client-nya sedang aktif (misal: sedang QR scan)
+    const clientId = entry.replace("session-", "");
+    if (clients.has(clientId)) {
+      logger.info(`[Cleanup] Session ${entry} dilewati — client aktif`);
+      continue;
+    }
+    
     const sessionDir = path.join(authDir, entry);
     const cookiesPathOld = path.join(sessionDir, "Default", "Cookies");
     const cookiesPathNew = path.join(
@@ -626,9 +634,9 @@ function setupEventListeners(client, storeWaId, io) {
     }
   });
 
-  // Pesan MASUK dari customer
+  // Pesan MASUK dari customer (SKIP pesan dari diri sendiri untuk mencegah duplikat)
   client.on("message", async (message) => {
-    if (message.isStatus || shouldIgnoreIncomingChat(message.from)) return;
+    if (message.isStatus || message.fromMe || shouldIgnoreIncomingChat(message.from)) return;
     waSessionMonitor.recordActivity(storeWaId, "message");
     await handleMessage(message, storeWaId);
   });
@@ -783,18 +791,39 @@ function setupEventListeners(client, storeWaId, io) {
       const { socketService } = require("./services/socket.service");
       socketService.emitDisconnected(storeWaId);
     } catch (_) {}
-    dashboard.updateWAStatus(storeWaId, "disconnected");
-    readyClients.delete(storeWaId);
+	    dashboard.updateWAStatus(storeWaId, "disconnected");
+	    readyClients.delete(storeWaId);
 
-    // Cek apakah restart sudah di-trigger oleh auth_failure
-    if (restartingClients.has(storeWaId)) {
-      logger.info(
-        `[${storeWaId}] Restart already in progress (likely auth_failure), skipping retry`,
-      );
-      return;
-    }
+	    // 🔧 LOGOUT saat initial pairing = WhatsApp reject scan. Jangan restart agresif!
+	    if (reason === "LOGOUT") {
+	      logger.warn(`[${storeWaId}] LOGOUT saat pairing — regenerate QR tanpa hapus session...`);
+	      await sleep(8000);
+	      try {
+	        const oldClient = clients.get(storeWaId);
+	        if (oldClient) {
+	          try { await oldClient.destroy().catch(() => {}); } catch (_) {}
+	          clients.delete(storeWaId);
+	          initializedClients.delete(storeWaId);
+	        }
+	        const newClient = createWhatsAppClient(storeWaId);
+	        setupEventListeners(newClient, storeWaId, io);
+	        await newClient.initialize();
+	        logger.info(`[${storeWaId}] QR regenerated — scan ulang di Dashboard`);
+	      } catch (e) {
+	        logger.error(`[${storeWaId}] Regenerate QR gagal: ${cleanErrorMessage(e)}`);
+	      }
+	      return;
+	    }
 
-    const MAX_RECONNECT_ATTEMPTS = 3;
+	    // Cek apakah restart sudah di-trigger oleh auth_failure
+	    if (restartingClients.has(storeWaId)) {
+	      logger.info(
+	        `[${storeWaId}] Restart already in progress (likely auth_failure), skipping retry`,
+	      );
+	      return;
+	    }
+
+	    const MAX_RECONNECT_ATTEMPTS = 3;
     const RECONNECT_DELAY_MS = 30000; // 30 detik
 
     for (let attempt = 1; attempt <= MAX_RECONNECT_ATTEMPTS; attempt++) {
