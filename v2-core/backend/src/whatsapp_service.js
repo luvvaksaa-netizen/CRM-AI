@@ -1702,7 +1702,6 @@ function createTempClient(io) {
       handleSIGINT: false,
       timeout: 90000,
     },
-    },
   });
 
   client.__storeWaId = tempId;
