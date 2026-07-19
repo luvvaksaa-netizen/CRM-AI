@@ -519,7 +519,6 @@ function createWhatsAppClient(storeWaId) {
       clientId: storeWaId,
     }),
     puppeteer: {
-      protocolTimeout: 300000,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -535,12 +534,12 @@ function createWhatsAppClient(storeWaId) {
         "--no-first-run",
         "--disable-renderer-backgrounding", // Hemat CPU saat tab tidak aktif
         "--disable-backgrounding-occluded-windows",
-        `--js-flags=--max-old-space-size=${CHROMIUM_HEAP_MB}`, // Per-browser heap (multi-session: jangan terlalu besar)
+        `--js-flags=--max-old-space-size=${CHROMIUM_HEAP_MB}`, // Per-browser heap
+        "--disable-features=IsolateSandboxedIframes",
       ],
-      headless: true,
+      headless: "new",  // Puppeteer 24.x requires 'new' mode
       handleSIGINT: false,
-      timeout: 120000, // 120 detik timeout launch
-      protocolTimeout: 1800000, // 30 menit — traffic tinggi
+      timeout: 180000, // 180 detik timeout launch
     },
   });
 
@@ -586,11 +585,15 @@ function setupEventListeners(client, storeWaId, io) {
     authFiredForThisClient = true;
     logger.success(`[${storeWaId}] Sesi WhatsApp Terautentikasi.`);
     dashboard.updateWAStatus(storeWaId, "authenticating");
-    // Emit juga via socketService untuk real-time UI update
     try {
       const { socketService } = require("./services/socket.service");
       socketService.emitStatusUpdate(storeWaId, "authenticating");
     } catch (_) {}
+  });
+
+  // 🔧 loading_screen: deteksi WhatsApp Web loading
+  client.on("loading_screen", (percent, message) => {
+    logger.info(`[${storeWaId}] 📊 WhatsApp loading: ${percent}% - ${message}`);
   });
 
   // P0 FIX: auth_failure handler — trigger QR re-scan saat session dihapus/logout
@@ -1678,7 +1681,6 @@ function createTempClient(io) {
   const client = new Client({
     authStrategy: new LocalAuth({ clientId: tempId }),
     puppeteer: {
-      protocolTimeout: 120000,
       args: [
         "--no-sandbox",
         "--disable-setuid-sandbox",
@@ -1693,12 +1695,13 @@ function createTempClient(io) {
         "--no-first-run",
         "--disable-renderer-backgrounding",
         "--disable-backgrounding-occluded-windows",
+        "--disable-features=IsolateSandboxedIframes",
         "--js-flags=--max-old-space-size=256",
       ],
-      headless: true,
+      headless: "new",
       handleSIGINT: false,
       timeout: 90000,
-      protocolTimeout: 1200000, // 20 menit (naik dari 10 menit untuk hindari callFunctionOn timeout)
+    },
     },
   });
 

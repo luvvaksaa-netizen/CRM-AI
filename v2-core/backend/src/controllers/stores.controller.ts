@@ -276,7 +276,7 @@ export const getWAStatus = async (req: Request, res: Response, next: NextFunctio
 
       if (whatsappService.buildSessionStatusMap) {
         const { statuses, health } = await whatsappService.buildSessionStatusMap(waIds, { qrCodes });
-        return res.json({ statuses, health });
+        return res.json({ statuses, health, qrCodes });
       }
 
       // Fallback lama
@@ -289,11 +289,11 @@ export const getWAStatus = async (req: Request, res: Response, next: NextFunctio
           statusMap[waId] = 'disconnected';
         }
       }
-      return res.json({ statuses: statusMap, health: {} });
+      return res.json({ statuses: statusMap, health: {}, qrCodes });
     } catch (e: any) {
       const statusMap: Record<string, string> = {};
       for (const waId of waIds) statusMap[waId] = 'disconnected';
-      return res.json({ statuses: statusMap, health: {} });
+      return res.json({ statuses: statusMap, health: {}, qrCodes: {} });
     }
   } catch (e) {
     next(e);

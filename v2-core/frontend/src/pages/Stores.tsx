@@ -121,6 +121,10 @@ const Stores = () => {
       if (data?.statuses) {
         setClientStatuses(data.statuses);
         setSessionHealth(data.health || {});
+        // 🔧 Isi QR codes dari API (fallback kalau socket event gak sampai)
+        if (data?.qrCodes) {
+          setQrCodes(prev => ({ ...prev, ...data.qrCodes }));
+        }
       } else {
         setClientStatuses(data);
       }
@@ -180,8 +184,19 @@ const Stores = () => {
 
     const statusPoll = setInterval(fetchWAStatus, 30_000);
 
+    // 🔧 FAST POLL: Jika status masih 'initializing' atau 'unknown' setelah 5 detik,
+    // poll setiap 3 detik selama 30 detik pertama (socket.io mungkin belum kirim event)
+    let fastPollCount = 0;
+    const fastPoll = setInterval(() => {
+      if (fastPollCount >= 10) { clearInterval(fastPoll); return; }
+      fastPollCount++;
+      fetchWAStatus();
+    }, 3000);
+    setTimeout(() => clearInterval(fastPoll), 30000);
+
     return () => {
       clearInterval(statusPoll);
+      clearInterval(fastPoll);
       socketService.off('qr');
       socketService.off('temp_scan_ready');
       socketService.off('ready');
