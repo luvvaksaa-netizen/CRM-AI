@@ -70,6 +70,7 @@ function createEmptyHealth(storeWaId) {
     lastFailureReason: null,
     syncingSince: null,
     statusChangedAt: null,
+    consecutiveFails: 0,
     checkCount: 0,
     recoveryCount: 0,
     updatedAt: Date.now(),
@@ -145,12 +146,12 @@ async function runHealthCheck(storeWaId) {
     logger.warn(`[${storeWaId}] Phase ${status} stuck > 10 menit — triggering restart`);
   }
 
-  // 🔧 GRACE PERIOD: Jangan probe health check 60 detik setelah ready
+  // 🔧 GRACE PERIOD: Jangan probe health check 180 detik setelah ready
   // Puppeteer/Chrome butuh waktu untuk stabilisasi internal state setelah autentikasi
   const msSinceStatusChange = health.statusChangedAt
     ? (Date.now() - health.statusChangedAt)
     : Infinity;
-  if (status === "ready" && msSinceStatusChange < 60000) {
+  if (status === "ready" && msSinceStatusChange < 180000) {
     // Update metadata tapi jangan probe getState/getChats yang bisa gagal
     updateHealth(storeWaId, { lastCheckAt: Date.now() });
     return;
@@ -231,11 +232,14 @@ async function runHealthCheck(storeWaId) {
       lastCheckOkAt: Date.now(),
       lastFailureReason: null,
       syncingSince: null,
+      consecutiveFails: 0,
     });
     emitStatus(storeWaId, deps.isReady(storeWaId) ? "ready" : "initializing");
   } catch (error) {
+    const fullMsg = String(error?.message || error || "Unknown");
     const reason = cleanErrorMessage(error);
-    logger.error(`[${storeWaId}] Health check gagal: ${reason}`);
+    const consecutiveFails = (health.consecutiveFails || 0) + 1;
+    logger.error(`[${storeWaId}] Health check gagal (${consecutiveFails}/2): ${fullMsg.substring(0, 200)}`);
 
     updateHealth(storeWaId, {
       status: "degraded",
@@ -243,15 +247,21 @@ async function runHealthCheck(storeWaId) {
       lastCheckAt: Date.now(),
       lastFailureReason: reason,
       recoveryCount: (health.recoveryCount || 0) + 1,
+      consecutiveFails,
     });
     emitStatus(storeWaId, "degraded");
 
-    try {
-      await deps.restartClient(storeWaId, "health-check");
-    } catch (restartErr) {
-      logger.error(
-        `[${storeWaId}] Auto-recovery gagal: ${cleanErrorMessage(restartErr)}`,
-      );
+    // 🔧 Hanya restart jika 2x gagal berturut-turut — hindari false positive
+    if (consecutiveFails >= 2) {
+      logger.warn(`[${storeWaId}] 2 health check gagal berturut-turut — restart`);
+      updateHealth(storeWaId, { consecutiveFails: 0 });
+      try {
+        await deps.restartClient(storeWaId, "health-check");
+      } catch (restartErr) {
+        logger.error(
+          `[${storeWaId}] Auto-recovery gagal: ${cleanErrorMessage(restartErr)}`,
+        );
+      }
     }
   }
 }
@@ -306,10 +316,12 @@ function stopAllMonitoring() {
 function markStatus(storeWaId, status) {
   const current = sessionHealth.get(storeWaId);
   const prevStatus = current?.status;
+  // 🔧 Selalu update statusChangedAt saat status berubah atau saat ready
+  // Ini penting untuk grace period setelah restart loop
+  const changed = prevStatus !== status || status === "ready";
   updateHealth(storeWaId, {
     status,
-    // Track kapan status terakhir berubah — untuk grace period setelah ready
-    ...(prevStatus !== status ? { statusChangedAt: Date.now() } : {}),
+    ...(changed ? { statusChangedAt: Date.now() } : {}),
   });
   emitStatus(storeWaId, status);
 }
