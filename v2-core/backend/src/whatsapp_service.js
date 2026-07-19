@@ -540,6 +540,7 @@ function createWhatsAppClient(storeWaId) {
       headless: "new",  // Puppeteer 24.x requires 'new' mode
       handleSIGINT: false,
       timeout: 180000, // 180 detik timeout launch
+      protocolTimeout: 600000, // 10 menit — biar callFunctionOn gak timeout
     },
   });
 
@@ -1719,6 +1720,7 @@ function createTempClient(io) {
       headless: "new",
       handleSIGINT: false,
       timeout: 90000,
+      protocolTimeout: 300000, // 5 menit untuk temp client
     },
   });
 
