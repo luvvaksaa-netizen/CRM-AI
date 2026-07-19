@@ -239,7 +239,7 @@ async function runHealthCheck(storeWaId) {
     const fullMsg = String(error?.message || error || "Unknown");
     const reason = cleanErrorMessage(error);
     const consecutiveFails = (health.consecutiveFails || 0) + 1;
-    logger.error(`[${storeWaId}] Health check gagal (${consecutiveFails}/3): ${fullMsg.substring(0, 200)}`);
+    logger.error(`[${storeWaId}] Health check gagal (${consecutiveFails}/5): ${fullMsg.substring(0, 200)}`);
 
     updateHealth(storeWaId, {
       status: "degraded",
@@ -251,8 +251,8 @@ async function runHealthCheck(storeWaId) {
     });
     emitStatus(storeWaId, "degraded");
 
-    // 🔧 Hanya restart jika 3x gagal berturut-turut — hindari false positive
-    if (consecutiveFails >= 3) {
+    // 🔧 Hanya restart jika 5x gagal berturut-turut (25 menit) — sync 536 kontak bisa lama
+    if (consecutiveFails >= 5) {
       logger.warn(`[${storeWaId}] ${consecutiveFails} health check gagal berturut-turut — restart`);
       updateHealth(storeWaId, { consecutiveFails: 0 });
       try {

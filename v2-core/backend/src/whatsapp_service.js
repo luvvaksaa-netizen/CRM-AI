@@ -653,17 +653,19 @@ function setupEventListeners(client, storeWaId, io) {
 
     beginClientSession(storeWaId);
 
+    // 🔧 Sync chat di background (jangan block ready handler)
+    // Sync 536+ kontak bisa makan waktu lama, bikin CDP sibuk & health check timeout
     if (isFirstReadyInWindow) {
-      try {
-        await syncRecentChatsFromWa(storeWaId, {
+      setTimeout(() => {
+        syncRecentChatsFromWa(storeWaId, {
           source: "ready",
           skipDebounce: true,
+        }).catch((e) => {
+          logger.warn(
+            `[${storeWaId}] Sinkronisasi chat dilewati: ${cleanErrorMessage(e)}`,
+          );
         });
-      } catch (e) {
-        logger.warn(
-          `[${storeWaId}] Sinkronisasi chat dilewati: ${cleanErrorMessage(e)}`,
-        );
-      }
+      }, 5000); // Delay 5 detik — biar halaman stabil dulu
     }
   });
 
