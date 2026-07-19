@@ -9,10 +9,10 @@
 
 const logger = require("../utils/logger");
 
-const CHECK_INTERVAL_MS = Number(process.env.WA_HEALTH_CHECK_INTERVAL_MS || 120_000);
-const HANG_TIMEOUT_MS = Number(process.env.WA_HEALTH_HANG_TIMEOUT_MS || 10_000);
-const CHAT_PROBE_TIMEOUT_MS = Number(process.env.WA_CHAT_PROBE_TIMEOUT_MS || 20_000);
-const SYNCING_STALE_MS = Number(process.env.WA_SYNCING_STALE_MS || 300_000);
+const CHECK_INTERVAL_MS = Number(process.env.WA_HEALTH_CHECK_INTERVAL_MS || 300_000);
+const HANG_TIMEOUT_MS = Number(process.env.WA_HEALTH_HANG_TIMEOUT_MS || 30_000);
+const CHAT_PROBE_TIMEOUT_MS = Number(process.env.WA_CHAT_PROBE_TIMEOUT_MS || 45_000);
+const SYNCING_STALE_MS = Number(process.env.WA_SYNCING_STALE_MS || 600_000);
 
 let deps = {
   getClient: () => null,
@@ -239,7 +239,7 @@ async function runHealthCheck(storeWaId) {
     const fullMsg = String(error?.message || error || "Unknown");
     const reason = cleanErrorMessage(error);
     const consecutiveFails = (health.consecutiveFails || 0) + 1;
-    logger.error(`[${storeWaId}] Health check gagal (${consecutiveFails}/2): ${fullMsg.substring(0, 200)}`);
+    logger.error(`[${storeWaId}] Health check gagal (${consecutiveFails}/3): ${fullMsg.substring(0, 200)}`);
 
     updateHealth(storeWaId, {
       status: "degraded",
@@ -251,9 +251,9 @@ async function runHealthCheck(storeWaId) {
     });
     emitStatus(storeWaId, "degraded");
 
-    // 🔧 Hanya restart jika 2x gagal berturut-turut — hindari false positive
-    if (consecutiveFails >= 2) {
-      logger.warn(`[${storeWaId}] 2 health check gagal berturut-turut — restart`);
+    // 🔧 Hanya restart jika 3x gagal berturut-turut — hindari false positive
+    if (consecutiveFails >= 3) {
+      logger.warn(`[${storeWaId}] ${consecutiveFails} health check gagal berturut-turut — restart`);
       updateHealth(storeWaId, { consecutiveFails: 0 });
       try {
         await deps.restartClient(storeWaId, "health-check");
