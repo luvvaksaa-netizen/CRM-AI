@@ -578,10 +578,21 @@ function setupEventListeners(client, storeWaId, io) {
     dashboard.updateWAStatus(storeWaId, "needs_scan");
   });
 
-  // 🔧 IDEMPOTENT: authenticated bisa fire multiple times dari whatsapp-web.js
+  // 🔧 IDEMPOTENT + WATCHDOG: authenticated bisa fire multiple times dari whatsapp-web.js
+  // Jika ready tidak muncul dalam 45 detik setelah authenticated, restart client
   let authFiredForThisClient = false;
+  let readyWatchdog = null;
   client.on("authenticated", () => {
-    if (authFiredForThisClient) return;
+    if (authFiredForThisClient) {
+      // Re-fire authenticated setelah navigation (execution context destroyed)
+      // Reset watchdog — perpanjang grace period
+      if (readyWatchdog) clearTimeout(readyWatchdog);
+      readyWatchdog = setTimeout(() => {
+        logger.warn(`[${storeWaId}] ⚠️ Authenticated tapi ready tidak muncul dalam 45s — restart`);
+        restartClientRuntime(storeWaId, "ready-timeout").catch(() => {});
+      }, 45000);
+      return;
+    }
     authFiredForThisClient = true;
     logger.success(`[${storeWaId}] Sesi WhatsApp Terautentikasi.`);
     dashboard.updateWAStatus(storeWaId, "authenticating");
@@ -589,6 +600,11 @@ function setupEventListeners(client, storeWaId, io) {
       const { socketService } = require("./services/socket.service");
       socketService.emitStatusUpdate(storeWaId, "authenticating");
     } catch (_) {}
+    // Watchdog: jika ready tidak muncul dalam 45 detik, restart
+    readyWatchdog = setTimeout(() => {
+      logger.warn(`[${storeWaId}] ⚠️ Authenticated tapi ready tidak muncul dalam 45s — restart`);
+      restartClientRuntime(storeWaId, "ready-timeout").catch(() => {});
+    }, 45000);
   });
 
   // 🔧 loading_screen: deteksi WhatsApp Web loading
@@ -603,6 +619,8 @@ function setupEventListeners(client, storeWaId, io) {
   });
 
   client.on("ready", async () => {
+    // Clear ready watchdog
+    if (readyWatchdog) { clearTimeout(readyWatchdog); readyWatchdog = null; }
     logger.success(`[${storeWaId}] WhatsApp SIAP DIGUNAKAN! ✅`);
     readyClients.add(storeWaId);
     waSessionMonitor.recordActivity(storeWaId, "ready");
