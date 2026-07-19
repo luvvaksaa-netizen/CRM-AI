@@ -1,11 +1,19 @@
 import { io, Socket } from 'socket.io-client';
 
-// Production: gunakan origin halaman (relatif), fallback ke localhost:3002 untuk dev
-const WS_URL: string = import.meta.env.VITE_API_URL
-  ? import.meta.env.VITE_API_URL.replace(/\/api\/?$/, '')
-  : typeof window !== 'undefined' && window.location.origin !== 'null'
-    ? window.location.origin
-    : 'http://localhost:3002';
+// WS_URL dihitung saat runtime (connect()), BUKAN saat build time
+// Ini mencegah Vite meng-inline localhost:3002 ke production bundle
+function resolveWsUrl(): string {
+  // Prioritas 1: Environment variable (untuk development)
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL.replace(/\/api\/?$/, '');
+  }
+  // Prioritas 2: Runtime origin (production — crm.datasdm.com)
+  if (typeof window !== 'undefined' && window.location?.origin && window.location.origin !== 'null') {
+    return window.location.origin;
+  }
+  // Prioritas 3: Relative — Socket.IO akan resolve ke origin halaman
+  return '';
+}
 
 interface PendingHandler {
   event: string;
@@ -15,6 +23,14 @@ interface PendingHandler {
 class SocketService {
   public socket: Socket | null = null;
   private pendingHandlers: PendingHandler[] = [];
+  private _wsUrl: string | null = null;
+
+  private getWsUrl(): string {
+    if (!this._wsUrl) {
+      this._wsUrl = resolveWsUrl();
+    }
+    return this._wsUrl;
+  }
 
   /**
    * Register event handler BEFORE socket connects.
@@ -57,7 +73,9 @@ class SocketService {
       return this.socket;
     }
 
-    this.socket = io(WS_URL, {
+    const wsUrl = this.getWsUrl();
+
+    this.socket = io(wsUrl || undefined, {
       transports: ['polling'], // Polling only — nginx handles long-polling efficiently
       reconnection: true,
       reconnectionAttempts: Infinity,

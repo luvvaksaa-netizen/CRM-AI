@@ -2,7 +2,18 @@ import { create } from 'zustand';
 
 const TOKEN_KEY = 'crm_token';
 const USER_KEY = 'crm_user';
-const API_BASE = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' && window.location.origin !== 'null' ? window.location.origin + '/api' : 'http://localhost:3002/api');
+
+// API_BASE dihitung saat runtime, BUKAN build time
+// Mencegah Vite meng-inline localhost:3002 ke production bundle
+function resolveApiBase(): string {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL.replace(/\/?$/, '');
+  }
+  if (typeof window !== 'undefined' && window.location?.origin && window.location.origin !== 'null') {
+    return window.location.origin + '/api';
+  }
+  return '/api';
+}
 
 interface AuthState {
   token: string | null;
@@ -36,36 +47,34 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
 
     try {
-      const res = await fetch(`${API_BASE}/auth/session`, {
+      const res = await fetch(`${resolveApiBase()}/auth/session`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-
-      if (!res.ok) {
-        // Token expired or invalid — clear and return false
-        sessionStorage.removeItem(TOKEN_KEY);
-        sessionStorage.removeItem(USER_KEY);
-        set({ token: null, user: null, initialized: true });
-        return false;
+      if (res.ok) {
+        const data = await res.json();
+        sessionStorage.setItem(USER_KEY, JSON.stringify(data.user));
+        set({ token, user: data.user, initialized: true });
+        return true;
       }
-
-      // Token valid
-      set({ initialized: true });
-      return true;
+      // Token invalid — clear
+      sessionStorage.removeItem(TOKEN_KEY);
+      sessionStorage.removeItem(USER_KEY);
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(USER_KEY);
+      set({ token: null, user: null, initialized: true });
+      return false;
     } catch {
-      // Network error — keep token, assume it might still be valid
+      // Network error — assume token might still be valid, keep it
       set({ initialized: true });
-      return true; // don't log out on network errors
+      return true; // Jangan logout saat network error sementara
     }
   },
 
-  setAuth: (token, user) => {
+  setAuth: (token: string, user: any) => {
     sessionStorage.setItem(TOKEN_KEY, token);
     sessionStorage.setItem(USER_KEY, JSON.stringify(user));
-    // Backup ke localStorage untuk cross-tab persistence
-    try {
-      localStorage.setItem(TOKEN_KEY, token);
-      localStorage.setItem(USER_KEY, JSON.stringify(user));
-    } catch (_) {}
+    localStorage.setItem(TOKEN_KEY, token);
+    localStorage.setItem(USER_KEY, JSON.stringify(user));
     set({ token, user });
   },
 
