@@ -15,17 +15,26 @@ const allowedOrigins = process.env.CORS_ORIGINS
   : ["http://localhost:5173"];
 const server = http.createServer(app);
 	const io = new Server(server, {
-	  cors: {
-	    origin: allowedOrigins,
-	    methods: ["GET", "POST"],
-	  },
-	  // ─── Enterprise Stability (Polling-optimized) ───
-	  pingTimeout: 120000,      // 2 min for long-polling
-	  pingInterval: 30000,      // ping every 30s
-	  connectTimeout: 30000,    // 30s initial connection
-	  transports: ["polling"],  // Polling only — stable via nginx
-	  allowEIO3: true,
-	  maxHttpBufferSize: 1e6,
+			  cors: {
+			    origin: allowedOrigins,
+			    methods: ["GET", "POST"],
+			  },
+			  // ─── Enterprise Stability (Polling-optimized) ───
+			  pingTimeout: 120000,      // 2 min for long-polling
+			  pingInterval: 30000,      // ping every 30s
+			  connectTimeout: 30000,    // 30s initial connection
+			  transports: ["polling"],  // Polling only — stable via nginx
+			  allowEIO3: true,
+			  maxHttpBufferSize: 1e6,
+			});
+
+	// 🔧 RE-EMIT QR & STATUS ke client yang baru connect
+	// QR dihasilkan sebelum frontend connect → client baru gak terima event qr
+	io.on("connection", (socket) => {
+	  const qrCodes = socketService.getQRCodes();
+	  for (const [storeId, qr] of Object.entries(qrCodes)) {
+	    socket.emit("qr", { storeId, qr });
+	  }
 	});
 
 // Security: Rate limiting — protect API from brute force
